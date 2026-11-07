@@ -41,12 +41,12 @@ val FocusColor = Color(0xFFFFD60A)
 @Composable
 fun WatchHubTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = Colors) {
-        // Every button, chip and tab gets a strong yellow wash when focused with the remote.
+        // No colour wash on focus (it covered posters); focus is shown with a yellow outline instead.
         val ripple = RippleConfiguration(
             color = FocusColor,
             rippleAlpha = RippleAlpha(
                 draggedAlpha = 0.16f,
-                focusedAlpha = 0.45f,
+                focusedAlpha = 0f,
                 hoveredAlpha = 0.12f,
                 pressedAlpha = 0.25f,
             ),

@@ -180,6 +180,11 @@ fun Context.openInService(service: StreamingService, url: String, title: String)
         return
     }
     val appUrl = appLinkFor(service, url)
+    if (service == StreamingService.CRUNCHYROLL) {
+        // The Crunchyroll app (especially on TVs) may ignore web links but accept its own scheme.
+        val m = Regex("crunchyroll\\.com/(series|watch)/([A-Za-z0-9]+)").find(appUrl)
+        if (m != null && tryView("crunchyroll://${m.groupValues[1]}/${m.groupValues[2]}", pkg)) return
+    }
     if (tryView(appUrl, pkg)) return
     if (appUrl != url && tryView(url, pkg)) return
     // The app doesn't accept web links: open it searching for the title, or just open it.

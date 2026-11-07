@@ -86,6 +86,7 @@ fun WatchHubRoot() {
             NavigationRail {
                 Tab.entries.forEach { tab ->
                     NavigationRailItem(
+                    modifier = Modifier.focusFrame(),
                         selected = currentRoute == tab.route,
                         onClick = { nav.switchTab(tab.route) },
                         icon = { Icon(tab.icon, contentDescription = null) },

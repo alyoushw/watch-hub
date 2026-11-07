@@ -13,8 +13,8 @@ android {
         applicationId = "com.alyoushw.watchhub"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.10.1"
+        versionCode = 14
+        versionName = "0.10.2"
     }
 
     // A fixed release key (from CI secrets) lets new APKs install over old ones and keep the data.

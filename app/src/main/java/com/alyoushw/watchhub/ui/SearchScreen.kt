@@ -321,11 +321,11 @@ fun SearchScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit) {
                 trailingIcon = {
                     Row {
                         if (vm.query.isNotEmpty()) {
-                            IconButton(onClick = { vm.onQueryChange("") }) {
+                            IconButton(modifier = Modifier.focusFrame(), onClick = { vm.onQueryChange("") }) {
                                 Icon(Icons.Filled.Clear, contentDescription = "مسح")
                             }
                         }
-                        IconButton(onClick = startVoice) {
+                        IconButton(modifier = Modifier.focusFrame(), onClick = startVoice) {
                             Icon(
                                 painterResource(R.drawable.ic_mic),
                                 contentDescription = "بحث بالصوت",
@@ -346,16 +346,17 @@ fun SearchScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit) {
             ) {
                 item {
                     AssistChip(
+                    modifier = Modifier.focusFrame(),
                         onClick = { editing = (vm.state as? SearchState.Results)?.filter ?: DiscoverFilter() },
                         label = { Text("الفلاتر") },
                         leadingIcon = { Icon(painterResource(R.drawable.ic_tune), contentDescription = null, Modifier.size(18.dp)) },
                     )
                 }
                 item {
-                    AssistChip(onClick = vm::recommendFromWatchlist, label = { Text("✨ من قائمتي") })
+                    AssistChip(modifier = Modifier.focusFrame(), onClick = vm::recommendFromWatchlist, label = { Text("✨ من قائمتي") })
                 }
                 items(data.savedFilters, key = { "saved-" + it.name }) { saved ->
-                    AssistChip(onClick = { vm.applyFilter(saved.filter, "نمطك «${saved.name}»:") }, label = { Text("★ ${saved.name}") })
+                    AssistChip(modifier = Modifier.focusFrame(), onClick = { vm.applyFilter(saved.filter, "نمطك «${saved.name}»:") }, label = { Text("★ ${saved.name}") })
                 }
             }
 
@@ -409,7 +410,7 @@ fun SearchScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit) {
                                 TextButton(
                                     onClick = vm::loadMore,
                                     enabled = !vm.loadingMore,
-                                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                                    modifier = Modifier.fillMaxWidth().padding(8.dp).focusFrame(),
                                 ) { Text(if (vm.loadingMore) "جاري التحميل…" else "اعرض أكثر") }
                             }
                         }
@@ -463,14 +464,14 @@ private fun IdleHints(onAsk: (String) -> Unit, onVoice: () -> Unit) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Button(onClick = onVoice) {
+        Button(modifier = Modifier.focusFrame(), onClick = onVoice) {
             Icon(painterResource(R.drawable.ic_mic), contentDescription = null, Modifier.size(18.dp))
             Text("  تكلّم")
         }
         Text("جرّب:", style = MaterialTheme.typography.labelLarge)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Examples.forEach { example ->
-                SuggestionChip(onClick = { onAsk(example) }, label = { Text(example) })
+                SuggestionChip(modifier = Modifier.focusFrame(), onClick = { onAsk(example) }, label = { Text(example) })
             }
         }
     }
@@ -487,13 +488,13 @@ private fun Understood(s: SearchState.Results, onEdit: () -> Unit, onSave: () ->
             Text(s.heading.orEmpty(), fontWeight = FontWeight.Bold)
             if (s.chips.isNotEmpty()) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    s.chips.forEach { AssistChip(onClick = onEdit, label = { Text(it) }) }
+                    s.chips.forEach { AssistChip(modifier = Modifier.focusFrame(), onClick = onEdit, label = { Text(it) }) }
                 }
             }
             if (s.filter != null) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = onEdit) { Text("عدّل") }
-                    TextButton(onClick = onSave) { Text("★ احفظه كنمط") }
+                    TextButton(modifier = Modifier.focusFrame(), onClick = onEdit) { Text("عدّل") }
+                    TextButton(modifier = Modifier.focusFrame(), onClick = onSave) { Text("★ احفظه كنمط") }
                 }
             }
         }
@@ -530,13 +531,14 @@ private fun FilterSheet(
             SectionTitle("الفلاتر")
 
             FilterGroup("النوع") {
-                FilterChip(selected = f.type == MediaType.TV, onClick = { f = f.copy(type = MediaType.TV) }, label = { Text("مسلسلات") })
-                FilterChip(selected = f.type == MediaType.MOVIE, onClick = { f = f.copy(type = MediaType.MOVIE) }, label = { Text("أفلام") })
+                FilterChip(modifier = Modifier.focusFrame(), selected = f.type == MediaType.TV, onClick = { f = f.copy(type = MediaType.TV) }, label = { Text("مسلسلات") })
+                FilterChip(modifier = Modifier.focusFrame(), selected = f.type == MediaType.MOVIE, onClick = { f = f.copy(type = MediaType.MOVIE) }, label = { Text("أفلام") })
             }
 
             FilterGroup("التصنيف (تقدر تختار أكثر من واحد)") {
                 Genre.entries.forEach { g ->
                     FilterChip(
+                    modifier = Modifier.focusFrame(),
                         selected = g in f.genres,
                         onClick = { f = f.copy(genres = if (g in f.genres) f.genres - g else f.genres + g) },
                         label = { Text(g.label) },
@@ -545,16 +547,17 @@ private fun FilterSheet(
             }
 
             FilterGroup("البلد / اللغة") {
-                FilterChip(selected = f.origin == null, onClick = { f = f.copy(origin = null) }, label = { Text("الكل") })
+                FilterChip(modifier = Modifier.focusFrame(), selected = f.origin == null, onClick = { f = f.copy(origin = null) }, label = { Text("الكل") })
                 Origin.entries.forEach { o ->
-                    FilterChip(selected = f.origin == o, onClick = { f = f.copy(origin = o) }, label = { Text(o.label) })
+                    FilterChip(modifier = Modifier.focusFrame(), selected = f.origin == o, onClick = { f = f.copy(origin = o) }, label = { Text(o.label) })
                 }
             }
 
             FilterGroup("المنصة") {
-                FilterChip(selected = f.services.isEmpty(), onClick = { f = f.copy(services = emptySet()) }, label = { Text("أي منصة") })
+                FilterChip(modifier = Modifier.focusFrame(), selected = f.services.isEmpty(), onClick = { f = f.copy(services = emptySet()) }, label = { Text("أي منصة") })
                 StreamingService.entries.forEach { s ->
                     FilterChip(
+                    modifier = Modifier.focusFrame(),
                         selected = s.key in f.services,
                         onClick = { f = f.copy(services = if (s.key in f.services) f.services - s.key else f.services + s.key) },
                         label = { Text(s.label) },
@@ -564,13 +567,14 @@ private fun FilterSheet(
 
             FilterGroup("الترتيب") {
                 SortMode.entries.forEach { mode ->
-                    FilterChip(selected = f.sort == mode, onClick = { f = f.copy(sort = mode) }, label = { Text(mode.label) })
+                    FilterChip(modifier = Modifier.focusFrame(), selected = f.sort == mode, onClick = { f = f.copy(sort = mode) }, label = { Text(mode.label) })
                 }
             }
 
             FilterGroup("الفترة") {
                 eras.forEach { (label, range) ->
                     FilterChip(
+                    modifier = Modifier.focusFrame(),
                         selected = f.yearFrom == range.first && f.yearTo == range.second,
                         onClick = { f = f.copy(yearFrom = range.first, yearTo = range.second) },
                         label = { Text(label) },
@@ -581,6 +585,7 @@ private fun FilterSheet(
             FilterGroup("أقل تقييم") {
                 listOf(null, 6, 7, 8).forEach { r ->
                     FilterChip(
+                    modifier = Modifier.focusFrame(),
                         selected = f.minRating == r,
                         onClick = { f = f.copy(minRating = r) },
                         label = { Text(r?.let { "$it+" } ?: "الكل") },
@@ -589,9 +594,9 @@ private fun FilterSheet(
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = { onApply(f) }, modifier = Modifier.weight(1f)) { Text("اعرض النتائج") }
-                OutlinedButton(onClick = { onSave(f) }) { Text("★ احفظ") }
-                TextButton(onClick = { f = DiscoverFilter(type = f.type) }) { Text("مسح") }
+                Button(onClick = { onApply(f) }, modifier = Modifier.weight(1f).focusFrame()) { Text("اعرض النتائج") }
+                OutlinedButton(modifier = Modifier.focusFrame(), onClick = { onSave(f) }) { Text("★ احفظ") }
+                TextButton(modifier = Modifier.focusFrame(), onClick = { f = DiscoverFilter(type = f.type) }) { Text("مسح") }
             }
 
             if (saved.isNotEmpty()) {
@@ -611,7 +616,7 @@ private fun FilterSheet(
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
-                        TextButton(onClick = { onDeleteSaved(item.name) }) {
+                        TextButton(modifier = Modifier.focusFrame(), onClick = { onDeleteSaved(item.name) }) {
                             Text("حذف", color = MaterialTheme.colorScheme.error)
                         }
                     }
@@ -648,8 +653,8 @@ private fun SaveFilterDialog(suggestedName: String, onDismiss: () -> Unit, onSav
                 )
             }
         },
-        confirmButton = { TextButton(enabled = name.isNotBlank(), onClick = { onSave(name.trim()) }) { Text("حفظ") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("إلغاء") } },
+        confirmButton = { TextButton(modifier = Modifier.focusFrame(), enabled = name.isNotBlank(), onClick = { onSave(name.trim()) }) { Text("حفظ") } },
+        dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = onDismiss) { Text("إلغاء") } },
     )
 }
 

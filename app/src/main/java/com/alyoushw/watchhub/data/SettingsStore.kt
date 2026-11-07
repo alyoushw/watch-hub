@@ -46,6 +46,16 @@ class SettingsStore(context: Context) {
         _useClaude.value = value
     }
 
+    private val _titleHintSeconds = MutableStateFlow(prefs.getInt(KEY_HINT_SECONDS, 10))
+
+    /** How long an extra app shows the title to type, in seconds (TVs have no paste). */
+    val titleHintSeconds: StateFlow<Int> = _titleHintSeconds.asStateFlow()
+
+    fun setTitleHintSeconds(value: Int) {
+        prefs.edit().putInt(KEY_HINT_SECONDS, value).apply()
+        _titleHintSeconds.value = value
+    }
+
     fun setApiKey(value: String) {
         val v = value.trim()
         prefs.edit().putString(KEY_TMDB, v).apply()
@@ -63,5 +73,6 @@ class SettingsStore(context: Context) {
         const val KEY_APPS = "custom_apps"
         const val KEY_CLAUDE = "claude_key"
         const val KEY_USE_CLAUDE = "use_claude"
+        const val KEY_HINT_SECONDS = "title_hint_seconds"
     }
 }

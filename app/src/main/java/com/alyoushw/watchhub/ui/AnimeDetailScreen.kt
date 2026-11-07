@@ -148,7 +148,7 @@ fun AnimeDetailScreen(id: Int, onBack: () -> Unit, onOpen: (MediaType, Int) -> U
             TopAppBar(
                 title = { Text(anime?.displayTitle.orEmpty(), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(modifier = Modifier.focusFrame(), onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع")
                     }
                 },
@@ -186,7 +186,7 @@ private fun AnimeContent(vm: AnimeDetailViewModel, anime: JAnime, onOpen: (Media
         item {
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (saved == null) {
-                    OutlinedButton(onClick = vm::addToWatchlist, modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = vm::addToWatchlist, modifier = Modifier.fillMaxWidth().focusFrame()) {
                         Icon(Icons.Filled.Add, contentDescription = null)
                         Text("  أضفه لقائمتي")
                     }
@@ -194,6 +194,7 @@ private fun AnimeContent(vm: AnimeDetailViewModel, anime: JAnime, onOpen: (Media
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         WatchStatus.entries.forEach { status ->
                             FilterChip(
+                    modifier = Modifier.focusFrame(),
                                 selected = saved.status == status,
                                 onClick = { scope.launch { container.store.updateWatch(saved.key) { it.copy(status = status) } } },
                                 label = { Text(status.label) },
@@ -204,7 +205,7 @@ private fun AnimeContent(vm: AnimeDetailViewModel, anime: JAnime, onOpen: (Media
                         }
                     }
                     if (anime.type != "Movie") EpisodeTracker(saved)
-                    TextButton(onClick = { scope.launch { container.store.removeWatch(saved.key) } }) {
+                    TextButton(modifier = Modifier.focusFrame(), onClick = { scope.launch { container.store.removeWatch(saved.key) } }) {
                         Text("شيله من قائمتي", color = MaterialTheme.colorScheme.error)
                     }
                 }
@@ -247,7 +248,7 @@ private fun AnimeContent(vm: AnimeDetailViewModel, anime: JAnime, onOpen: (Media
         item {
             Column(Modifier.padding(horizontal = 16.dp)) {
                 anime.url?.let { url ->
-                    TextButton(onClick = { context.openUrl(url) }) { Text("افتح صفحته على MyAnimeList") }
+                    TextButton(modifier = Modifier.focusFrame(), onClick = { context.openUrl(url) }) { Text("افتح صفحته على MyAnimeList") }
                 }
                 Text(
                     "البيانات من MyAnimeList عن طريق Jikan.",
@@ -313,7 +314,7 @@ private fun AnimeWatchButtons(anime: JAnime, searchTitle: String) {
             Button(
                 onClick = { context.openInService(service, url, searchTitle) },
                 colors = ButtonDefaults.buttonColors(containerColor = Color(service.color), contentColor = Color.White),
-                modifier = Modifier.fillMaxWidth().height(52.dp),
+                modifier = Modifier.fillMaxWidth().height(52.dp).focusFrame(),
             ) {
                 Icon(Icons.Filled.PlayArrow, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
@@ -321,7 +322,7 @@ private fun AnimeWatchButtons(anime: JAnime, searchTitle: String) {
             }
         }
         otherLinks.forEach { link ->
-            OutlinedButton(onClick = { link.url?.let { context.openUrl(it) } }, modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = { link.url?.let { context.openUrl(it) } }, modifier = Modifier.fillMaxWidth().focusFrame()) {
                 Icon(Icons.Filled.PlayArrow, contentDescription = null, Modifier.size(18.dp))
                 Text(" شاهد على ${link.name}")
             }
@@ -340,7 +341,7 @@ private fun AnimeWatchButtons(anime: JAnime, searchTitle: String) {
         if (missing.isNotEmpty()) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 missing.forEach { service ->
-                    OutlinedButton(onClick = { context.searchOn(service, searchTitle) }) { Text("ابحث في ${service.label}") }
+                    OutlinedButton(modifier = Modifier.focusFrame(), onClick = { context.searchOn(service, searchTitle) }) { Text("ابحث في ${service.label}") }
                 }
             }
         }
@@ -360,7 +361,7 @@ private fun AnimeStory(anime: JAnime) {
             EnglishText(synopsis)
         }
         anime.background?.trim()?.takeIf { it.isNotBlank() }?.let { background ->
-            TextButton(onClick = { showBackground = !showBackground }) {
+            TextButton(modifier = Modifier.focusFrame(), onClick = { showBackground = !showBackground }) {
                 Text(if (showBackground) "إخفاء الخلفية" else "خلفية عن العمل")
             }
             if (showBackground) EnglishText(background)
@@ -411,7 +412,7 @@ private fun AnimeFacts(anime: JAnime) {
         }
         if (tags.isNotEmpty()) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                tags.forEach { AssistChip(onClick = {}, label = { Text(it) }) }
+                tags.forEach { AssistChip(modifier = Modifier.focusFrame(), onClick = {}, label = { Text(it) }) }
             }
         }
     }

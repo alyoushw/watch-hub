@@ -393,7 +393,7 @@ fun DetailScreen(type: MediaType, id: Int, onBack: () -> Unit, onOpen: (MediaTyp
             TopAppBar(
                 title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(modifier = Modifier.focusFrame(), onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع")
                     }
                 },
@@ -438,7 +438,7 @@ private fun DetailContent(
         item {
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (saved == null) {
-                    OutlinedButton(onClick = onAdd, modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = onAdd, modifier = Modifier.fillMaxWidth().focusFrame()) {
                         Icon(Icons.Filled.Add, contentDescription = null)
                         Text("  أضفه لقائمتي")
                     }
@@ -446,6 +446,7 @@ private fun DetailContent(
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         WatchStatus.entries.forEach { status ->
                             FilterChip(
+                    modifier = Modifier.focusFrame(),
                                 selected = saved.status == status,
                                 onClick = { scope.launch { container.store.updateWatch(saved.key) { it.copy(status = status) } } },
                                 label = { Text(status.label) },
@@ -456,7 +457,7 @@ private fun DetailContent(
                         }
                     }
                     if (info.type == MediaType.TV) EpisodeTracker(saved)
-                    TextButton(onClick = { scope.launch { container.store.removeWatch(saved.key) } }) {
+                    TextButton(modifier = Modifier.focusFrame(), onClick = { scope.launch { container.store.removeWatch(saved.key) } }) {
                         Text("شيله من قائمتي", color = MaterialTheme.colorScheme.error)
                     }
                 }
@@ -588,7 +589,7 @@ private fun WatchButtons(
             Button(
                 onClick = { onWatch(service) },
                 colors = ButtonDefaults.buttonColors(containerColor = Color(service.color), contentColor = Color.White),
-                modifier = Modifier.fillMaxWidth().height(52.dp),
+                modifier = Modifier.fillMaxWidth().height(52.dp).focusFrame(),
             ) {
                 when {
                     direct != null -> Icon(Icons.Filled.PlayArrow, contentDescription = null)
@@ -619,7 +620,7 @@ private fun WatchButtons(
         if (others.isNotEmpty()) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 others.forEach { service ->
-                    OutlinedButton(onClick = { onWatch(service) }) { Text("ابحث في ${service.label}") }
+                    OutlinedButton(modifier = Modifier.focusFrame(), onClick = { onWatch(service) }) { Text("ابحث في ${service.label}") }
                 }
             }
         }
@@ -638,7 +639,7 @@ fun CustomAppButtons(title: String) {
         apps.forEach { pkg ->
             val label = remember(pkg) { context.appLabel(pkg) }
             if (label != null) {
-                OutlinedButton(onClick = { context.openCustomApp(pkg, title) }) {
+                OutlinedButton(modifier = Modifier.focusFrame(), onClick = { context.openCustomApp(pkg, title) }) {
                     AppIcon(pkg, size = 20.dp)
                     Spacer(Modifier.width(6.dp))
                     Text(label)
@@ -687,7 +688,7 @@ private fun Story(info: DetailInfo) {
         }
         info.englishOverview?.let { english ->
             var open by remember { mutableStateOf(false) }
-            TextButton(onClick = { open = !open }) {
+            TextButton(modifier = Modifier.focusFrame(), onClick = { open = !open }) {
                 Text(if (open) "إخفاء القصة المفصلة" else "القصة بالتفصيل")
             }
             if (open) {
@@ -747,6 +748,7 @@ fun TranslatedText(
         if (isEnglish) {
             when {
                 arabic != null -> TextButton(
+                    modifier = Modifier.focusFrame(),
                     onClick = { showOriginal = !showOriginal },
                     contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
                 ) {
@@ -784,7 +786,7 @@ private fun Facts(info: DetailInfo) {
         }
         if (info.genres.isNotEmpty()) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                info.genres.forEach { AssistChip(onClick = {}, label = { Text(it) }) }
+                info.genres.forEach { AssistChip(modifier = Modifier.focusFrame(), onClick = {}, label = { Text(it) }) }
             }
         }
     }
@@ -942,10 +944,10 @@ private fun OtherProviders(info: DetailInfo) {
             )
         }
         info.providers?.link?.let { link ->
-            TextButton(onClick = { context.openUrl(link) }) { Text("كل خيارات المشاهدة على TMDB") }
+            TextButton(modifier = Modifier.focusFrame(), onClick = { context.openUrl(link) }) { Text("كل خيارات المشاهدة على TMDB") }
         }
         info.imdbId?.let { imdb ->
-            TextButton(onClick = { context.openUrl("https://www.imdb.com/title/$imdb/") }) { Text("افتحه في IMDb") }
+            TextButton(modifier = Modifier.focusFrame(), onClick = { context.openUrl("https://www.imdb.com/title/$imdb/") }) { Text("افتحه في IMDb") }
         }
     }
 }

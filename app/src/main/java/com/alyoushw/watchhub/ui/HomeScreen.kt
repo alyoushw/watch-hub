@@ -327,7 +327,7 @@ fun HomeScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, onS
             TopAppBar(
                 title = { Text("Watch Hub") },
                 actions = {
-                    IconButton(onClick = vm::refresh) { Icon(Icons.Filled.Refresh, contentDescription = "تحديث") }
+                    IconButton(modifier = Modifier.focusFrame(), onClick = vm::refresh) { Icon(Icons.Filled.Refresh, contentDescription = "تحديث") }
                 },
             )
         },
@@ -335,16 +335,19 @@ fun HomeScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, onS
         Column(Modifier.fillMaxSize().padding(padding)) {
             Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
+                    modifier = Modifier.focusFrame(),
                     selected = vm.type == MediaType.TV,
                     onClick = { vm.selectType(MediaType.TV) },
                     label = { Text("مسلسلات") },
                 )
                 FilterChip(
+                    modifier = Modifier.focusFrame(),
                     selected = vm.type == MediaType.MOVIE,
                     onClick = { vm.selectType(MediaType.MOVIE) },
                     label = { Text("أفلام") },
                 )
                 FilterChip(
+                    modifier = Modifier.focusFrame(),
                     selected = vm.type == MediaType.ANIME,
                     onClick = { vm.selectType(MediaType.ANIME) },
                     label = { Text("أنمي") },

@@ -111,7 +111,7 @@ fun BrowseScreen(onBack: () -> Unit, onOpen: (MediaType, Int) -> Unit) {
                     Text(vm.request?.title ?: "عرض الكل", maxLines = 1, overflow = TextOverflow.Ellipsis)
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع") }
+                    IconButton(modifier = Modifier.focusFrame(), onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع") }
                 },
             )
         },
@@ -149,9 +149,9 @@ fun BrowseScreen(onBack: () -> Unit, onOpen: (MediaType, Int) -> Unit) {
                         Box(Modifier.fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
                             when {
                                 vm.loading -> CircularProgressIndicator()
-                                vm.error != null -> TextButton(onClick = vm::loadMore) { Text("صار خطأ، اضغط للمحاولة") }
+                                vm.error != null -> TextButton(modifier = Modifier.focusFrame(), onClick = vm::loadMore) { Text("صار خطأ، اضغط للمحاولة") }
                                 vm.reachedEnd -> Text("هذا كل شي ✓", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                else -> TextButton(onClick = vm::loadMore) { Text("حمّل أكثر") }
+                                else -> TextButton(modifier = Modifier.focusFrame(), onClick = vm::loadMore) { Text("حمّل أكثر") }
                             }
                         }
                     }

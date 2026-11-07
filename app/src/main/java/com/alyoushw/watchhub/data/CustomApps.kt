@@ -64,11 +64,18 @@ fun Context.openCustomApp(packageName: String, title: String) {
     if (packageManager.queryIntentActivities(share, 0).isNotEmpty() && tryStart(share)) return
 
     val hint = if (isTvDevice) "ابحث عن: «$title»\n(اكتبه أو قوله بمايك الريموت)" else "نسخت «$title»، الصقه في البحث"
-    Toast.makeText(this, hint, Toast.LENGTH_LONG).show()
     startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-    if (isTvDevice) {
-        // A second long message so the title stays on screen while the app opens.
-        android.os.Handler(mainLooper).postDelayed({ Toast.makeText(this, hint, Toast.LENGTH_LONG).show() }, 3500)
+    showLongHint(hint)
+}
+
+/** Keeps [text] on screen for the user's chosen time by chaining toasts (each lasts ~3.5 s). */
+private fun Context.showLongHint(text: String) {
+    val seconds = getSharedPreferences("settings", Context.MODE_PRIVATE).getInt("title_hint_seconds", 10)
+    val app = applicationContext
+    val handler = android.os.Handler(mainLooper)
+    val count = ((seconds * 1000L) / 3500L).coerceAtLeast(1)
+    for (i in 0 until count) {
+        handler.postDelayed({ Toast.makeText(app, text, Toast.LENGTH_LONG).show() }, i * 3500L)
     }
 }
 

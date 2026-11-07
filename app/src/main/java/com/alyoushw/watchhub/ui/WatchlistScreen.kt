@@ -145,7 +145,7 @@ fun WatchlistScreen(onOpen: (MediaType, Int) -> Unit) {
                     if (vm.refreshing) {
                         CircularProgressIndicator(Modifier.size(24.dp).padding(end = 8.dp), strokeWidth = 2.dp)
                     } else {
-                        IconButton(onClick = vm::refresh) { Icon(Icons.Filled.Refresh, contentDescription = "تحديث") }
+                        IconButton(modifier = Modifier.focusFrame(), onClick = vm::refresh) { Icon(Icons.Filled.Refresh, contentDescription = "تحديث") }
                     }
                 },
             )
@@ -158,7 +158,7 @@ fun WatchlistScreen(onOpen: (MediaType, Int) -> Unit) {
             ) {
                 Filter.entries.forEach { f ->
                     val count = data.watchlist.count { f.status == null || it.status == f.status }
-                    FilterChip(selected = filter == f, onClick = { filter = f }, label = { Text("${f.label} ($count)") })
+                    FilterChip(modifier = Modifier.focusFrame(), selected = filter == f, onClick = { filter = f }, label = { Text("${f.label} ($count)") })
                 }
             }
             vm.error?.let {
@@ -214,7 +214,7 @@ private fun WatchRow(item: WatchItem, onClick: () -> Unit) {
                         )
                     }
                     Box {
-                        IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "خيارات") }
+                        IconButton(modifier = Modifier.focusFrame(), onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "خيارات") }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                             WatchStatus.entries.filter { it != item.status }.forEach { status ->
                                 DropdownMenuItem(
@@ -252,6 +252,7 @@ private fun WatchNowButton(item: WatchItem, services: List<StreamingService>) {
     val service = StreamingService.entries.firstOrNull { it.key in item.directLinks } ?: services.firstOrNull() ?: return
     val direct = item.directLinks[service.key]
     Button(
+                    modifier = Modifier.focusFrame(),
         onClick = { context.watchOn(service, direct, item.searchTitle) },
         colors = ButtonDefaults.buttonColors(containerColor = Color(service.color), contentColor = Color.White),
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
@@ -299,6 +300,7 @@ fun EpisodeTracker(item: WatchItem) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             if (next != null) {
                 FilledTonalButton(
+                    modifier = Modifier.focusFrame(),
                     onClick = {
                         scope.launch {
                             container.store.updateWatch(item.key) {
@@ -316,6 +318,7 @@ fun EpisodeTracker(item: WatchItem) {
             }
             if (progress != null) {
                 OutlinedButton(
+                    modifier = Modifier.focusFrame(),
                     onClick = { scope.launch { container.store.updateWatch(item.key) { it.copy(progress = it.previousEpisode()) } } },
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                 ) { Text("تراجع") }

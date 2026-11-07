@@ -81,6 +81,7 @@ fun SubscriptionsScreen() {
         topBar = { TopAppBar(title = { Text("اشتراكاتي") }) },
         floatingActionButton = {
             ExtendedFloatingActionButton(
+                    modifier = Modifier.focusFrame(),
                 onClick = { creating = true },
                 icon = { Icon(Icons.Filled.Add, contentDescription = null) },
                 text = { Text("اشتراك جديد") },
@@ -182,8 +183,8 @@ private fun SubscriptionRow(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, contentDescription = "تعديل") }
-                IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, contentDescription = "حذف") }
+                IconButton(modifier = Modifier.focusFrame(), onClick = onEdit) { Icon(Icons.Filled.Edit, contentDescription = "تعديل") }
+                IconButton(modifier = Modifier.focusFrame(), onClick = onDelete) { Icon(Icons.Filled.Delete, contentDescription = "حذف") }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -193,7 +194,7 @@ private fun SubscriptionRow(
                     modifier = Modifier.weight(1f),
                 )
                 if (onOpen != null) {
-                    OutlinedButton(onClick = onOpen) { Text("افتح التطبيق") }
+                    OutlinedButton(modifier = Modifier.focusFrame(), onClick = onOpen) { Text("افتح التطبيق") }
                 }
             }
         }
@@ -227,6 +228,7 @@ private fun SubscriptionDialog(
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     StreamingService.entries.forEach { service ->
                         FilterChip(
+                    modifier = Modifier.focusFrame(),
                             selected = serviceKey == service.key,
                             onClick = {
                                 // Keep a custom name the user typed; otherwise follow the chosen service.
@@ -238,6 +240,7 @@ private fun SubscriptionDialog(
                         )
                     }
                     FilterChip(
+                    modifier = Modifier.focusFrame(),
                         selected = serviceKey == null,
                         onClick = {
                             if (StreamingService.forKey(serviceKey)?.label == name) name = ""
@@ -263,16 +266,17 @@ private fun SubscriptionDialog(
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     BillingCycle.entries.forEach { c ->
-                        FilterChip(selected = cycle == c, onClick = { cycle = c }, label = { Text(c.label) })
+                        FilterChip(modifier = Modifier.focusFrame(), selected = cycle == c, onClick = { cycle = c }, label = { Text(c.label) })
                     }
                 }
-                OutlinedButton(onClick = { pickingDate = true }, modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = { pickingDate = true }, modifier = Modifier.fillMaxWidth().focusFrame()) {
                     Text("التجديد: ${renewal.format(ArabicDate)}")
                 }
             }
         },
         confirmButton = {
             TextButton(
+                    modifier = Modifier.focusFrame(),
                 enabled = valid,
                 onClick = {
                     onSave(
@@ -289,7 +293,7 @@ private fun SubscriptionDialog(
                 },
             ) { Text("حفظ") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("إلغاء") } },
+        dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = onDismiss) { Text("إلغاء") } },
     )
 
     if (pickingDate) {
@@ -299,14 +303,14 @@ private fun SubscriptionDialog(
         DatePickerDialog(
             onDismissRequest = { pickingDate = false },
             confirmButton = {
-                TextButton(onClick = {
+                TextButton(modifier = Modifier.focusFrame(), onClick = {
                     state.selectedDateMillis?.let {
                         renewal = Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate()
                     }
                     pickingDate = false
                 }) { Text("تم") }
             },
-            dismissButton = { TextButton(onClick = { pickingDate = false }) { Text("إلغاء") } },
+            dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = { pickingDate = false }) { Text("إلغاء") } },
         ) {
             DatePicker(state = state)
         }

@@ -138,7 +138,7 @@ fun MessageBox(
             }
             if (actionLabel != null && onAction != null) {
                 Spacer(Modifier.height(8.dp))
-                Button(onClick = onAction) { Text(actionLabel) }
+                Button(modifier = Modifier.focusFrame(), onClick = onAction) { Text(actionLabel) }
             }
         }
     }
@@ -296,7 +296,7 @@ fun TitleRow(
                 }
             }
             if (onSeeAll != null) {
-                TextButton(onClick = onSeeAll) { Text("عرض الكل") }
+                TextButton(modifier = Modifier.focusFrame(), onClick = onSeeAll) { Text("عرض الكل") }
             }
         }
         LazyRow(
@@ -362,6 +362,15 @@ fun isTv(): Boolean {
  * Makes the remote's current position obvious on TV: a bright border and a slight zoom
  * on the focused card. Put it before `clickable` so it sees that element's focus.
  */
+/** Yellow outline only (no fill) on a focused button or chip, for the TV remote. */
+@Composable
+fun Modifier.focusFrame(shape: Shape = RoundedCornerShape(50)): Modifier {
+    var focused by remember { mutableStateOf(false) }
+    return this
+        .onFocusChanged { focused = it.isFocused || it.hasFocus }
+        .border(width = if (focused) 3.dp else 0.dp, color = if (focused) FocusColor else Color.Transparent, shape = shape)
+}
+
 @Composable
 fun Modifier.focusHighlight(shape: Shape = RoundedCornerShape(10.dp)): Modifier {
     var focused by remember { mutableStateOf(false) }

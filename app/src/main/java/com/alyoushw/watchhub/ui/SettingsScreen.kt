@@ -97,7 +97,7 @@ fun SettingsScreen() {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            TextButton(onClick = { context.openUrl("https://www.themoviedb.org/settings/api") }) {
+            TextButton(modifier = Modifier.focusFrame(), onClick = { context.openUrl("https://www.themoviedb.org/settings/api") }) {
                 Text("افتح صفحة مفاتيح TMDB")
             }
             OutlinedTextField(
@@ -110,12 +110,13 @@ fun SettingsScreen() {
                 singleLine = true,
                 visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = {
-                    TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) "إخفاء" else "إظهار") }
+                    TextButton(modifier = Modifier.focusFrame(), onClick = { showKey = !showKey }) { Text(if (showKey) "إخفاء" else "إظهار") }
                 },
                 modifier = Modifier.fillMaxWidth(),
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Button(
+                    modifier = Modifier.focusFrame(),
                     enabled = !testing && key.isNotBlank(),
                     onClick = {
                         container.settings.setApiKey(key)
@@ -151,6 +152,7 @@ fun SettingsScreen() {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Regions.forEach { (code, label) ->
                     FilterChip(
+                    modifier = Modifier.focusFrame(),
                         selected = region == code,
                         onClick = { container.settings.setRegion(code) },
                         label = { Text(label) },
@@ -213,13 +215,31 @@ private fun CustomAppsSection() {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                TextButton(onClick = { container.settings.setCustomApps(apps - pkg) }) {
+                TextButton(modifier = Modifier.focusFrame(), onClick = { container.settings.setCustomApps(apps - pkg) }) {
                     Text("شيل", color = MaterialTheme.colorScheme.error)
                 }
             }
         }
+        if (apps.isNotEmpty()) {
+            val seconds by container.settings.titleHintSeconds.collectAsStateWithLifecycle()
+            Text(
+                "إذا التطبيق ما يستقبل البحث مباشرة، نعرض لك اسم العمل على الشاشة عشان تكتبه. مدة العرض:",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(5, 10, 20, 30).forEach { s ->
+                    FilterChip(
+                        modifier = Modifier.focusFrame(),
+                        selected = seconds == s,
+                        onClick = { container.settings.setTitleHintSeconds(s) },
+                        label = { Text("$s ثانية") },
+                    )
+                }
+            }
+        }
         if (apps.size < MAX_CUSTOM_APPS) {
-            OutlinedButton(onClick = { picking = true }) { Text("+ أضف تطبيق") }
+            OutlinedButton(modifier = Modifier.focusFrame(), onClick = { picking = true }) { Text("+ أضف تطبيق") }
         }
     }
 
@@ -278,7 +298,7 @@ private fun AppPickerDialog(exclude: Set<String>, onDismiss: () -> Unit, onPick:
             }
         },
         confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text("إلغاء") } },
+        dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = onDismiss) { Text("إلغاء") } },
     )
 }
 
@@ -304,7 +324,7 @@ private fun ClaudeSection() {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        TextButton(onClick = { context.openUrl("https://platform.claude.com/settings/keys") }) {
+        TextButton(modifier = Modifier.focusFrame(), onClick = { context.openUrl("https://platform.claude.com/settings/keys") }) {
             Text("افتح صفحة مفاتيح Claude")
         }
         OutlinedTextField(
@@ -316,11 +336,12 @@ private fun ClaudeSection() {
             label = { Text("مفتاح Claude API") },
             singleLine = true,
             visualTransformation = if (show) VisualTransformation.None else PasswordVisualTransformation(),
-            trailingIcon = { TextButton(onClick = { show = !show }) { Text(if (show) "إخفاء" else "إظهار") } },
+            trailingIcon = { TextButton(modifier = Modifier.focusFrame(), onClick = { show = !show }) { Text(if (show) "إخفاء" else "إظهار") } },
             modifier = Modifier.fillMaxWidth(),
         )
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
+                    modifier = Modifier.focusFrame(),
                 enabled = !testing && key.isNotBlank(),
                 onClick = {
                     container.settings.setClaudeKey(key)
@@ -335,6 +356,7 @@ private fun ClaudeSection() {
             ) { Text(if (testing) "جاري التحقق…" else "احفظ وجرّب") }
             if (savedKey.isNotBlank()) {
                 FilterChip(
+                    modifier = Modifier.focusFrame(),
                     selected = enabled,
                     onClick = { container.settings.setUseClaude(!enabled) },
                     label = { Text(if (enabled) "مفعّل" else "متوقف") },
