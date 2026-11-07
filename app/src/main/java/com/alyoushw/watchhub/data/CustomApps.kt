@@ -13,8 +13,11 @@ data class InstalledApp(val packageName: String, val label: String)
 /** Every app with a launcher icon, except this one, sorted by name. */
 @Suppress("DEPRECATION")
 fun Context.launchableApps(): List<InstalledApp> {
-    val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-    return packageManager.queryIntentActivities(intent, 0)
+    // Phone apps and TV (leanback) apps.
+    val infos = listOf(Intent.CATEGORY_LAUNCHER, Intent.CATEGORY_LEANBACK_LAUNCHER).flatMap { category ->
+        packageManager.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(category), 0)
+    }
+    return infos
         .map { InstalledApp(it.activityInfo.packageName, it.loadLabel(packageManager).toString()) }
         .filter { it.packageName != packageName }
         .distinctBy { it.packageName }
@@ -27,18 +30,20 @@ fun Context.appLabel(packageName: String): String? = runCatching {
 }.getOrNull()
 
 /**
- * Opens the app searching for [title] when it supports Android's standard search intent;
- * otherwise copies the title (to paste into the app's search) and opens the app.
+ * Opens the app looking for [title], trying in order:
+ * 1. Android's standard search intent (the app opens on its results);
+ * 2. sharing the title as text to the app (some apps search what they receive);
+ * 3. opening the app with the title copied. TVs have no paste button, so the title is also
+ *    shown in a long message to type or say with the remote's mic.
  */
 @Suppress("DEPRECATION")
 fun Context.openCustomApp(packageName: String, title: String) {
-    val launch = packageManager.getLaunchIntentForPackage(packageName)
+    val launch = launchIntentFor(packageName)
     if (launch == null) {
-        Toast.makeText(this, "التطبيق مو مثبت على جوالك", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "التطبيق مو مثبت على الجهاز", Toast.LENGTH_SHORT).show()
         return
     }
 
-    // The title is always copied too, in case the app opens without filling its search box.
     val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     clipboard.setPrimaryClip(ClipData.newPlainText("title", title))
 
@@ -46,18 +51,32 @@ fun Context.openCustomApp(packageName: String, title: String) {
         .setPackage(packageName)
         .putExtra(SearchManager.QUERY, title)
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    if (packageManager.queryIntentActivities(search, 0).isNotEmpty()) {
-        try {
-            startActivity(search)
-            Toast.makeText(this, "نبحث عن «$title»", Toast.LENGTH_SHORT).show()
-            return
-        } catch (_: Exception) {
-            // Fall through to opening the app normally.
-        }
+    if (packageManager.queryIntentActivities(search, 0).isNotEmpty() && tryStart(search)) {
+        Toast.makeText(this, "نبحث عن «$title»", Toast.LENGTH_SHORT).show()
+        return
     }
 
-    Toast.makeText(this, "التطبيق ما يدعم البحث المباشر. نسخت «$title»، الصقه في البحث", Toast.LENGTH_LONG).show()
+    val share = Intent(Intent.ACTION_SEND)
+        .setType("text/plain")
+        .setPackage(packageName)
+        .putExtra(Intent.EXTRA_TEXT, title)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    if (packageManager.queryIntentActivities(share, 0).isNotEmpty() && tryStart(share)) return
+
+    val hint = if (isTvDevice) "ابحث عن: «$title»\n(اكتبه أو قوله بمايك الريموت)" else "نسخت «$title»، الصقه في البحث"
+    Toast.makeText(this, hint, Toast.LENGTH_LONG).show()
     startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    if (isTvDevice) {
+        // A second long message so the title stays on screen while the app opens.
+        android.os.Handler(mainLooper).postDelayed({ Toast.makeText(this, hint, Toast.LENGTH_LONG).show() }, 3500)
+    }
+}
+
+private fun Context.tryStart(intent: Intent): Boolean = try {
+    startActivity(intent)
+    true
+} catch (_: Exception) {
+    false
 }
 
 /** Whether the app accepts Android's standard search intent (so it can open on its results). */

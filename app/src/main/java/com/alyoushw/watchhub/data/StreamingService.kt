@@ -64,8 +64,15 @@ enum class StreamingService(
     }
 }
 
-fun Context.isInstalled(packageName: String): Boolean =
-    packageManager.getLaunchIntentForPackage(packageName) != null
+/** The app's start screen: its phone launcher entry, or its TV (leanback) one on TVs. */
+fun Context.launchIntentFor(packageName: String): Intent? =
+    packageManager.getLaunchIntentForPackage(packageName)
+        ?: packageManager.getLeanbackLaunchIntentForPackage(packageName)
+
+fun Context.isInstalled(packageName: String): Boolean = launchIntentFor(packageName) != null
+
+val Context.isTvDevice: Boolean
+    get() = packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
 
 fun Context.openUrl(url: String) {
     try {
@@ -83,8 +90,29 @@ private val StreamingService.packages: List<String>
         StreamingService.CRUNCHYROLL -> listOf(packageName)
     }
 
-/** The installed copy of the service's app, if any. */
-fun Context.installedPackage(service: StreamingService): String? = service.packages.firstOrNull { isInstalled(it) }
+/**
+ * The installed copy of the service's app, if any. Known package names first; otherwise any
+ * launchable app whose name matches the service (TV builds sometimes use other packages).
+ */
+fun Context.installedPackage(service: StreamingService): String? =
+    service.packages.firstOrNull { isInstalled(it) } ?: findByLabel(service)
+
+@Suppress("DEPRECATION")
+private fun Context.findByLabel(service: StreamingService): String? {
+    val names = when (service) {
+        StreamingService.NETFLIX -> listOf("netflix", "نتفليكس", "نتفلكس")
+        StreamingService.PRIME -> listOf("prime video", "primevideo", "برايم")
+        StreamingService.CRUNCHYROLL -> listOf("crunchyroll", "كرانشي", "كرنشي")
+    }
+    val pm = packageManager
+    for (category in listOf(Intent.CATEGORY_LEANBACK_LAUNCHER, Intent.CATEGORY_LAUNCHER)) {
+        for (info in pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(category), 0)) {
+            val label = info.loadLabel(pm).toString().lowercase()
+            if (names.any { it in label }) return info.activityInfo.packageName
+        }
+    }
+    return null
+}
 
 /**
  * Rewrites a link into the form the service's app accepts.
@@ -113,7 +141,10 @@ private fun isLegacyCrunchyrollLink(url: String): Boolean =
     "crunchyroll.com" in url && !Regex("crunchyroll\\.com/(?:[a-z]{2}(?:-[a-z]{2})?/)?(?:series|watch)/").containsMatchIn(url)
 
 private fun Context.tryView(url: String, pkg: String): Boolean = try {
-    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    // Netflix only follows a link to the title itself (not just its home screen) when told where it came from.
+    if ("netflix" in pkg) intent.putExtra("source", "30")
+    startActivity(intent)
     true
 } catch (_: ActivityNotFoundException) {
     false
@@ -127,7 +158,12 @@ private fun Context.tryView(url: String, pkg: String): Boolean = try {
 fun Context.openInService(service: StreamingService, url: String, title: String) {
     val pkg = installedPackage(service)
     if (pkg == null) {
-        openUrl(url)
+        if (isTvDevice) {
+            // TVs have no useful browser for these sites; say so instead of a confusing app chooser.
+            Toast.makeText(this, "تطبيق ${service.label} مو مثبت على التلفاز", Toast.LENGTH_LONG).show()
+        } else {
+            openUrl(url)
+        }
         return
     }
     if (service == StreamingService.CRUNCHYROLL && isLegacyCrunchyrollLink(url) && "/search" !in url) {
@@ -162,7 +198,7 @@ fun Context.watchOn(service: StreamingService, directUrl: String?, title: String
 
 /** Launches the service's app, or its website if the app is missing. */
 fun Context.launchService(service: StreamingService) {
-    val launch = installedPackage(service)?.let { packageManager.getLaunchIntentForPackage(it) }
+    val launch = installedPackage(service)?.let { launchIntentFor(it) }
     if (launch != null) {
         startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     } else {

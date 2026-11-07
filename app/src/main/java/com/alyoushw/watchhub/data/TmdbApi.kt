@@ -48,6 +48,8 @@ data class SearchResult(
     val overview: String? = null,
     @SerialName("backdrop_path") val backdropPath: String? = null,
     @SerialName("vote_average") val voteAverage: Double? = null,
+    @SerialName("original_language") val originalLanguage: String? = null,
+    @SerialName("genre_ids") val genreIds: List<Int> = emptyList(),
 ) {
     val type: MediaType? get() = MediaType.fromPath(mediaType)
     val displayTitle: String get() = title ?: name ?: ""
@@ -55,7 +57,7 @@ data class SearchResult(
 }
 
 @Serializable
-data class TmdbGenre(val name: String = "")
+data class TmdbGenre(val id: Int = 0, val name: String = "")
 
 @Serializable
 data class SeasonDto(

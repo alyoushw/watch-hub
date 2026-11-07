@@ -1,6 +1,10 @@
 package com.alyoushw.watchhub.ui
 
+import androidx.compose.material.ripple.RippleAlpha
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LocalRippleConfiguration
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RippleConfiguration
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -30,11 +34,28 @@ private val Colors = darkColorScheme(
     outlineVariant = Color(0xFF32323C),
 )
 
+/** Bright yellow used to show where the TV remote is. */
+val FocusColor = Color(0xFFFFD60A)
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WatchHubTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = Colors) {
+        // Every button, chip and tab gets a strong yellow wash when focused with the remote.
+        val ripple = RippleConfiguration(
+            color = FocusColor,
+            rippleAlpha = RippleAlpha(
+                draggedAlpha = 0.16f,
+                focusedAlpha = 0.45f,
+                hoveredAlpha = 0.12f,
+                pressedAlpha = 0.25f,
+            ),
+        )
         // The interface is Arabic, so keep it right-to-left whatever the phone language is.
-        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+        CompositionLocalProvider(
+            LocalLayoutDirection provides LayoutDirection.Rtl,
+            LocalRippleConfiguration provides ripple,
+        ) {
             content()
         }
     }

@@ -365,16 +365,13 @@ fun isTv(): Boolean {
 @Composable
 fun Modifier.focusHighlight(shape: Shape = RoundedCornerShape(10.dp)): Modifier {
     var focused by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(if (focused) 1.06f else 1f, label = "focusScale")
+    val scale by animateFloatAsState(if (focused) 1.08f else 1f, label = "focusScale")
     return this
         .onFocusChanged { focused = it.isFocused || it.hasFocus }
         .graphicsLayer {
             scaleX = scale
             scaleY = scale
         }
-        .border(
-            width = if (focused) 3.dp else 0.dp,
-            color = if (focused) MaterialTheme.colorScheme.secondary else Color.Transparent,
-            shape = shape,
-        )
+        .border(width = if (focused) 4.dp else 0.dp, color = if (focused) FocusColor else Color.Transparent, shape = shape)
+        .padding(if (focused) 2.dp else 0.dp)
 }

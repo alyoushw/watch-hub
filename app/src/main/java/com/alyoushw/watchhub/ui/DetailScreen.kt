@@ -47,6 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -80,6 +81,7 @@ import com.alyoushw.watchhub.data.SeasonInfo
 import com.alyoushw.watchhub.data.StreamingService
 import com.alyoushw.watchhub.data.TmdbApi
 import com.alyoushw.watchhub.data.ApiException
+import com.alyoushw.watchhub.data.ArabicTranslator
 import com.alyoushw.watchhub.data.WatchItem
 import com.alyoushw.watchhub.data.WatchStatus
 import com.alyoushw.watchhub.data.appLabel
@@ -135,6 +137,10 @@ data class DetailInfo(
     val reviews: List<ReviewInfo>,
     val recommendations: List<SearchResult>,
     val imdbId: String?,
+    /** True when TMDB has no Arabic story, so [overview] is English and gets translated. */
+    val overviewIsEnglish: Boolean = false,
+    val originalLanguage: String? = null,
+    val genreIds: List<Int> = emptyList(),
 ) {
     /** Services from our three that TMDB says carry this title in the region. */
     val availableServices: List<StreamingService>
@@ -204,6 +210,9 @@ data class DetailInfo(
                     },
                 latestAired = ar.latestAired(),
                 imdbId = (ar.imdbId ?: ar.externalIds?.imdbId)?.takeIf { it.startsWith("tt") },
+                overviewIsEnglish = arOverview.isBlank() && enOverview.isNotBlank(),
+                originalLanguage = ar.originalLanguage,
+                genreIds = ar.genres.map { it.id }.filter { it > 0 },
                 cast = ar.credits?.cast.orEmpty().take(15).map { CastMember(it.name, it.character, it.profilePath) },
                 trailers = trailers,
                 reviews = reviews,
@@ -257,7 +266,7 @@ data class DetailInfo(
             }
         }
 
-        private fun languageLabel(code: String): String = when (code) {
+        fun languageLabel(code: String): String = when (code) {
             "en" -> "الإنجليزية"
             "ar" -> "العربية"
             "ja" -> "اليابانية"
@@ -269,6 +278,9 @@ data class DetailInfo(
             "de" -> "الألمانية"
             "it" -> "الإيطالية"
             "zh", "cn" -> "الصينية"
+            "id" -> "الإندونيسية"
+            "th" -> "التايلندية"
+            "tl" -> "الفلبينية"
             else -> code.uppercase(Locale.US)
         }
     }
@@ -294,6 +306,10 @@ class DetailViewModel(
 
     private val key = WatchItem.keyOf(type, id)
 
+    /** "If you liked this": same language and genres first; null until computed. */
+    var similar by mutableStateOf<List<SearchResult>?>(null)
+        private set
+
     init {
         load()
         viewModelScope.launch {
@@ -314,12 +330,49 @@ class DetailViewModel(
                     // Keep the saved copy fresh (new episodes, providers) whenever it is opened.
                     val saved = container.store.data.value.watchlist.firstOrNull { it.key == key }
                     if (saved != null) container.store.upsertWatch(info.toWatchItem(saved, links))
+                    viewModelScope.launch { similar = preciseSimilar(info) }
                     DetailState.Loaded(info)
                 }
             } catch (e: ApiException) {
                 DetailState.Failed(e.message ?: "صار خطأ")
             }
         }
+    }
+
+    /**
+     * Ranks look-alikes so the closest come first: an Indonesian horror film leads with other
+     * Indonesian horror, then the same language in the main genre, then TMDB's broader picks.
+     */
+    private suspend fun preciseSimilar(info: DetailInfo): List<SearchResult> {
+        val lang = info.originalLanguage
+        val genres = info.genreIds
+        val base = buildMap {
+            put("sort_by", "popularity.desc")
+            put("vote_count.gte", "10")
+            if (lang != null) put("with_original_language", lang)
+        }
+        suspend fun discover(withGenres: String?): List<SearchResult> = try {
+            container.api.discover(
+                type,
+                if (withGenres != null) base + ("with_genres" to withGenres) else base,
+                streamableOnly = false,
+            )
+        } catch (_: ApiException) {
+            emptyList()
+        }
+
+        val recs = info.recommendations
+        val sameLangSameGenre = recs.filter { r -> r.originalLanguage == lang && r.genreIds.any { it in genres } }
+        val strict = if (genres.isNotEmpty()) discover(genres.take(2).joinToString(",")) else emptyList()
+        val loose = if (strict.size < 12 && genres.isNotEmpty()) discover(genres.first().toString()) else emptyList()
+        val sameLang = recs.filter { it.originalLanguage == lang }
+        val sameGenre = recs.filter { r -> r.genreIds.any { it in genres } }
+
+        return (sameLangSameGenre + strict + loose + sameLang + sameGenre + recs)
+            .filter { it.id != info.id && it.posterPath != null }
+            .map { if (it.mediaType == null) it.copy(mediaType = type.path) else it }
+            .distinctBy { it.id }
+            .take(30)
     }
 
     fun addToWatchlist(info: DetailInfo) {
@@ -351,7 +404,7 @@ fun DetailScreen(type: MediaType, id: Int, onBack: () -> Unit, onOpen: (MediaTyp
             when (val s = vm.state) {
                 DetailState.Loading -> CenteredLoading()
                 is DetailState.Failed -> MessageBox(s.message, actionLabel = "حاول مرة ثانية", onAction = vm::load)
-                is DetailState.Loaded -> DetailContent(s.info, vm.links, onAdd = { vm.addToWatchlist(s.info) }, onOpen = onOpen)
+                is DetailState.Loaded -> DetailContent(s.info, vm.links, vm.similar, onAdd = { vm.addToWatchlist(s.info) }, onOpen = onOpen)
             }
         }
     }
@@ -362,6 +415,7 @@ fun DetailScreen(type: MediaType, id: Int, onBack: () -> Unit, onOpen: (MediaTyp
 private fun DetailContent(
     info: DetailInfo,
     links: Map<StreamingService, String>?,
+    similar: List<SearchResult>?,
     onAdd: () -> Unit,
     onOpen: (MediaType, Int) -> Unit,
 ) {
@@ -377,7 +431,7 @@ private fun DetailContent(
         contentPadding = PaddingValues(bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        item { Header(info) { info.trailers.firstOrNull()?.let { context.openUrl(it.url) } } }
+        item { Header(info) }
 
         item { WatchButtons(info, links, subscribedKeys, onWatch) }
 
@@ -432,11 +486,17 @@ private fun DetailContent(
 
         item { OtherProviders(info) }
 
-        if (info.recommendations.isNotEmpty()) {
+        val lookAlikes = similar ?: info.recommendations
+        if (lookAlikes.isNotEmpty()) {
             item {
+                val closest = listOfNotNull(
+                    info.genres.firstOrNull(),
+                    info.originalLanguage?.let { DetailInfo.languageLabel(it) },
+                ).joinToString(" · ")
                 TitleRow(
                     title = "إذا عجبك، بيعجبك",
-                    items = info.recommendations,
+                    subtitle = if (similar != null && closest.isNotBlank()) "الأقرب أول: $closest" else null,
+                    items = lookAlikes,
                     onOpen = { r -> r.type?.let { onOpen(it, r.id) } },
                 )
             }
@@ -454,68 +514,59 @@ private fun DetailContent(
 }
 
 @Composable
-private fun Header(info: DetailInfo, onPlayTrailer: () -> Unit) {
-    Column {
+private fun Header(info: DetailInfo) {
+    Box(Modifier.fillMaxWidth()) {
+        // The wide image stays as a faint background; the poster is the face of the page.
         if (info.backdropPath != null) {
-            Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
-                AsyncImage(
-                    model = TmdbApi.image(info.backdropPath, "w780"),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-                if (info.trailers.isNotEmpty()) {
-                    Box(
-                        Modifier
-                            .align(Alignment.Center)
-                            .size(64.dp)
-                            .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.6f))
-                            .clickable(onClick = onPlayTrailer),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(Icons.Filled.PlayArrow, contentDescription = "شغّل الإعلان", tint = Color.White, modifier = Modifier.size(40.dp))
-                    }
-                }
-            }
-        }
-        Row(
-            Modifier.padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Poster(info.posterPath, width = 100.dp)
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(info.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                if (info.searchTitle != info.title) {
-                    Text(info.searchTitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                val kind = if (info.type == MediaType.TV) "مسلسل" else "فيلم"
-                Text(
-                    listOfNotNull(kind, info.year).joinToString(" · "),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                ratingLabel(info.rating)?.let { rating ->
-                    val votes = info.voteCount?.let { " · " + String.format(Locale.US, "%,d", it) + " تقييم" }.orEmpty()
-                    Text(
-                        "$rating / 10$votes",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.secondary,
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
-                BadgeRow(info.availableServices)
-            }
-        }
-        info.tagline?.let {
-            Text(
-                "«$it»",
-                style = MaterialTheme.typography.bodyMedium,
-                fontStyle = FontStyle.Italic,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp),
+            AsyncImage(
+                model = TmdbApi.image(info.backdropPath, "w780"),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                alpha = 0.22f,
+                modifier = Modifier.matchParentSize(),
             )
+        }
+        Column {
+            Row(
+                Modifier.padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Poster(info.posterPath, width = 140.dp)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(info.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    if (info.searchTitle != info.title) {
+                        Text(info.searchTitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    val kind = if (info.type == MediaType.TV) "مسلسل" else "فيلم"
+                    Text(
+                        listOfNotNull(kind, info.year, info.genres.take(2).joinToString("، ").ifBlank { null }).joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    ratingLabel(info.rating)?.let { rating ->
+                        val votes = info.voteCount?.let { " · " + String.format(Locale.US, "%,d", it) + " تقييم" }.orEmpty()
+                        Text(
+                            "$rating / 10$votes",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.secondary,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                    if (info.type == MediaType.TV) StatusBadge(info.id)
+                    BadgeRow(info.availableServices)
+                }
+            }
+            info.tagline?.let {
+                TranslatedText(
+                    it,
+                    isEnglish = it.none { c -> c in '\u0600'..'\u06FF' },
+                    style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 8.dp),
+                    quote = true,
+                )
+            }
         }
     }
 }
@@ -632,21 +683,84 @@ private fun Story(info: DetailInfo) {
         if (info.overview.isBlank()) {
             Text("ما فيه وصف لهذا العمل للحين.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
-            Text(info.overview, style = MaterialTheme.typography.bodyLarge)
+            TranslatedText(info.overview, isEnglish = info.overviewIsEnglish, style = MaterialTheme.typography.bodyLarge)
         }
         info.englishOverview?.let { english ->
             var open by remember { mutableStateOf(false) }
             TextButton(onClick = { open = !open }) {
-                Text(if (open) "إخفاء القصة بالإنجليزي" else "القصة بالتفصيل (بالإنجليزي)")
+                Text(if (open) "إخفاء القصة المفصلة" else "القصة بالتفصيل")
             }
             if (open) {
-                Text(
+                TranslatedText(
                     english,
-                    style = MaterialTheme.typography.bodyMedium.copy(textDirection = TextDirection.Ltr),
-                    textAlign = TextAlign.Left,
+                    isEnglish = true,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.fillMaxWidth(),
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Shows [text] in Arabic: English text is translated on the device automatically, with a
+ * button to see the original. Arabic text is shown as is.
+ */
+@Composable
+fun TranslatedText(
+    text: String,
+    isEnglish: Boolean,
+    style: androidx.compose.ui.text.TextStyle,
+    modifier: Modifier = Modifier,
+    color: Color = Color.Unspecified,
+    maxLines: Int = Int.MAX_VALUE,
+    quote: Boolean = false,
+) {
+    var translated by remember(text) { mutableStateOf(if (isEnglish) ArabicTranslator.cached(text) else null) }
+    var failed by remember(text) { mutableStateOf(false) }
+    var showOriginal by remember(text) { mutableStateOf(false) }
+    if (isEnglish) {
+        LaunchedEffect(text) {
+            if (translated == null) {
+                translated = ArabicTranslator.translate(text)
+                failed = translated == null
+            }
+        }
+    }
+    val arabic = translated
+    val showArabic = isEnglish && arabic != null && !showOriginal
+    val shown = when {
+        !isEnglish -> text
+        showArabic -> arabic.orEmpty()
+        else -> text
+    }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            if (quote) "«$shown»" else shown,
+            style = if (isEnglish && !showArabic) style.copy(textDirection = TextDirection.Ltr) else style,
+            textAlign = if (isEnglish && !showArabic) TextAlign.Left else TextAlign.Start,
+            color = color,
+            maxLines = maxLines,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (isEnglish) {
+            when {
+                arabic != null -> TextButton(
+                    onClick = { showOriginal = !showOriginal },
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                ) {
+                    Text(
+                        if (showOriginal) "اعرضه بالعربي" else "مترجم آلياً · اعرض الأصل",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+                failed -> Text(
+                    "ما قدرنا نترجمه الحين (الترجمة تحتاج إنترنت أول مرة)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                else -> Text("جاري الترجمة…", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -788,20 +902,18 @@ private fun ReviewCard(review: ReviewInfo) {
     var open by remember { mutableStateOf(false) }
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        modifier = Modifier.fillMaxWidth().clickable { open = !open }.animateContentSize(),
+        modifier = Modifier.fillMaxWidth().focusHighlight(RoundedCornerShape(12.dp)).clickable { open = !open }.animateContentSize(),
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(review.author, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 review.rating?.let { RatingChip(it) }
             }
-            Text(
+            TranslatedText(
                 review.content,
-                style = MaterialTheme.typography.bodySmall.copy(textDirection = TextDirection.Ltr),
-                textAlign = TextAlign.Left,
-                maxLines = if (open) Int.MAX_VALUE else 4,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(),
+                isEnglish = true,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = if (open) Int.MAX_VALUE else 5,
             )
             Text(
                 if (open) "أقل" else "اقرأ الرأي كامل",
