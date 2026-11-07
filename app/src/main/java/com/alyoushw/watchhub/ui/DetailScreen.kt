@@ -79,7 +79,7 @@ import com.alyoushw.watchhub.data.SearchResult
 import com.alyoushw.watchhub.data.SeasonInfo
 import com.alyoushw.watchhub.data.StreamingService
 import com.alyoushw.watchhub.data.TmdbApi
-import com.alyoushw.watchhub.data.TmdbException
+import com.alyoushw.watchhub.data.ApiException
 import com.alyoushw.watchhub.data.WatchItem
 import com.alyoushw.watchhub.data.WatchStatus
 import com.alyoushw.watchhub.data.appLabel
@@ -314,7 +314,7 @@ class DetailViewModel(
                     if (saved != null) container.store.upsertWatch(info.toWatchItem(saved, links))
                     DetailState.Loaded(info)
                 }
-            } catch (e: TmdbException) {
+            } catch (e: ApiException) {
                 DetailState.Failed(e.message ?: "صار خطأ")
             }
         }
@@ -576,7 +576,7 @@ private fun WatchButtons(
 /** The user's own extra apps, picked once in Settings. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun CustomAppButtons(title: String) {
+fun CustomAppButtons(title: String) {
     val container = appContainer()
     val context = LocalContext.current
     val apps by container.settings.customApps.collectAsStateWithLifecycle()
@@ -596,7 +596,7 @@ private fun CustomAppButtons(title: String) {
 }
 
 @Composable
-private fun Trailers(trailers: List<Trailer>, onPlay: (Trailer) -> Unit) {
+fun Trailers(trailers: List<Trailer>, onPlay: (Trailer) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SectionTitle("الإعلانات", Modifier.padding(horizontal = 16.dp))
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {

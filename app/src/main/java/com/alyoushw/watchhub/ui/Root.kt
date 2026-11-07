@@ -104,12 +104,20 @@ fun WatchHubRoot() {
             ) { entry ->
                 val type = MediaType.fromPath(entry.arguments?.getString("type")) ?: MediaType.MOVIE
                 val id = entry.arguments?.getInt("id") ?: 0
-                DetailScreen(
-                    type = type,
-                    id = id,
-                    onBack = { nav.popBackStack() },
-                    onOpen = { t, i -> nav.openDetail(t, i) },
-                )
+                if (type == MediaType.ANIME) {
+                    AnimeDetailScreen(
+                        id = id,
+                        onBack = { nav.popBackStack() },
+                        onOpen = { t, i -> nav.openDetail(t, i) },
+                    )
+                } else {
+                    DetailScreen(
+                        type = type,
+                        id = id,
+                        onBack = { nav.popBackStack() },
+                        onOpen = { t, i -> nav.openDetail(t, i) },
+                    )
+                }
             }
         }
     }

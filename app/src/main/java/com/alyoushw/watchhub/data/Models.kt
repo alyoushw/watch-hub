@@ -4,9 +4,12 @@ import kotlinx.serialization.Serializable
 import java.time.LocalDate
 
 @Serializable
-enum class MediaType(val path: String) {
-    MOVIE("movie"),
-    TV("tv");
+enum class MediaType(val path: String, val label: String) {
+    MOVIE("movie", "فيلم"),
+    TV("tv", "مسلسل"),
+
+    /** Anime from MyAnimeList; ids are MAL ids, not TMDB ids. */
+    ANIME("anime", "أنمي");
 
     companion object {
         fun fromPath(path: String?): MediaType? = entries.firstOrNull { it.path == path }
@@ -60,7 +63,8 @@ private fun WatchItem.sortedSeasons() = seasons.sortedBy { it.number }
 /** The episode after [WatchItem.progress], or null when the show is finished. */
 fun WatchItem.nextEpisode(): EpisodeMark? {
     val s = sortedSeasons()
-    if (s.isEmpty()) return null
+    // Episode count unknown (e.g. an anime still airing): just keep counting up.
+    if (s.isEmpty()) return EpisodeMark(progress?.season ?: 1, (progress?.episode ?: 0) + 1)
     val p = progress ?: return EpisodeMark(s.first().number, 1)
     val idx = s.indexOfFirst { it.number == p.season }
     if (idx == -1) return EpisodeMark(p.season, p.episode + 1)

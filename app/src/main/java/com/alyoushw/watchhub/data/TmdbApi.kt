@@ -12,7 +12,10 @@ import okhttp3.Request
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-class TmdbException(message: String) : Exception(message)
+/** Any error from a data source, with a message ready to show the user. */
+open class ApiException(message: String) : Exception(message)
+
+class TmdbException(message: String) : ApiException(message)
 
 @Serializable
 data class SearchResponse(val results: List<SearchResult> = emptyList())
@@ -263,7 +266,11 @@ class TmdbApi(private val settings: SettingsStore) {
     companion object {
         private const val BASE = "https://api.themoviedb.org/3"
 
-        fun image(path: String?, size: String = "w342"): String? =
-            path?.let { "https://image.tmdb.org/t/p/$size$it" }
+        /** TMDB image URL for [path]; full URLs (e.g. MyAnimeList posters) pass through. */
+        fun image(path: String?, size: String = "w342"): String? = when {
+            path == null -> null
+            path.startsWith("http") -> path
+            else -> "https://image.tmdb.org/t/p/$size$path"
+        }
     }
 }

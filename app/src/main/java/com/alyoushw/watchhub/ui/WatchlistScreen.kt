@@ -58,7 +58,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.alyoushw.watchhub.AppContainer
 import com.alyoushw.watchhub.data.MediaType
 import com.alyoushw.watchhub.data.StreamingService
-import com.alyoushw.watchhub.data.TmdbException
+import com.alyoushw.watchhub.data.ApiException
 import com.alyoushw.watchhub.data.WatchItem
 import com.alyoushw.watchhub.data.WatchStatus
 import com.alyoushw.watchhub.data.nextEpisode
@@ -87,6 +87,11 @@ class WatchlistViewModel(private val container: AppContainer) : ViewModel() {
             val region = container.settings.region.value
             for (item in container.store.data.value.watchlist) {
                 try {
+                    if (item.type == MediaType.ANIME) {
+                        val anime = container.jikan.anime(item.id)
+                        container.store.updateWatch(item.key) { anime.toWatchItem(it) }
+                        continue
+                    }
                     val details = container.api.details(item.type, item.id)
                     val links = if (item.directLinks.isEmpty()) container.links.resolve(item.type, item.id) else emptyMap()
                     container.store.updateWatch(item.key) { current ->
@@ -98,7 +103,7 @@ class WatchlistViewModel(private val container: AppContainer) : ViewModel() {
                             directLinks = current.directLinks.ifEmpty { links.mapKeys { it.key.key } },
                         )
                     }
-                } catch (e: TmdbException) {
+                } catch (e: ApiException) {
                     error = e.message
                     break
                 }
@@ -203,7 +208,7 @@ private fun WatchRow(item: WatchItem, onClick: () -> Unit) {
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            (if (item.type == MediaType.TV) "مسلسل" else "فيلم") + " · " + item.status.label,
+                            item.type.label + " · " + item.status.label,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -232,7 +237,7 @@ private fun WatchRow(item: WatchItem, onClick: () -> Unit) {
                 }
                 BadgeRow(services)
                 WatchNowButton(item, services)
-                if (item.type == MediaType.TV && item.status != WatchStatus.DONE) {
+                if (item.type != MediaType.MOVIE && item.status != WatchStatus.DONE) {
                     EpisodeTracker(item)
                 }
             }
@@ -267,7 +272,14 @@ fun EpisodeTracker(item: WatchItem) {
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
-            if (progress == null) "ما بديت" else "وصلت: الموسم ${progress.season} · الحلقة ${progress.episode}",
+            when {
+                progress == null -> "ما بديت"
+                item.type == MediaType.ANIME -> {
+                    val total = item.seasons.firstOrNull()?.episodes
+                    "وصلت: الحلقة ${progress.episode}" + (total?.let { " من $it" } ?: "")
+                }
+                else -> "وصلت: الموسم ${progress.season} · الحلقة ${progress.episode}"
+            },
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.SemiBold,
         )
@@ -298,7 +310,9 @@ fun EpisodeTracker(item: WatchItem) {
                         }
                     },
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                ) { Text("شفت م${next.season} ح${next.episode}") }
+                ) {
+                    Text(if (item.type == MediaType.ANIME) "شفت الحلقة ${next.episode}" else "شفت م${next.season} ح${next.episode}")
+                }
             }
             if (progress != null) {
                 OutlinedButton(

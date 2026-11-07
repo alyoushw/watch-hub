@@ -51,6 +51,16 @@ enum class StreamingService(
     companion object {
         fun forProvider(providerId: Int): StreamingService? = entries.firstOrNull { providerId in it.tmdbIds }
         fun forKey(key: String?): StreamingService? = entries.firstOrNull { it.key == key }
+
+        fun forUrl(url: String): StreamingService? {
+            val host = runCatching { Uri.parse(url).host }.getOrNull()?.lowercase() ?: return null
+            return when {
+                "netflix." in host -> NETFLIX
+                "crunchyroll." in host -> CRUNCHYROLL
+                "primevideo." in host || "amazon." in host -> PRIME
+                else -> null
+            }
+        }
     }
 }
 

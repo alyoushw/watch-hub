@@ -3,6 +3,7 @@ package com.alyoushw.watchhub
 import android.app.Application
 import android.content.Context
 import com.alyoushw.watchhub.data.DirectLinks
+import com.alyoushw.watchhub.data.JikanApi
 import com.alyoushw.watchhub.data.LocalStore
 import com.alyoushw.watchhub.data.SettingsStore
 import com.alyoushw.watchhub.data.TmdbApi
@@ -14,6 +15,7 @@ class AppContainer(context: Context) {
     val store = LocalStore(File(context.filesDir, "watchhub.json"))
     val api = TmdbApi(settings)
     val links = DirectLinks()
+    val jikan = JikanApi()
 }
 
 class WatchHubApp : Application() {

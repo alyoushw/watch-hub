@@ -33,7 +33,8 @@ import com.alyoushw.watchhub.AppContainer
 import com.alyoushw.watchhub.data.MediaType
 import com.alyoushw.watchhub.data.SearchResult
 import com.alyoushw.watchhub.data.StreamingService
-import com.alyoushw.watchhub.data.TmdbException
+import com.alyoushw.watchhub.data.ApiException
+import com.alyoushw.watchhub.data.JAnime
 import com.alyoushw.watchhub.data.WatchItem
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -50,6 +51,12 @@ data class HomeSection(
     val service: StreamingService? = null,
     val ranked: Boolean = false,
     val wide: Boolean = false,
+)
+
+private class AnimeRow(
+    val template: HomeSection,
+    val limit: Int = 20,
+    val fetch: suspend () -> List<JAnime>,
 )
 
 class HomeViewModel(private val container: AppContainer) : ViewModel() {
@@ -112,7 +119,40 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    private suspend fun buildSections(t: MediaType): List<HomeSection> = coroutineScope {
+    /**
+     * Anime rows from MyAnimeList. Jikan is rate limited, so rows load one after another
+     * and appear on screen as each one arrives.
+     */
+    private suspend fun buildAnimeSections(): List<HomeSection> {
+        val jikan = container.jikan
+        val specs = listOf(
+            AnimeRow(HomeSection("anime-airing", "الرائج الحين", emptyList(), subtitle = "الأعلى تقييماً من اللي ينعرض الحين")) { jikan.top("airing") },
+            AnimeRow(HomeSection("anime-top", "أفضل 10 أنمي على MyAnimeList", emptyList(), ranked = true), limit = 10) { jikan.top() },
+            AnimeRow(HomeSection("anime-season", "أنمي هذا الموسم", emptyList())) { jikan.seasonNow() },
+            AnimeRow(
+                HomeSection("anime-popular", "الأكثر شعبية", emptyList(), subtitle = "حسب عدد المتابعين على MyAnimeList", ranked = true),
+                limit = 10,
+            ) { jikan.top("bypopularity") },
+            AnimeRow(HomeSection("anime-upcoming", "قريباً", emptyList())) { jikan.top("upcoming") },
+        )
+        val out = mutableListOf<HomeSection>()
+        for (row in specs) {
+            val t = row.template
+            val section = section(t.id, t.title, t.subtitle, ranked = t.ranked, limit = row.limit) {
+                row.fetch().map { it.toSearchResult() }
+            } ?: continue
+            out += section
+            sections = out.toList()
+        }
+        return out
+    }
+
+    private suspend fun buildSections(t: MediaType): List<HomeSection> {
+        if (t == MediaType.ANIME) return buildAnimeSections()
+        return buildTmdbSections(t)
+    }
+
+    private suspend fun buildTmdbSections(t: MediaType): List<HomeSection> = coroutineScope {
         val kind = if (t == MediaType.TV) "مسلسلات" else "أفلام"
         val allProviders = StreamingService.entries.flatMap { it.tmdbIds }.joinToString("|")
         val today = LocalDate.now()
@@ -209,7 +249,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     ): HomeSection? = try {
         val items = fetch().filter { it.posterPath != null }.distinctBy { it.id }.take(limit)
         if (items.isEmpty()) null else HomeSection(id, title, items, subtitle, service, ranked, wide)
-    } catch (e: TmdbException) {
+    } catch (e: ApiException) {
         lastError = e.message
         null
     }
@@ -250,6 +290,11 @@ fun HomeScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit) {
                     selected = vm.type == MediaType.MOVIE,
                     onClick = { vm.selectType(MediaType.MOVIE) },
                     label = { Text("أفلام") },
+                )
+                FilterChip(
+                    selected = vm.type == MediaType.ANIME,
+                    onClick = { vm.selectType(MediaType.ANIME) },
+                    label = { Text("أنمي") },
                 )
             }
 
