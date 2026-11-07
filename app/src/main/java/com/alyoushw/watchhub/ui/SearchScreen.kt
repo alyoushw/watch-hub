@@ -1,35 +1,64 @@
 package com.alyoushw.watchhub.ui
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.speech.RecognizerIntent
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -39,17 +68,40 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.alyoushw.watchhub.AppContainer
+import com.alyoushw.watchhub.R
+import com.alyoushw.watchhub.data.ApiException
+import com.alyoushw.watchhub.data.DiscoverFilter
+import com.alyoushw.watchhub.data.Genre
 import com.alyoushw.watchhub.data.MediaType
+import com.alyoushw.watchhub.data.Origin
+import com.alyoushw.watchhub.data.SavedFilter
 import com.alyoushw.watchhub.data.SearchResult
-import com.alyoushw.watchhub.data.TmdbException
+import com.alyoushw.watchhub.data.SmartQuery
+import com.alyoushw.watchhub.data.SmartSearch
+import com.alyoushw.watchhub.data.SortMode
+import com.alyoushw.watchhub.data.StreamingService
+import com.alyoushw.watchhub.data.WatchItem
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 
 sealed interface SearchState {
     data object Idle : SearchState
     data object Loading : SearchState
-    data class Results(val items: List<SearchResult>) : SearchState
+    data class Results(
+        val items: List<SearchResult>,
+        /** Explains what we understood, e.g. "فهمت إنك تبي:". Null for a plain title search. */
+        val heading: String? = null,
+        val chips: List<String> = emptyList(),
+        /** The filter behind these results, if any, for editing, saving and paging. */
+        val filter: DiscoverFilter? = null,
+        val canLoadMore: Boolean = false,
+    ) : SearchState
+
     data class Failed(val message: String) : SearchState
 }
 
@@ -58,7 +110,11 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
         private set
     var state by mutableStateOf<SearchState>(SearchState.Idle)
         private set
+    var loadingMore by mutableStateOf(false)
+        private set
+
     private var job: Job? = null
+    private var page = 1
 
     fun onQueryChange(value: String) {
         query = value
@@ -68,32 +124,168 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
             return
         }
         job = viewModelScope.launch {
-            delay(400) // wait for the user to stop typing
-            run(value)
+            delay(600) // wait for the user to stop typing
+            runSmart(value)
         }
     }
 
     fun submit() {
         job?.cancel()
-        if (query.isNotBlank()) job = viewModelScope.launch { run(query) }
+        if (query.isNotBlank()) job = viewModelScope.launch { runSmart(query) }
     }
 
-    private suspend fun run(value: String) {
-        state = SearchState.Loading
-        state = try {
-            SearchState.Results(container.api.search(value.trim()))
-        } catch (e: TmdbException) {
-            SearchState.Failed(e.message ?: "صار خطأ")
+    /** Spoken or tapped request: show it in the box and run it right away. */
+    fun ask(text: String) {
+        query = text
+        submit()
+    }
+
+    fun applyFilter(filter: DiscoverFilter, heading: String = "النتائج حسب الفلتر:") {
+        job?.cancel()
+        job = viewModelScope.launch {
+            state = SearchState.Loading
+            state = guard { filterResults(filter, heading) }
         }
+    }
+
+    fun recommendFromWatchlist() {
+        job?.cancel()
+        job = viewModelScope.launch {
+            state = SearchState.Loading
+            state = guard { fromWatchlist() }
+        }
+    }
+
+    fun loadMore() {
+        val current = state as? SearchState.Results ?: return
+        val filter = current.filter ?: return
+        if (loadingMore) return
+        viewModelScope.launch {
+            loadingMore = true
+            try {
+                val next = page + 1
+                val more = container.api.discover(filter.type, filter.toParams(), next, streamableOnly = false)
+                page = next
+                state = current.copy(
+                    items = (current.items + more).distinctBy { "${it.mediaType}:${it.id}" },
+                    canLoadMore = more.size >= 20,
+                )
+            } catch (_: ApiException) {
+            }
+            loadingMore = false
+        }
+    }
+
+    private suspend fun guard(block: suspend () -> SearchState): SearchState = try {
+        block()
+    } catch (e: ApiException) {
+        SearchState.Failed(e.message ?: "صار خطأ")
+    }
+
+    private suspend fun runSmart(text: String) {
+        state = SearchState.Loading
+        state = guard {
+            when (val q = SmartSearch.parse(text)) {
+                is SmartQuery.Plain -> SearchState.Results(container.api.search(q.text))
+                is SmartQuery.Filter -> filterResults(q.filter, "فهمت إنك تبي:")
+                is SmartQuery.Similar -> similar(q)
+                SmartQuery.FromWatchlist -> fromWatchlist()
+            }
+        }
+    }
+
+    private suspend fun filterResults(filter: DiscoverFilter, heading: String): SearchState {
+        page = 1
+        val items = container.api.discover(filter.type, filter.toParams(), 1, streamableOnly = false)
+        return SearchState.Results(items, heading, filter.summary(), filter, canLoadMore = items.size >= 20)
+    }
+
+    private suspend fun similar(q: SmartQuery.Similar): SearchState {
+        val hits = container.api.search(q.title)
+        val seed = hits.firstOrNull { q.type == null || it.type == q.type } ?: hits.firstOrNull()
+        val seedType = seed?.type
+        if (seed == null || seedType == null) {
+            return SearchState.Results(emptyList(), "ما لقينا «${q.title}». جرّب تكتب اسمه بالإنجليزي.")
+        }
+        val recs = container.api.recommendations(seedType, seed.id)
+        return SearchState.Results(recs, "مشابه لـ «${seed.displayTitle}»:")
+    }
+
+    private suspend fun fromWatchlist(): SearchState {
+        val watchlist = container.store.data.value.watchlist
+        if (watchlist.isEmpty()) return SearchState.Failed("قائمتك فاضية. أضف كم عمل يعجبك وبنرشّح لك على ذوقك.")
+        val saved = watchlist.map { it.key }.toSet()
+        val recent = watchlist.sortedByDescending { it.addedAt }
+        val tmdbSeeds = recent.filter { it.type != MediaType.ANIME }.take(5)
+        val animeSeeds = recent.filter { it.type == MediaType.ANIME }.take(2)
+
+        val lists = coroutineScope {
+            val tmdb = tmdbSeeds.map { seed -> async { runCatchingApi { container.api.recommendations(seed.type, seed.id) } } }
+            val anime = animeSeeds.map { seed ->
+                async { runCatchingApi { container.jikan.recommendations(seed.id).take(10).map { it.toSearchResult() } } }
+            }
+            (tmdb + anime).awaitAll()
+        }
+        // Interleave so every seed contributes near the top.
+        val merged = mutableListOf<SearchResult>()
+        for (i in 0 until (lists.maxOfOrNull { it.size } ?: 0)) lists.forEach { list -> list.getOrNull(i)?.let(merged::add) }
+        val items = merged
+            .filter { r ->
+                val type = r.type
+                type == null || WatchItem.keyOf(type, r.id) !in saved
+            }
+            .distinctBy { "${it.mediaType}:${it.id}" }
+        val names = (tmdbSeeds + animeSeeds).joinToString("، ") { it.title }
+        return SearchState.Results(items, "مرشّح لك لأنك أضفت: $names")
+    }
+
+    private suspend fun runCatchingApi(block: suspend () -> List<SearchResult>): List<SearchResult> = try {
+        block()
+    } catch (_: ApiException) {
+        emptyList()
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+private val Examples = listOf(
+    "مسلسل كوري درامي",
+    "فيلم رعب إندونيسي",
+    "أفضل أفلام أكشن على نتفلكس",
+    "شي مشابه لـ Interstellar",
+    "أنمي فانتازيا",
+    "كوميدي عائلي جديد",
+    "رشّح لي من قائمتي",
+)
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SearchScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit) {
     val container = appContainer()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val vm: SearchViewModel = viewModel { SearchViewModel(container) }
     val apiKey by container.settings.apiKey.collectAsStateWithLifecycle()
+    val data by container.store.data.collectAsStateWithLifecycle()
+
+    var editing by remember { mutableStateOf<DiscoverFilter?>(null) }
+    var savingFilter by remember { mutableStateOf<DiscoverFilter?>(null) }
+
+    val voice = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val spoken = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+            if (!spoken.isNullOrBlank()) vm.ask(spoken)
+        }
+    }
+    val startVoice = {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ar-SA")
+            .putExtra(RecognizerIntent.EXTRA_PROMPT, "قول وش تبي تشوف… مثلاً: مسلسل كوري درامي")
+        try {
+            voice.launch(intent)
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(context, "جوالك ما فيه خدمة التعرف على الصوت", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
@@ -103,20 +295,49 @@ fun SearchScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit) {
             OutlinedTextField(
                 value = vm.query,
                 onValueChange = vm::onQueryChange,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                placeholder = { Text("فيلم، مسلسل، أنمي…") },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                placeholder = { Text("اكتب أو تكلّم: «فيلم رعب إندونيسي»") },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 trailingIcon = {
-                    if (vm.query.isNotEmpty()) {
-                        IconButton(onClick = { vm.onQueryChange("") }) {
-                            Icon(Icons.Filled.Clear, contentDescription = "مسح")
+                    Row {
+                        if (vm.query.isNotEmpty()) {
+                            IconButton(onClick = { vm.onQueryChange("") }) {
+                                Icon(Icons.Filled.Clear, contentDescription = "مسح")
+                            }
+                        }
+                        IconButton(onClick = startVoice) {
+                            Icon(
+                                painterResource(R.drawable.ic_mic),
+                                contentDescription = "بحث بالصوت",
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
                         }
                     }
                 },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { vm.submit() }),
+                keyboardActions = KeyboardActions(onSearch = { vm.submit() }),
             )
+
+            // Filters, saved tastes and "from my list" in one scrollable row.
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                item {
+                    AssistChip(
+                        onClick = { editing = (vm.state as? SearchState.Results)?.filter ?: DiscoverFilter() },
+                        label = { Text("الفلاتر") },
+                        leadingIcon = { Icon(painterResource(R.drawable.ic_tune), contentDescription = null, Modifier.size(18.dp)) },
+                    )
+                }
+                item {
+                    AssistChip(onClick = vm::recommendFromWatchlist, label = { Text("✨ من قائمتي") })
+                }
+                items(data.savedFilters, key = { "saved-" + it.name }) { saved ->
+                    AssistChip(onClick = { vm.applyFilter(saved.filter, "نمطك «${saved.name}»:") }, label = { Text("★ ${saved.name}") })
+                }
+            }
 
             when {
                 apiKey.isBlank() -> MessageBox(
@@ -127,28 +348,279 @@ fun SearchScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit) {
                 )
 
                 else -> when (val s = vm.state) {
-                    SearchState.Idle -> MessageBox(
-                        title = "ابحث مرة وحدة في كل المنصات",
-                        body = "اكتب اسم أي عمل وبنقولك هل هو على نتفلكس أو برايم فيديو أو كرنشي رول، ونفتحه لك مباشرة.",
-                    )
-
+                    SearchState.Idle -> IdleHints(onAsk = vm::ask, onVoice = startVoice)
                     SearchState.Loading -> CenteredLoading()
                     is SearchState.Failed -> MessageBox(s.message, actionLabel = "حاول مرة ثانية", onAction = vm::submit)
-                    is SearchState.Results ->
-                        if (s.items.isEmpty()) {
-                            MessageBox("ما لقينا شي بهذا الاسم", "جرّب تكتبه بالإنجليزي.")
-                        } else {
-                            LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
-                                items(s.items, key = { "${it.mediaType}:${it.id}" }) { item ->
-                                    SearchRow(item) { item.type?.let { onOpen(it, item.id) } }
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                                }
+                    is SearchState.Results -> LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
+                        if (s.heading != null) {
+                            item {
+                                Understood(
+                                    s,
+                                    onEdit = { editing = s.filter },
+                                    onSave = { savingFilter = s.filter },
+                                )
                             }
                         }
+                        if (s.items.isEmpty()) {
+                            item {
+                                Text(
+                                    "ما لقينا نتائج. جرّب تخفف الفلاتر أو تكتب بطريقة ثانية.",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(16.dp),
+                                )
+                            }
+                        }
+                        items(s.items, key = { "${it.mediaType}:${it.id}" }) { item ->
+                            SearchRow(item) { item.type?.let { onOpen(it, item.id) } }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        }
+                        if (s.canLoadMore) {
+                            item {
+                                TextButton(
+                                    onClick = vm::loadMore,
+                                    enabled = !vm.loadingMore,
+                                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                                ) { Text(if (vm.loadingMore) "جاري التحميل…" else "اعرض أكثر") }
+                            }
+                        }
+                    }
                 }
             }
         }
     }
+
+    editing?.let { initial ->
+        FilterSheet(
+            initial = initial,
+            saved = data.savedFilters,
+            onDismiss = { editing = null },
+            onApply = {
+                editing = null
+                vm.applyFilter(it)
+            },
+            onSave = {
+                editing = null
+                savingFilter = it
+            },
+            onDeleteSaved = { name -> scope.launch { container.store.removeFilter(name) } },
+        )
+    }
+
+    savingFilter?.let { filter ->
+        SaveFilterDialog(
+            suggestedName = filter.summary().drop(1).take(3).joinToString(" ").ifBlank { filter.summary().first() },
+            onDismiss = { savingFilter = null },
+            onSave = { name ->
+                scope.launch { container.store.saveFilter(SavedFilter(name, filter)) }
+                savingFilter = null
+                Toast.makeText(context, "حفظنا النمط «$name»", Toast.LENGTH_SHORT).show()
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun IdleHints(onAsk: (String) -> Unit, onVoice: () -> Unit) {
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("اطلب بكلامك العادي", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(
+            "اكتب أو اضغط المايك وقول وش مزاجك اليوم: النوع، البلد، المنصة، أو شي مشابه لعمل عجبك. " +
+                "وتقدر تستخدم «الفلاتر» وتحفظ النمط اللي يعجبك.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Button(onClick = onVoice) {
+            Icon(painterResource(R.drawable.ic_mic), contentDescription = null, Modifier.size(18.dp))
+            Text("  تكلّم")
+        }
+        Text("جرّب:", style = MaterialTheme.typography.labelLarge)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Examples.forEach { example ->
+                SuggestionChip(onClick = { onAsk(example) }, label = { Text(example) })
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun Understood(s: SearchState.Results, onEdit: () -> Unit, onSave: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(s.heading.orEmpty(), fontWeight = FontWeight.Bold)
+            if (s.chips.isNotEmpty()) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    s.chips.forEach { AssistChip(onClick = onEdit, label = { Text(it) }) }
+                }
+            }
+            if (s.filter != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = onEdit) { Text("عدّل") }
+                    TextButton(onClick = onSave) { Text("★ احفظه كنمط") }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun FilterSheet(
+    initial: DiscoverFilter,
+    saved: List<SavedFilter>,
+    onDismiss: () -> Unit,
+    onApply: (DiscoverFilter) -> Unit,
+    onSave: (DiscoverFilter) -> Unit,
+    onDeleteSaved: (String) -> Unit,
+) {
+    var f by remember { mutableStateOf(initial.copy(type = if (initial.type == MediaType.ANIME) MediaType.TV else initial.type)) }
+    val thisYear = LocalDate.now().year
+    val eras = listOf(
+        "الكل" to (null to null),
+        "آخر سنتين" to ((thisYear - 1) to null),
+        "2020+" to (2020 to null),
+        "2010–2019" to (2010 to 2019),
+        "2000–2009" to (2000 to 2009),
+        "التسعينات" to (1990 to 1999),
+        "أقدم" to (null to 1989),
+    )
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            SectionTitle("الفلاتر")
+
+            FilterGroup("النوع") {
+                FilterChip(selected = f.type == MediaType.TV, onClick = { f = f.copy(type = MediaType.TV) }, label = { Text("مسلسلات") })
+                FilterChip(selected = f.type == MediaType.MOVIE, onClick = { f = f.copy(type = MediaType.MOVIE) }, label = { Text("أفلام") })
+            }
+
+            FilterGroup("التصنيف (تقدر تختار أكثر من واحد)") {
+                Genre.entries.forEach { g ->
+                    FilterChip(
+                        selected = g in f.genres,
+                        onClick = { f = f.copy(genres = if (g in f.genres) f.genres - g else f.genres + g) },
+                        label = { Text(g.label) },
+                    )
+                }
+            }
+
+            FilterGroup("البلد / اللغة") {
+                FilterChip(selected = f.origin == null, onClick = { f = f.copy(origin = null) }, label = { Text("الكل") })
+                Origin.entries.forEach { o ->
+                    FilterChip(selected = f.origin == o, onClick = { f = f.copy(origin = o) }, label = { Text(o.label) })
+                }
+            }
+
+            FilterGroup("المنصة") {
+                FilterChip(selected = f.services.isEmpty(), onClick = { f = f.copy(services = emptySet()) }, label = { Text("أي منصة") })
+                StreamingService.entries.forEach { s ->
+                    FilterChip(
+                        selected = s.key in f.services,
+                        onClick = { f = f.copy(services = if (s.key in f.services) f.services - s.key else f.services + s.key) },
+                        label = { Text(s.label) },
+                    )
+                }
+            }
+
+            FilterGroup("الترتيب") {
+                SortMode.entries.forEach { mode ->
+                    FilterChip(selected = f.sort == mode, onClick = { f = f.copy(sort = mode) }, label = { Text(mode.label) })
+                }
+            }
+
+            FilterGroup("الفترة") {
+                eras.forEach { (label, range) ->
+                    FilterChip(
+                        selected = f.yearFrom == range.first && f.yearTo == range.second,
+                        onClick = { f = f.copy(yearFrom = range.first, yearTo = range.second) },
+                        label = { Text(label) },
+                    )
+                }
+            }
+
+            FilterGroup("أقل تقييم") {
+                listOf(null, 6, 7, 8).forEach { r ->
+                    FilterChip(
+                        selected = f.minRating == r,
+                        onClick = { f = f.copy(minRating = r) },
+                        label = { Text(r?.let { "$it+" } ?: "الكل") },
+                    )
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Button(onClick = { onApply(f) }, modifier = Modifier.weight(1f)) { Text("اعرض النتائج") }
+                OutlinedButton(onClick = { onSave(f) }) { Text("★ احفظ") }
+                TextButton(onClick = { f = DiscoverFilter(type = f.type) }) { Text("مسح") }
+            }
+
+            if (saved.isNotEmpty()) {
+                HorizontalDivider()
+                Text("أنماطي المحفوظة", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                saved.forEach { item ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(
+                            Modifier.weight(1f).clickable { onApply(item.filter) }.padding(vertical = 6.dp),
+                        ) {
+                            Text("★ ${item.name}", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                item.filter.summary().joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        TextButton(onClick = { onDeleteSaved(item.name) }) {
+                            Text("حذف", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun FilterGroup(title: String, content: @Composable () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { content() }
+    }
+}
+
+@Composable
+private fun SaveFilterDialog(suggestedName: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var name by remember { mutableStateOf(suggestedName) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("احفظ النمط") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("بيطلع لك كزر في البحث، تضغطه وتشوف هذا النوع على طول.", style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("اسم النمط") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = { TextButton(enabled = name.isNotBlank(), onClick = { onSave(name.trim()) }) { Text("حفظ") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("إلغاء") } },
+    )
 }
 
 @Composable
@@ -170,9 +642,8 @@ private fun SearchRow(item: SearchResult, onClick: () -> Unit) {
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            val kind = if (item.type == MediaType.TV) "مسلسل" else "فيلم"
             Text(
-                listOfNotNull(kind, item.year).joinToString(" · "),
+                listOfNotNull(item.type?.label, item.year, ratingLabel(item.voteAverage)).joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

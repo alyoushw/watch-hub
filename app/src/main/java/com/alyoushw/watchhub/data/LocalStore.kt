@@ -62,6 +62,14 @@ class LocalStore(private val file: File) {
         )
     }
 
+    suspend fun saveFilter(saved: SavedFilter) = update { d ->
+        d.copy(savedFilters = d.savedFilters.filterNot { it.name == saved.name } + saved)
+    }
+
+    suspend fun removeFilter(name: String) = update { d ->
+        d.copy(savedFilters = d.savedFilters.filterNot { it.name == name })
+    }
+
     suspend fun removeSubscription(id: String) = update { d ->
         d.copy(subscriptions = d.subscriptions.filterNot { it.id == id })
     }

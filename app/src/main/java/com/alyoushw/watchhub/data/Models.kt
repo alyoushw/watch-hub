@@ -139,4 +139,6 @@ data class Subscription(
 data class StoreData(
     val watchlist: List<WatchItem> = emptyList(),
     val subscriptions: List<Subscription> = emptyList(),
+    /** The user's saved "taste" presets for search. */
+    val savedFilters: List<SavedFilter> = emptyList(),
 )

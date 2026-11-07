@@ -204,18 +204,24 @@ class TmdbApi(private val settings: SettingsStore) {
             Details.serializer(),
         )
 
-    /** TMDB discover, limited to titles streamable in the user's region. */
-    suspend fun discover(type: MediaType, params: Map<String, String>): List<SearchResult> =
-        get(
-            "discover/${type.path}",
-            mapOf(
-                "language" to "ar",
-                "include_adult" to "false",
-                "watch_region" to settings.region.value,
-                "with_watch_monetization_types" to "flatrate|free|ads",
-            ) + params,
-            SearchResponse.serializer(),
-        ).results.map { it.copy(mediaType = type.path) }
+    /**
+     * TMDB discover. With [streamableOnly] the results are limited to titles that stream
+     * in the user's region; it is always on when a provider filter is given.
+     */
+    suspend fun discover(
+        type: MediaType,
+        params: Map<String, String>,
+        page: Int = 1,
+        streamableOnly: Boolean = true,
+    ): List<SearchResult> {
+        val base = mutableMapOf("language" to "ar", "include_adult" to "false", "page" to "$page")
+        if (streamableOnly || "with_watch_providers" in params) {
+            base["watch_region"] = settings.region.value
+            base["with_watch_monetization_types"] = "flatrate|free|ads"
+        }
+        return get("discover/${type.path}", base + params, SearchResponse.serializer())
+            .results.map { it.copy(mediaType = type.path) }
+    }
 
     suspend fun trending(type: MediaType): List<SearchResult> =
         get("trending/${type.path}/week", mapOf("language" to "ar"), SearchResponse.serializer())
