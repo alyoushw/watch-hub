@@ -27,6 +27,8 @@ data class SearchResult(
     @SerialName("release_date") val releaseDate: String? = null,
     @SerialName("first_air_date") val firstAirDate: String? = null,
     val overview: String? = null,
+    @SerialName("backdrop_path") val backdropPath: String? = null,
+    @SerialName("vote_average") val voteAverage: Double? = null,
 ) {
     val type: MediaType? get() = MediaType.fromPath(mediaType)
     val displayTitle: String get() = title ?: name ?: ""
@@ -40,7 +42,51 @@ data class Genre(val name: String = "")
 data class SeasonDto(
     @SerialName("season_number") val seasonNumber: Int = 0,
     @SerialName("episode_count") val episodeCount: Int = 0,
+    val name: String? = null,
+    val overview: String? = null,
+    @SerialName("air_date") val airDate: String? = null,
+    @SerialName("poster_path") val posterPath: String? = null,
 )
+
+@Serializable
+data class Named(val name: String = "")
+
+@Serializable
+data class Person(
+    val name: String = "",
+    val character: String? = null,
+    val job: String? = null,
+    @SerialName("profile_path") val profilePath: String? = null,
+)
+
+@Serializable
+data class Credits(val cast: List<Person> = emptyList(), val crew: List<Person> = emptyList())
+
+@Serializable
+data class Video(
+    val key: String = "",
+    val site: String = "",
+    val type: String = "",
+    val name: String = "",
+    val official: Boolean = false,
+)
+
+@Serializable
+data class Videos(val results: List<Video> = emptyList())
+
+@Serializable
+data class AuthorDetails(val rating: Double? = null)
+
+@Serializable
+data class Review(
+    val author: String = "",
+    val content: String = "",
+    @SerialName("author_details") val authorDetails: AuthorDetails? = null,
+    @SerialName("created_at") val createdAt: String? = null,
+)
+
+@Serializable
+data class Reviews(val results: List<Review> = emptyList())
 
 @Serializable
 data class EpisodeRef(
@@ -84,6 +130,21 @@ data class Details(
     @SerialName("release_date") val releaseDate: String? = null,
     @SerialName("first_air_date") val firstAirDate: String? = null,
     @SerialName("vote_average") val voteAverage: Double? = null,
+    @SerialName("vote_count") val voteCount: Int? = null,
+    val tagline: String? = null,
+    val status: String? = null,
+    val runtime: Int? = null,
+    @SerialName("episode_run_time") val episodeRunTime: List<Int> = emptyList(),
+    @SerialName("number_of_seasons") val numberOfSeasons: Int? = null,
+    @SerialName("number_of_episodes") val numberOfEpisodes: Int? = null,
+    @SerialName("original_language") val originalLanguage: String? = null,
+    @SerialName("production_countries") val productionCountries: List<Named> = emptyList(),
+    val networks: List<Named> = emptyList(),
+    @SerialName("created_by") val createdBy: List<Named> = emptyList(),
+    val credits: Credits? = null,
+    val videos: Videos? = null,
+    val reviews: Reviews? = null,
+    val recommendations: SearchResponse? = null,
     val genres: List<Genre> = emptyList(),
     val seasons: List<SeasonDto> = emptyList(),
     @SerialName("last_episode_to_air") val lastEpisodeToAir: EpisodeRef? = null,
@@ -120,13 +181,47 @@ class TmdbApi(private val settings: SettingsStore) {
             .results
             .filter { it.type != null }
 
-    /** Arabic details plus streaming availability for every region. */
+    /** Arabic details plus streaming availability, cast, trailers and recommendations. */
     suspend fun details(type: MediaType, id: Int): Details =
-        get("${type.path}/$id", mapOf("language" to "ar", "append_to_response" to "watch/providers"), Details.serializer())
+        get(
+            "${type.path}/$id",
+            mapOf(
+                "language" to "ar",
+                "append_to_response" to "watch/providers,credits,videos,recommendations",
+                "include_video_language" to "ar,en",
+            ),
+            Details.serializer(),
+        )
 
-    /** English details, used for titles to search with and as an overview fallback. */
+    /** English details: search titles, a fuller story, reviews and English trailers. */
     suspend fun englishDetails(type: MediaType, id: Int): Details =
-        get("${type.path}/$id", mapOf("language" to "en-US"), Details.serializer())
+        get(
+            "${type.path}/$id",
+            mapOf("language" to "en-US", "append_to_response" to "reviews,videos"),
+            Details.serializer(),
+        )
+
+    /** TMDB discover, limited to titles streamable in the user's region. */
+    suspend fun discover(type: MediaType, params: Map<String, String>): List<SearchResult> =
+        get(
+            "discover/${type.path}",
+            mapOf(
+                "language" to "ar",
+                "include_adult" to "false",
+                "watch_region" to settings.region.value,
+                "with_watch_monetization_types" to "flatrate|free|ads",
+            ) + params,
+            SearchResponse.serializer(),
+        ).results.map { it.copy(mediaType = type.path) }
+
+    suspend fun trending(type: MediaType): List<SearchResult> =
+        get("trending/${type.path}/week", mapOf("language" to "ar"), SearchResponse.serializer())
+            .results.map { it.copy(mediaType = type.path) }
+
+    suspend fun recommendations(type: MediaType, id: Int): List<SearchResult> =
+        get("${type.path}/$id/recommendations", mapOf("language" to "ar"), SearchResponse.serializer())
+            .results.map { if (it.mediaType == null) it.copy(mediaType = type.path) else it }
+            .filter { it.type != null }
 
     private suspend fun <T> get(
         path: String,

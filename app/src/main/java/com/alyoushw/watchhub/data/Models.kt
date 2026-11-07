@@ -44,6 +44,8 @@ data class WatchItem(
     val seasons: List<SeasonInfo> = emptyList(),
     /** Most recent episode that has aired. TV only. */
     val latestAired: EpisodeMark? = null,
+    /** Service key → URL of the title's own page on that service. */
+    val directLinks: Map<String, String> = emptyMap(),
     val addedAt: Long = System.currentTimeMillis(),
 ) {
     val key: String get() = keyOf(type, id)

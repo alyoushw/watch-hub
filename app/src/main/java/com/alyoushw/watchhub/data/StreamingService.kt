@@ -65,9 +65,8 @@ fun Context.openUrl(url: String) {
     }
 }
 
-/** Opens a search for [title] inside the service's app, or its website if the app is missing. */
-fun Context.searchOn(service: StreamingService, title: String) {
-    val url = service.searchUrl(title)
+/** Opens [url] inside the service's app when it is installed, otherwise in the browser. */
+fun Context.openInService(service: StreamingService, url: String) {
     if (isInstalled(service.packageName)) {
         try {
             startActivity(
@@ -77,10 +76,27 @@ fun Context.searchOn(service: StreamingService, title: String) {
             )
             return
         } catch (_: ActivityNotFoundException) {
-            // The app does not handle search links; fall through to the browser.
+            // The app does not handle this link; fall through to the browser.
         }
     }
     openUrl(url)
+}
+
+/** Opens a search for [title] inside the service's app, or its website if the app is missing. */
+fun Context.searchOn(service: StreamingService, title: String) = openInService(service, service.searchUrl(title))
+
+/**
+ * Opens the title itself when a direct link is known, otherwise a search for it.
+ * Returns true when the direct page was opened.
+ */
+fun Context.watchOn(service: StreamingService, directUrl: String?, title: String): Boolean {
+    return if (directUrl != null) {
+        openInService(service, directUrl)
+        true
+    } else {
+        searchOn(service, title)
+        false
+    }
 }
 
 /** Launches the service's app, or its website if the app is missing. */

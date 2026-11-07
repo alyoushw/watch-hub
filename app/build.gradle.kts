@@ -13,15 +13,28 @@ android {
         applicationId = "com.alyoushw.watchhub"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
+    }
+
+    // A fixed release key (from CI secrets) lets new APKs install over old ones and keep the data.
+    // Without the secrets, builds fall back to the debug key.
+    val releaseKeystore = System.getenv("WATCHHUB_KEYSTORE")?.let { file(it) }?.takeIf { it.exists() }
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = releaseKeystore
+                storePassword = System.getenv("WATCHHUB_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("WATCHHUB_KEY_ALIAS")
+                keyPassword = System.getenv("WATCHHUB_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Signed with the debug key so the CI-built release APK installs directly.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
@@ -35,6 +36,7 @@ fun appContainer(): AppContainer =
     (LocalContext.current.applicationContext as WatchHubApp).container
 
 private enum class Tab(val route: String, val label: String, val icon: ImageVector) {
+    HOME("home", "الرئيسية", Icons.Filled.Home),
     SEARCH("search", "البحث", Icons.Filled.Search),
     WATCHLIST("watchlist", "قائمتي", Icons.AutoMirrored.Filled.List),
     SUBSCRIPTIONS("subscriptions", "اشتراكاتي", Icons.Filled.DateRange),
@@ -64,7 +66,8 @@ fun WatchHubRoot() {
                         selected = currentRoute == tab.route,
                         onClick = { nav.switchTab(tab.route) },
                         icon = { Icon(tab.icon, contentDescription = null) },
-                        label = { Text(tab.label) },
+                        label = { Text(tab.label, maxLines = 1) },
+                        alwaysShowLabel = false,
                     )
                 }
             }
@@ -72,9 +75,15 @@ fun WatchHubRoot() {
     ) { padding ->
         NavHost(
             navController = nav,
-            startDestination = Tab.SEARCH.route,
+            startDestination = Tab.HOME.route,
             modifier = Modifier.fillMaxSize().padding(padding),
         ) {
+            composable(Tab.HOME.route) {
+                HomeScreen(
+                    onOpen = { type, id -> nav.openDetail(type, id) },
+                    onOpenSettings = { nav.switchTab(Tab.SETTINGS.route) },
+                )
+            }
             composable(Tab.SEARCH.route) {
                 SearchScreen(
                     onOpen = { type, id -> nav.openDetail(type, id) },
@@ -95,7 +104,12 @@ fun WatchHubRoot() {
             ) { entry ->
                 val type = MediaType.fromPath(entry.arguments?.getString("type")) ?: MediaType.MOVIE
                 val id = entry.arguments?.getInt("id") ?: 0
-                DetailScreen(type = type, id = id, onBack = { nav.popBackStack() })
+                DetailScreen(
+                    type = type,
+                    id = id,
+                    onBack = { nav.popBackStack() },
+                    onOpen = { t, i -> nav.openDetail(t, i) },
+                )
             }
         }
     }

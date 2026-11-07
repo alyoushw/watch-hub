@@ -17,7 +17,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -42,6 +46,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -58,6 +64,7 @@ import com.alyoushw.watchhub.data.WatchStatus
 import com.alyoushw.watchhub.data.nextEpisode
 import com.alyoushw.watchhub.data.previousEpisode
 import com.alyoushw.watchhub.data.unwatchedAired
+import com.alyoushw.watchhub.data.watchOn
 import kotlinx.coroutines.launch
 
 class WatchlistViewModel(private val container: AppContainer) : ViewModel() {
@@ -81,12 +88,14 @@ class WatchlistViewModel(private val container: AppContainer) : ViewModel() {
             for (item in container.store.data.value.watchlist) {
                 try {
                     val details = container.api.details(item.type, item.id)
+                    val links = if (item.directLinks.isEmpty()) container.links.resolve(item.type, item.id) else emptyMap()
                     container.store.updateWatch(item.key) { current ->
                         current.copy(
                             posterPath = details.posterPath ?: current.posterPath,
                             providerIds = details.providersFor(region)?.streaming?.map { it.id } ?: current.providerIds,
                             seasons = details.seasonInfo().ifEmpty { current.seasons },
                             latestAired = details.latestAired() ?: current.latestAired,
+                            directLinks = current.directLinks.ifEmpty { links.mapKeys { it.key.key } },
                         )
                     }
                 } catch (e: TmdbException) {
@@ -222,11 +231,28 @@ private fun WatchRow(item: WatchItem, onClick: () -> Unit) {
                     }
                 }
                 BadgeRow(services)
+                WatchNowButton(item, services)
                 if (item.type == MediaType.TV && item.status != WatchStatus.DONE) {
                     EpisodeTracker(item)
                 }
             }
         }
+    }
+}
+
+/** Opens the title directly on its service (or searches for it when no direct link is known). */
+@Composable
+private fun WatchNowButton(item: WatchItem, services: List<StreamingService>) {
+    val context = LocalContext.current
+    val service = StreamingService.entries.firstOrNull { it.key in item.directLinks } ?: services.firstOrNull() ?: return
+    val direct = item.directLinks[service.key]
+    Button(
+        onClick = { context.watchOn(service, direct, item.searchTitle) },
+        colors = ButtonDefaults.buttonColors(containerColor = Color(service.color), contentColor = Color.White),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+    ) {
+        Icon(if (direct != null) Icons.Filled.PlayArrow else Icons.Filled.Search, contentDescription = null, Modifier.size(18.dp))
+        Text(" " + if (direct != null) "شاهد على ${service.label}" else "ابحث في ${service.label}")
     }
 }
 
