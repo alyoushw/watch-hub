@@ -186,7 +186,6 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
     private suspend fun buildTmdbSections(t: MediaType): List<HomeSection> = coroutineScope {
         val kind = if (t == MediaType.TV) "مسلسلات" else "أفلام"
-        val allProviders = StreamingService.entries.flatMap { it.tmdbIds }.joinToString("|")
         val today = LocalDate.now()
         val dateField = if (t == MediaType.TV) "air_date" else "primary_release_date"
 
@@ -205,17 +204,18 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     )
                 })
             }
+            // These rows cover everything on TMDB, not only what the user's services carry.
             add(async {
                 sourced(
-                    "new", "الجديد على منصاتك",
+                    "new", "الجديد",
                     RowSource.Discover(
                         t,
                         mapOf(
-                            "with_watch_providers" to allProviders,
                             "sort_by" to "popularity.desc",
                             "$dateField.gte" to today.minusDays(120).toString(),
                             "$dateField.lte" to today.toString(),
                         ),
+                        streamableOnly = false,
                     ),
                     subtitle = "نزل خلال آخر ٤ شهور",
                 )
@@ -226,16 +226,15 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     RowSource.Discover(
                         t,
                         mapOf(
-                            "with_watch_providers" to allProviders,
                             "sort_by" to "vote_average.desc",
                             "vote_count.gte" to if (t == MediaType.TV) "200" else "500",
                         ),
+                        streamableOnly = false,
                     ),
-                    subtitle = "على نتفلكس وبرايم وكرنشي رول",
                 )
             })
             add(async {
-                sourced("popular", "الأشهر على منصاتك", RowSource.Discover(t, mapOf("with_watch_providers" to allProviders, "sort_by" to "popularity.desc")))
+                sourced("popular", "الأشهر", RowSource.Discover(t, mapOf("sort_by" to "popularity.desc"), streamableOnly = false))
             })
         }
         jobs.awaitAll().filterNotNull()
