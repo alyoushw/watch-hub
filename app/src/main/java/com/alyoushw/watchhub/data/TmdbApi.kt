@@ -26,13 +26,16 @@ data class SearchResponse(
 )
 
 /** Where a list of titles comes from, so it can be fetched page by page ("عرض الكل"). */
+@Serializable
 sealed interface RowSource {
+    @Serializable
     data class Discover(
         val type: MediaType,
         val params: Map<String, String>,
         val streamableOnly: Boolean = true,
     ) : RowSource
 
+    @Serializable
     data class Trending(val type: MediaType) : RowSource
 }
 

@@ -64,6 +64,13 @@ enum class StreamingService(
     }
 }
 
+/**
+ * Starting another app from our screen keeps us underneath it, so Back (or closing it)
+ * returns to the exact page the user was on. From a non-screen context a new task is required.
+ */
+fun Intent.launchedFrom(context: Context): Intent =
+    if (context is android.app.Activity) this else addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
 /** The app's start screen: its phone launcher entry, or its TV (leanback) one on TVs. */
 fun Context.launchIntentFor(packageName: String): Intent? =
     packageManager.getLaunchIntentForPackage(packageName)
@@ -76,7 +83,7 @@ val Context.isTvDevice: Boolean
 
 fun Context.openUrl(url: String) {
     try {
-        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).launchedFrom(this))
     } catch (e: ActivityNotFoundException) {
         Toast.makeText(this, "ما فيه تطبيق يفتح هذا الرابط", Toast.LENGTH_SHORT).show()
     }
@@ -141,7 +148,7 @@ private fun isLegacyCrunchyrollLink(url: String): Boolean =
     "crunchyroll.com" in url && !Regex("crunchyroll\\.com/(?:[a-z]{2}(?:-[a-z]{2})?/)?(?:series|watch)/").containsMatchIn(url)
 
 private fun Context.tryView(url: String, pkg: String): Boolean = try {
-    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).setPackage(pkg).launchedFrom(this)
     // Netflix only follows a link to the title itself (not just its home screen) when told where it came from.
     if ("netflix" in pkg) intent.putExtra("source", "30")
     startActivity(intent)

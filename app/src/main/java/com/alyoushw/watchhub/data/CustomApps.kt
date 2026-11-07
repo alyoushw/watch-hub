@@ -50,7 +50,7 @@ fun Context.openCustomApp(packageName: String, title: String) {
     val search = Intent(Intent.ACTION_SEARCH)
         .setPackage(packageName)
         .putExtra(SearchManager.QUERY, title)
-        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        .launchedFrom(this)
     if (packageManager.queryIntentActivities(search, 0).isNotEmpty() && tryStart(search)) {
         Toast.makeText(this, "نبحث عن «$title»", Toast.LENGTH_SHORT).show()
         return
@@ -60,7 +60,7 @@ fun Context.openCustomApp(packageName: String, title: String) {
         .setType("text/plain")
         .setPackage(packageName)
         .putExtra(Intent.EXTRA_TEXT, title)
-        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        .launchedFrom(this)
     if (packageManager.queryIntentActivities(share, 0).isNotEmpty() && tryStart(share)) return
 
     val hint = if (isTvDevice) "ابحث عن: «$title»\n(اكتبه أو قوله بمايك الريموت)" else "نسخت «$title»، الصقه في البحث"

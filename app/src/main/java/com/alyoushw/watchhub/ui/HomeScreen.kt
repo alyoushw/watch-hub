@@ -57,7 +57,7 @@ data class HomeSection(
 )
 
 class HomeViewModel(private val container: AppContainer) : ViewModel() {
-    var type by mutableStateOf(MediaType.TV)
+    var type by mutableStateOf(container.homeType)
         private set
     var sections by mutableStateOf<List<HomeSection>>(emptyList())
         private set
@@ -93,6 +93,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     fun selectType(value: MediaType) {
         if (value == type) return
         type = value
+        container.homeType = value
         load()
     }
 

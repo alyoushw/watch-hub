@@ -10,6 +10,9 @@ import com.alyoushw.watchhub.data.RowSource
 import com.alyoushw.watchhub.data.SettingsStore
 import com.alyoushw.watchhub.data.StatusCache
 import com.alyoushw.watchhub.data.TmdbApi
+import com.alyoushw.watchhub.data.MediaType
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import java.io.File
 
 /** Simple manual dependency container shared by the whole app. */
@@ -22,10 +25,30 @@ class AppContainer(context: Context) {
     val assistant = ClaudeAssistant(settings)
     val statusCache = StatusCache(context, api)
 
-    /** The list a "عرض الكل" button asked to open; read by the browse screen. */
-    var browse: BrowseRequest? = null
+    private val navPrefs = context.getSharedPreferences("navigation", Context.MODE_PRIVATE)
+    private val navJson = Json { ignoreUnknownKeys = true }
+
+    /**
+     * The list a "عرض الكل" button asked to open. Saved on disk so the page is still there
+     * if Android closes the app in the background (e.g. while a film plays in Netflix).
+     */
+    var browse: BrowseRequest?
+        get() = runCatching {
+            navPrefs.getString("browse", null)?.let { navJson.decodeFromString(BrowseRequest.serializer(), it) }
+        }.getOrNull()
+        set(value) {
+            navPrefs.edit()
+                .putString("browse", value?.let { navJson.encodeToString(BrowseRequest.serializer(), it) })
+                .apply()
+        }
+
+    /** Last Home tab (series / movies / anime), restored on the next start. */
+    var homeType: MediaType
+        get() = MediaType.fromPath(navPrefs.getString("home_type", null)) ?: MediaType.TV
+        set(value) = navPrefs.edit().putString("home_type", value.path).apply()
 }
 
+@Serializable
 data class BrowseRequest(val title: String, val source: RowSource, val ranked: Boolean)
 
 class WatchHubApp : Application() {
