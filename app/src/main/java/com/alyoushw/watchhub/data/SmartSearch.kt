@@ -34,7 +34,18 @@ enum class Genre(
 
 /** Where a title comes from, as TMDB's original language. */
 @Serializable
-enum class Origin(val label: String, val language: String, val words: List<String>) {
+enum class Origin(
+    val label: String,
+    val language: String,
+    val words: List<String>,
+    /** TMDB origin countries ("SA|AE"); narrower than the language when set. */
+    val countries: String? = null,
+) {
+    SAUDI("سعودي", "ar", listOf("سعودي", "سعوديه"), "SA"),
+    GULF("خليجي", "ar", listOf("خليجي", "خليجيه", "كويتي", "اماراتي", "بحريني", "قطري", "عماني"), "SA|AE|KW|BH|QA|OM"),
+    EGYPTIAN("مصري", "ar", listOf("مصري", "مصريه"), "EG"),
+    LEVANTINE("شامي", "ar", listOf("سوري", "لبناني", "شامي", "اردني"), "SY|LB|JO|PS"),
+    ARABIC("عربي", "ar", listOf("عربي", "عربيه")),
     KOREAN("كوري", "ko", listOf("كوري", "كوريا")),
     JAPANESE("ياباني", "ja", listOf("ياباني", "يابان")),
     CHINESE("صيني", "zh", listOf("صيني", "صين")),
@@ -42,7 +53,6 @@ enum class Origin(val label: String, val language: String, val words: List<Strin
     TURKISH("تركي", "tr", listOf("تركي", "تركيا", "تركيه")),
     INDONESIAN("إندونيسي", "id", listOf("اندونيسي", "اندونيسيا")),
     THAI("تايلندي", "th", listOf("تايلندي", "تايلند")),
-    ARABIC("عربي", "ar", listOf("عربي", "مصري", "سعودي", "خليجي", "سوري", "لبناني", "كويتي")),
     SPANISH("إسباني", "es", listOf("اسباني", "مكسيكي")),
     FRENCH("فرنسي", "fr", listOf("فرنسي")),
     ENGLISH("أمريكي/بريطاني", "en", listOf("امريكي", "بريطاني", "انجليزي", "هوليوود")),
@@ -93,10 +103,14 @@ data class DiscoverFilter(
     fun toParams(today: LocalDate = LocalDate.now()): Map<String, String> = buildMap {
         val dateField = if (type == MediaType.MOVIE) "primary_release_date" else "first_air_date"
         if (genres.isNotEmpty()) put("with_genres", genres.map { it.idFor(type) }.distinct().joinToString(","))
-        origin?.let { put("with_original_language", it.language) }
+        origin?.let {
+            put("with_original_language", it.language)
+            it.countries?.let { c -> put("with_origin_country", c) }
+        }
         if (services.isNotEmpty()) {
             val ids = services.mapNotNull { StreamingService.forKey(it) }.flatMap { it.tmdbIds }
-            put("with_watch_providers", ids.joinToString("|"))
+            // Shahid / STC tv have no fixed TMDB id; skip rather than send an empty filter.
+            if (ids.isNotEmpty()) put("with_watch_providers", ids.joinToString("|"))
         }
         yearFrom?.let { put("$dateField.gte", "$it-01-01") }
         yearTo?.let { put("$dateField.lte", "$it-12-31") }
@@ -124,7 +138,8 @@ data class SavedFilter(val name: String, val filter: DiscoverFilter)
 
 /** What the user asked for, understood from free text (typed or spoken). */
 sealed interface SmartQuery {
-    data class Similar(val title: String, val type: MediaType?) : SmartQuery
+    /** Titles like [title]; [origin] keeps them to a country/language when the user named one. */
+    data class Similar(val title: String, val type: MediaType?, val origin: Origin? = null) : SmartQuery
     data object FromWatchlist : SmartQuery
     data class Filter(val filter: DiscoverFilter) : SmartQuery
     data class Plain(val text: String) : SmartQuery
@@ -135,7 +150,8 @@ sealed interface SmartQuery {
  * "ابي مسلسل كوري درامي", "فيلم رعب اندونيسي", "شي مشابه لـ Interstellar" or "رشح لي من قائمتي".
  */
 object SmartSearch {
-    private val similarPattern = Regex("(?:مشابه|مشابة|يشبه|شبيه|زي|مثل|similar to|like)\\s*(?:لـ|ل)?\\s*(.+)", RegexOption.IGNORE_CASE)
+    private val similarPattern = Regex("(?:نفس جو|بجو|على جو|مشابه|مشابة|يشبه|شبيه|زي|مثل|similar to|like)\\s*(?:لـ|ل)?\\s*(.+)", RegexOption.IGNORE_CASE)
+    private val vagueTail = Regex("\\s*(?:زي كذا|كذا|او شي|أو شي|وكذا|يعني)\\s*$")
     private val yearPattern = Regex("(19\\d\\d|20\\d\\d)")
     private val ratingPattern = Regex("(?:فوق|اكثر من|اعلي من|تقييم)\\s*(\\d+)")
     private val prefixes = listOf("وال", "بال", "فال", "كال", "لل", "ال", "و", "ب", "ل", "ف")
@@ -170,11 +186,20 @@ object SmartSearch {
 
         // "شي مشابه لـ X"
         similarPattern.find(text)?.let { match ->
-            var title = match.groupValues[1].replace(tailNoise, "").trim()
+            var title = match.groupValues[1].replace(tailNoise, "").replace(vagueTail, "").trim()
             titleNoise.forEach { noise ->
                 if (title.startsWith("$noise ")) title = title.removePrefix("$noise ").trim()
             }
-            if (title.length >= 2) return SmartQuery.Similar(title, explicitType?.takeIf { it != MediaType.ANIME })
+            if (title.length >= 2) {
+                val before = normalize(text.substring(0, match.range.first))
+                val named = Origin.entries.filter { o -> o.words.any { w -> normalize(w) in before } }
+                val origin = when {
+                    named.isEmpty() -> null
+                    named.all { it.language == "ar" } && Origin.GULF in named -> Origin.GULF
+                    else -> named.first()
+                }
+                return SmartQuery.Similar(title, explicitType?.takeIf { it != MediaType.ANIME }, origin)
+            }
         }
 
         if (listOf("قائمتي", "قايمتي", "ذوقي", "اضفته", "بناء علي").any(::hasWord)) return SmartQuery.FromWatchlist
@@ -182,7 +207,14 @@ object SmartSearch {
         val genres = Genre.entries.filter { g -> g.words.any(::hasWord) }.toMutableSet()
         // "خيال علمي" is sci-fi, not fantasy.
         if (Genre.SCIFI in genres) genres.remove(Genre.FANTASY)
-        var origin = Origin.entries.firstOrNull { o -> o.words.any(::hasWord) }
+        val named = Origin.entries.filter { o -> o.words.any(::hasWord) }
+        var origin = when {
+            named.isEmpty() -> null
+            named.size == 1 -> named.first()
+            named.all { it.language == "ar" } && Origin.GULF in named -> Origin.GULF
+            named.all { it.language == "ar" } -> Origin.ARABIC
+            else -> named.first()
+        }
         val services = buildSet {
             if (listOf("نتفلكس", "نتفليكس", "netflix").any(::hasWord)) add(StreamingService.NETFLIX.key)
             if (listOf("برايم", "امازون", "prime").any(::hasWord)) add(StreamingService.PRIME.key)

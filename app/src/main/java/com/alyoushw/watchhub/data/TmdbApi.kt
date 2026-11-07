@@ -53,7 +53,14 @@ data class SearchResult(
     @SerialName("vote_average") val voteAverage: Double? = null,
     @SerialName("original_language") val originalLanguage: String? = null,
     @SerialName("genre_ids") val genreIds: List<Int> = emptyList(),
+    @SerialName("origin_country") val originCountry: List<String> = emptyList(),
+    val popularity: Double? = null,
+    /** The role, when this result comes from an actor's list of works. */
+    val character: String? = null,
 ) {
+    /** Country code to show for this title: TMDB's origin country, else guessed from the language. */
+    val country: String? get() = originCountry.firstOrNull() ?: countryFromLanguage(originalLanguage)
+
     val type: MediaType? get() = MediaType.fromPath(mediaType)
     val displayTitle: String get() = title ?: name ?: ""
     val year: String? get() = (releaseDate ?: firstAirDate)?.take(4)?.takeIf { it.length == 4 }
@@ -76,7 +83,11 @@ data class SeasonDto(
 data class Named(val name: String = "")
 
 @Serializable
+data class CountryDto(@SerialName("iso_3166_1") val code: String = "", val name: String = "")
+
+@Serializable
 data class Person(
+    val id: Int = 0,
     val name: String = "",
     val character: String? = null,
     val job: String? = null,
@@ -131,6 +142,23 @@ data class ProviderDto(
 )
 
 @Serializable
+data class CombinedCredits(val cast: List<SearchResult> = emptyList(), val crew: List<SearchResult> = emptyList())
+
+@Serializable
+data class PersonDetails(
+    val id: Int = 0,
+    val name: String = "",
+    val biography: String? = null,
+    val birthday: String? = null,
+    val deathday: String? = null,
+    @SerialName("place_of_birth") val placeOfBirth: String? = null,
+    @SerialName("profile_path") val profilePath: String? = null,
+    @SerialName("known_for_department") val department: String? = null,
+    @SerialName("also_known_as") val alsoKnownAs: List<String> = emptyList(),
+    @SerialName("combined_credits") val credits: CombinedCredits? = null,
+)
+
+@Serializable
 data class ProviderList(val results: List<ProviderDto> = emptyList())
 
 @Serializable
@@ -169,7 +197,8 @@ data class Details(
     @SerialName("number_of_seasons") val numberOfSeasons: Int? = null,
     @SerialName("number_of_episodes") val numberOfEpisodes: Int? = null,
     @SerialName("original_language") val originalLanguage: String? = null,
-    @SerialName("production_countries") val productionCountries: List<Named> = emptyList(),
+    @SerialName("production_countries") val productionCountries: List<CountryDto> = emptyList(),
+    @SerialName("origin_country") val originCountry: List<String> = emptyList(),
     val networks: List<Named> = emptyList(),
     @SerialName("created_by") val createdBy: List<Named> = emptyList(),
     val credits: Credits? = null,
@@ -275,6 +304,14 @@ class TmdbApi(private val settings: SettingsStore) {
             mapOf("language" to "ar", "watch_region" to settings.region.value),
             ProviderList.serializer(),
         ).results.sortedBy { it.displayPriority }
+
+    /** An actor's details (Arabic where TMDB has it) with every film and series they appear in. */
+    suspend fun person(id: Int): PersonDetails =
+        get("person/$id", mapOf("language" to "ar", "append_to_response" to "combined_credits"), PersonDetails.serializer())
+
+    /** English details, for the biography when there is no Arabic one. */
+    suspend fun personEnglish(id: Int): PersonDetails =
+        get("person/$id", mapOf("language" to "en-US"), PersonDetails.serializer())
 
     /** One page of any [RowSource]. TMDB serves at most 500 pages. */
     suspend fun page(source: RowSource, page: Int): SearchResponse = when (source) {

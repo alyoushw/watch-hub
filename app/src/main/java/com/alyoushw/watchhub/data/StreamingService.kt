@@ -17,6 +17,8 @@ enum class StreamingService(
     val homeUrl: String,
     private val searchUrlPrefix: String,
     val color: Long,
+    /** Lower-case words that identify the service by name (TMDB provider name or app label). */
+    val nameKeys: List<String> = emptyList(),
 ) {
     NETFLIX(
         key = "netflix",
@@ -44,12 +46,37 @@ enum class StreamingService(
         homeUrl = "https://www.crunchyroll.com/",
         searchUrlPrefix = "https://www.crunchyroll.com/search?q=",
         color = 0xFFF47521,
+    ),
+    SHAHID(
+        key = "shahid",
+        label = "شاهد",
+        // TMDB's id for Shahid isn't fixed here; it is matched by name from the region's provider list.
+        tmdbIds = emptySet(),
+        packageName = "net.mbc.shahid",
+        homeUrl = "https://shahid.mbc.net/ar",
+        searchUrlPrefix = "https://shahid.mbc.net/ar/search?term=",
+        color = 0xFF14B88A,
+        nameKeys = listOf("shahid", "شاهد"),
+    ),
+    STC_TV(
+        key = "stctv",
+        label = "STC tv",
+        tmdbIds = emptySet(),
+        packageName = "com.stc.tv",
+        homeUrl = "https://www.stctv.com/",
+        searchUrlPrefix = "https://www.stctv.com/search?q=",
+        color = 0xFF4F008C,
+        nameKeys = listOf("stc tv", "stctv", "stc", "jawwy"),
     );
 
     fun searchUrl(title: String): String = searchUrlPrefix + URLEncoder.encode(title, "UTF-8")
 
     companion object {
         fun forProvider(providerId: Int): StreamingService? = entries.firstOrNull { providerId in it.tmdbIds }
+
+        /** Match by id, or by name for services whose TMDB id we don't hard-code (Shahid, STC tv). */
+        fun forProvider(provider: ProviderDto): StreamingService? =
+            forProvider(provider.id) ?: entries.firstOrNull { s -> s.nameKeys.any { it in provider.name.lowercase() } }
         fun forKey(key: String?): StreamingService? = entries.firstOrNull { it.key == key }
 
         fun forUrl(url: String): StreamingService? {
@@ -95,6 +122,8 @@ private val StreamingService.packages: List<String>
         StreamingService.NETFLIX -> listOf(packageName, "com.netflix.ninja")
         StreamingService.PRIME -> listOf(packageName, "com.amazon.avod", "com.amazon.amazonvideo.livingroom")
         StreamingService.CRUNCHYROLL -> listOf(packageName)
+        StreamingService.SHAHID -> listOf(packageName, "net.mbc.shahidTV")
+        StreamingService.STC_TV -> listOf(packageName)
     }
 
 /**
@@ -110,6 +139,8 @@ private fun Context.findByLabel(service: StreamingService): String? {
         StreamingService.NETFLIX -> listOf("netflix", "نتفليكس", "نتفلكس")
         StreamingService.PRIME -> listOf("prime video", "primevideo", "برايم")
         StreamingService.CRUNCHYROLL -> listOf("crunchyroll", "كرانشي", "كرنشي")
+        StreamingService.SHAHID -> listOf("shahid", "شاهد")
+        StreamingService.STC_TV -> listOf("stc tv", "stctv", "jawwy")
     }
     val pm = packageManager
     for (category in listOf(Intent.CATEGORY_LEANBACK_LAUNCHER, Intent.CATEGORY_LAUNCHER)) {

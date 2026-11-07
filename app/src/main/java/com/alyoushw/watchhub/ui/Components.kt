@@ -14,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.alyoushw.watchhub.data.MediaType
 import com.alyoushw.watchhub.data.StatusCache
+import com.alyoushw.watchhub.data.countryFlag
 import androidx.compose.foundation.Image
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.asImageBitmap
@@ -208,6 +209,13 @@ fun PosterCard(item: SearchResult, rank: Int? = null, width: Dp = 120.dp, onClic
             RatingChip(item.voteAverage, Modifier.align(Alignment.TopEnd).padding(4.dp))
             if (item.type == MediaType.TV) {
                 StatusBadge(item.id, Modifier.align(Alignment.TopStart).padding(4.dp))
+            }
+            countryFlag(item.country)?.let { flag ->
+                Text(
+                    flag,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp),
+                )
             }
             if (rank != null) {
                 Text(

@@ -114,6 +114,16 @@ fun WatchHubRoot() {
                     },
                 )
             }
+            composable(
+                route = "person/{id}",
+                arguments = listOf(navArgument("id") { type = NavType.IntType }),
+            ) { entry ->
+                PersonScreen(
+                    id = entry.arguments?.getInt("id") ?: 0,
+                    onBack = { nav.popBackStack() },
+                    onOpen = { t, i -> nav.openDetail(t, i) },
+                )
+            }
             composable("browse") {
                 BrowseScreen(onBack = { nav.popBackStack() }, onOpen = { type, id -> nav.openDetail(type, id) })
             }
@@ -149,6 +159,7 @@ fun WatchHubRoot() {
                         id = id,
                         onBack = { nav.popBackStack() },
                         onOpen = { t, i -> nav.openDetail(t, i) },
+                        onOpenPerson = { personId -> nav.navigate("person/$personId") },
                     )
                 }
             }

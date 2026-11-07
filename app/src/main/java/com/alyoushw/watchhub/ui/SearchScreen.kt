@@ -83,6 +83,8 @@ import com.alyoushw.watchhub.data.SmartSearch
 import com.alyoushw.watchhub.data.SortMode
 import com.alyoushw.watchhub.data.StreamingService
 import com.alyoushw.watchhub.data.WatchItem
+import com.alyoushw.watchhub.data.countryFlag
+import com.alyoushw.watchhub.data.countryLabel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -221,14 +223,44 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     private suspend fun similar(q: SmartQuery.Similar): SearchState {
-        val hits = container.api.search(q.title)
-        val seed = hits.firstOrNull { q.type == null || it.type == q.type } ?: hits.firstOrNull()
-        val seedType = seed?.type
-        if (seed == null || seedType == null) {
+        // Spoken titles often run on ("شباب البومب سكه سفر"): try the whole thing, then shorter.
+        val words = q.title.split(" ").filter { it.isNotBlank() }
+        val attempts = listOf(q.title) + (words.size - 1 downTo 1).map { words.take(it).joinToString(" ") }
+        var found: SearchResult? = null
+        for (attempt in attempts.distinct()) {
+            val hits = container.api.search(attempt)
+            found = hits.firstOrNull { q.type == null || it.type == q.type } ?: hits.firstOrNull()
+            if (found != null) break
+        }
+        val seed: SearchResult = found
+            ?: return SearchState.Results(emptyList(), "ما لقينا «${q.title}». جرّب تكتب اسمه بالإنجليزي.")
+        val seedType = seed.type
+        if (seedType == null) {
             return SearchState.Results(emptyList(), "ما لقينا «${q.title}». جرّب تكتب اسمه بالإنجليزي.")
         }
+
+        // Same country as asked (or as the seed), same genres first; TMDB's picks after.
+        val countries = q.origin?.countries ?: seed.originCountry.takeIf { it.isNotEmpty() }?.joinToString("|")
+        val language = q.origin?.language ?: seed.originalLanguage
+        val params = buildMap {
+            put("sort_by", "popularity.desc")
+            language?.let { put("with_original_language", it) }
+            countries?.let { put("with_origin_country", it) }
+            if (seed.genreIds.isNotEmpty()) put("with_genres", seed.genreIds.take(2).joinToString("|"))
+        }
+        val close = try {
+            container.api.discover(seedType, params, streamableOnly = false)
+        } catch (_: ApiException) {
+            emptyList()
+        }
         val recs = container.api.recommendations(seedType, seed.id)
-        return SearchState.Results(recs, "مشابه لـ «${seed.displayTitle}»:")
+        val countrySet = countries?.split("|")?.toSet()
+        val recsSameCountry = recs.filter { r -> countrySet == null || r.originCountry.any { it in countrySet } }
+        val items = (close + recsSameCountry + recs)
+            .filter { it.id != seed.id }
+            .distinctBy { "${it.mediaType}:${it.id}" }
+        val where = q.origin?.label?.let { " ($it)" }.orEmpty()
+        return SearchState.Results(items, "مشابه لـ «${seed.displayTitle}»$where:")
     }
 
     private suspend fun fromWatchlist(): SearchState {
@@ -680,7 +712,12 @@ private fun SearchRow(item: SearchResult, onClick: () -> Unit) {
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                listOfNotNull(item.type?.label, item.year, ratingLabel(item.voteAverage)).joinToString(" · "),
+                listOfNotNull(
+                    item.type?.label,
+                    item.country?.let { c -> countryLabel(c)?.let { "${countryFlag(c).orEmpty()} $it".trim() } },
+                    item.year,
+                    ratingLabel(item.voteAverage),
+                ).joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

@@ -82,6 +82,8 @@ import com.alyoushw.watchhub.data.StreamingService
 import com.alyoushw.watchhub.data.TmdbApi
 import com.alyoushw.watchhub.data.ApiException
 import com.alyoushw.watchhub.data.ArabicTranslator
+import com.alyoushw.watchhub.data.countryFlag
+import com.alyoushw.watchhub.data.countryLabel
 import com.alyoushw.watchhub.data.WatchItem
 import com.alyoushw.watchhub.data.WatchStatus
 import com.alyoushw.watchhub.data.appLabel
@@ -108,7 +110,7 @@ data class SeasonDetail(
     val posterPath: String?,
 )
 
-data class CastMember(val name: String, val character: String?, val profilePath: String?)
+data class CastMember(val id: Int, val name: String, val character: String?, val profilePath: String?)
 
 data class ReviewInfo(val author: String, val rating: Double?, val content: String, val date: String?)
 
@@ -142,10 +144,17 @@ data class DetailInfo(
     val overviewIsEnglish: Boolean = false,
     val originalLanguage: String? = null,
     val genreIds: List<Int> = emptyList(),
+    /** Production countries as ISO codes, e.g. ["SA"]. */
+    val countries: List<String> = emptyList(),
 ) {
+    /** "🇸🇦 سعودي" style label(s) for the header. */
+    val countryText: String?
+        get() = countries.mapNotNull { c -> countryLabel(c)?.let { "${countryFlag(c).orEmpty()} $it".trim() } }
+            .take(2).joinToString("، ").ifBlank { null }
+
     /** Services from our three that TMDB says carry this title in the region. */
     val availableServices: List<StreamingService>
-        get() = providers?.streaming.orEmpty().mapNotNull { StreamingService.forProvider(it.id) }.distinct()
+        get() = providers?.streaming.orEmpty().mapNotNull { StreamingService.forProvider(it) }.distinct()
 
     fun toWatchItem(existing: WatchItem?, links: Map<StreamingService, String>?): WatchItem {
         val base = existing ?: WatchItem(id = id, type = type, title = title)
@@ -214,7 +223,8 @@ data class DetailInfo(
                 overviewIsEnglish = arOverview.isBlank() && enOverview.isNotBlank(),
                 originalLanguage = ar.originalLanguage,
                 genreIds = ar.genres.map { it.id }.filter { it > 0 },
-                cast = ar.credits?.cast.orEmpty().take(15).map { CastMember(it.name, it.character, it.profilePath) },
+                cast = ar.credits?.cast.orEmpty().take(15).map { CastMember(it.id, it.name, it.character, it.profilePath) },
+                countries = ar.originCountry.ifEmpty { ar.productionCountries.map { it.code } }.filter { it.isNotBlank() }.distinct(),
                 trailers = trailers,
                 reviews = reviews,
                 recommendations = ar.recommendations?.results.orEmpty()
@@ -243,7 +253,8 @@ data class DetailInfo(
                 d.networks.map { it.name }.takeIf { it.isNotEmpty() }?.let { add("القناة" to it.joinToString("، ")) }
             }
             d.originalLanguage?.let { add("اللغة الأصلية" to languageLabel(it)) }
-            d.productionCountries.map { it.name }.takeIf { it.isNotEmpty() }?.let { add("الإنتاج" to it.joinToString("، ")) }
+            d.productionCountries.map { c -> countryLabel(c.code) ?: c.name }.distinct().takeIf { it.isNotEmpty() }
+                ?.let { add("البلد" to it.joinToString("، ")) }
         }
 
         private fun statusLabel(status: String?): String? = when (status) {
@@ -383,7 +394,13 @@ class DetailViewModel(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DetailScreen(type: MediaType, id: Int, onBack: () -> Unit, onOpen: (MediaType, Int) -> Unit) {
+fun DetailScreen(
+    type: MediaType,
+    id: Int,
+    onBack: () -> Unit,
+    onOpen: (MediaType, Int) -> Unit,
+    onOpenPerson: (Int) -> Unit = {},
+) {
     val container = appContainer()
     val vm: DetailViewModel = viewModel { DetailViewModel(container, type, id) }
     val title = (vm.state as? DetailState.Loaded)?.info?.title.orEmpty()
@@ -405,7 +422,7 @@ fun DetailScreen(type: MediaType, id: Int, onBack: () -> Unit, onOpen: (MediaTyp
             when (val s = vm.state) {
                 DetailState.Loading -> CenteredLoading()
                 is DetailState.Failed -> MessageBox(s.message, actionLabel = "حاول مرة ثانية", onAction = vm::load)
-                is DetailState.Loaded -> DetailContent(s.info, vm.links, vm.similar, onAdd = { vm.addToWatchlist(s.info) }, onOpen = onOpen)
+                is DetailState.Loaded -> DetailContent(s.info, vm.links, vm.similar, onAdd = { vm.addToWatchlist(s.info) }, onOpen = onOpen, onOpenPerson = onOpenPerson)
             }
         }
     }
@@ -419,6 +436,7 @@ private fun DetailContent(
     similar: List<SearchResult>?,
     onAdd: () -> Unit,
     onOpen: (MediaType, Int) -> Unit,
+    onOpenPerson: (Int) -> Unit,
 ) {
     val container = appContainer()
     val context = LocalContext.current
@@ -465,6 +483,21 @@ private fun DetailContent(
             }
         }
 
+        if (info.trailers.isEmpty()) {
+            // No trailer on TMDB: search YouTube for one.
+            item {
+                OutlinedButton(
+                    modifier = Modifier.padding(horizontal = 16.dp).focusFrame(),
+                    onClick = {
+                        val q = java.net.URLEncoder.encode("${info.searchTitle} ${info.year.orEmpty()} trailer".trim(), "UTF-8")
+                        context.openUrl("https://www.youtube.com/results?search_query=$q")
+                    },
+                ) {
+                    Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = Color(0xFFFF0000))
+                    Text("  ابحث عن الإعلان في يوتيوب")
+                }
+            }
+        }
         if (info.trailers.isNotEmpty()) {
             item { Trailers(info.trailers) { context.openUrl(it.url) } }
         }
@@ -481,7 +514,7 @@ private fun DetailContent(
         }
 
         if (info.cast.isNotEmpty()) {
-            item { CastRow(info.cast) }
+            item { CastRow(info.cast, onOpenPerson) }
         }
 
         item { RatingAndReviews(info) }
@@ -542,7 +575,8 @@ private fun Header(info: DetailInfo) {
                     }
                     val kind = if (info.type == MediaType.TV) "مسلسل" else "فيلم"
                     Text(
-                        listOfNotNull(kind, info.year, info.genres.take(2).joinToString("، ").ifBlank { null }).joinToString(" · "),
+                        listOfNotNull(kind, info.countryText, info.year, info.genres.take(2).joinToString("، ").ifBlank { null })
+                            .joinToString(" · "),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -827,12 +861,19 @@ private fun SeasonCard(season: SeasonDetail) {
 }
 
 @Composable
-private fun CastRow(cast: List<CastMember>) {
+private fun CastRow(cast: List<CastMember>, onOpenPerson: (Int) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SectionTitle("الممثلين", Modifier.padding(horizontal = 16.dp))
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             items(cast) { member ->
-                Column(Modifier.width(80.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    Modifier
+                        .width(84.dp)
+                        .focusHighlight(RoundedCornerShape(12.dp))
+                        .clickable(enabled = member.id > 0) { onOpenPerson(member.id) }
+                        .padding(2.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
                     Box(
                         Modifier.size(72.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant),
                         contentAlignment = Alignment.Center,
@@ -930,7 +971,7 @@ private fun ReviewCard(review: ReviewInfo) {
 @Composable
 private fun OtherProviders(info: DetailInfo) {
     val context = LocalContext.current
-    val others = info.providers?.streaming.orEmpty().filter { StreamingService.forProvider(it.id) == null }
+    val others = info.providers?.streaming.orEmpty().filter { StreamingService.forProvider(it) == null }
     val paid = info.providers?.paid.orEmpty()
     if (others.isEmpty() && paid.isEmpty() && info.providers?.link == null && info.imdbId == null) return
 

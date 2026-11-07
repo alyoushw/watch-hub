@@ -152,7 +152,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     subtitle = "كل الأنمي اللي تنزل له حلقات هالأيام",
                 )
             })
-            StreamingService.entries.forEach { service ->
+            StreamingService.entries.filter { it.tmdbIds.isNotEmpty() }.forEach { service ->
                 add(async {
                     sourced(
                         "anime-top-${service.key}", "أفضل 10 أنمي على ${service.label}",
@@ -195,34 +195,63 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         val today = LocalDate.now()
         val dateField = if (t == MediaType.TV) "air_date" else "primary_release_date"
 
-        // Regional services (Shahid, OSN+, STARZPLAY, …): whatever TMDB lists for the region.
-        val regional = try {
+        val firstDateField = if (t == MediaType.TV) "first_air_date" else "primary_release_date"
+
+        // Every service TMDB (JustWatch) lists for the region; used to find Shahid / STC tv by name
+        // and to add rows for other regional services (OSN+, STARZPLAY, …).
+        val allProviders = try {
             container.api.regionProviders(t)
-                .filter { p -> StreamingService.forProvider(p.id) == null && REGIONAL_KEYWORDS.any { it in p.name.lowercase() } }
-                .distinctBy { it.name.lowercase().substringBefore(" ") }
-                .take(6)
         } catch (_: ApiException) {
             emptyList()
         }
+        val regional = allProviders
+            .filter { p -> StreamingService.forProvider(p) == null && REGIONAL_KEYWORDS.any { it in p.name.lowercase() } }
+            .distinctBy { it.name.lowercase().substringBefore(" ") }
+            .take(6)
+        fun idsFor(service: StreamingService): Set<Int> =
+            service.tmdbIds + allProviders.filter { StreamingService.forProvider(it) == service }.map { it.id }
 
         val jobs = buildList {
             add(async { sourced("trending", "الرائج هذا الأسبوع", RowSource.Trending(t), wide = true) })
             add(async { forYou(t) })
             // Gulf productions (Saudi, UAE, Kuwait, Bahrain, Qatar, Oman), from all of TMDB.
             val gulf = mapOf("with_origin_country" to GULF_COUNTRIES)
+            if (t == MediaType.TV) {
+                // What has episodes out right now (last 10 days / next 3), Gulf and all Arabic.
+                val airing = mapOf(
+                    "sort_by" to "popularity.desc",
+                    "air_date.gte" to today.minusDays(10).toString(),
+                    "air_date.lte" to today.plusDays(3).toString(),
+                )
+                add(async {
+                    sourced(
+                        "gulf-airing", "مسلسلات خليجية تنعرض الحين",
+                        RowSource.Discover(t, gulf + airing, streamableOnly = false),
+                        subtitle = "نزلت لها حلقات هالأيام",
+                    )
+                })
+                add(async {
+                    sourced(
+                        "arabic-airing", "مسلسلات عربية تنعرض الحين",
+                        RowSource.Discover(t, airing + ("with_original_language" to "ar"), streamableOnly = false),
+                        subtitle = "خليجي ومصري وشامي وغيرها",
+                    )
+                })
+            }
             add(async {
                 sourced(
                     "gulf-new", "${if (t == MediaType.TV) "مسلسلات" else "أفلام"} خليجية جديدة",
+                    // Started in the last ~5 months (by first air date), so last Ramadan's shows drop off.
                     RowSource.Discover(
                         t,
                         gulf + mapOf(
-                            "sort_by" to "popularity.desc",
-                            "$dateField.gte" to today.minusDays(365).toString(),
-                            "$dateField.lte" to today.plusDays(30).toString(),
+                            "sort_by" to "$firstDateField.desc",
+                            "$firstDateField.gte" to today.minusDays(150).toString(),
+                            "$firstDateField.lte" to today.toString(),
                         ),
                         streamableOnly = false,
                     ),
-                    subtitle = "السعودية والإمارات والكويت والبحرين وقطر وعُمان",
+                    subtitle = "بدأت خلال آخر ٥ شهور، الأحدث أول",
                 )
             })
             add(async {
@@ -241,12 +270,15 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 })
             }
             StreamingService.entries.forEach { service ->
+                val ids = idsFor(service)
+                // Shahid / STC tv only get a row when TMDB lists them for the region.
+                if (ids.isEmpty()) return@forEach
                 add(async {
                     sourced(
                         "top-${service.key}", "أفضل 10 $kind على ${service.label}",
                         RowSource.Discover(
                             t,
-                            mapOf("with_watch_providers" to service.tmdbIds.joinToString("|"), "sort_by" to "popularity.desc"),
+                            mapOf("with_watch_providers" to ids.joinToString("|"), "sort_by" to "popularity.desc"),
                         ),
                         service = service, ranked = true, limit = 10,
                     )

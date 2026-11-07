@@ -133,7 +133,11 @@ class ClaudeAssistant(private val settings: SettingsStore) {
     private fun ClaudeIntent.toQuery(original: String): SmartQuery {
         val type = if (mediaType == "tv") MediaType.TV else MediaType.MOVIE
         return when (intent) {
-            "similar" -> if (title.isNotBlank()) SmartQuery.Similar(title, type) else SmartQuery.Plain(original)
+            "similar" -> if (title.isNotBlank()) {
+                SmartQuery.Similar(title, type, Origin.entries.firstOrNull { it.name == origin })
+            } else {
+                SmartQuery.Plain(original)
+            }
             "watchlist" -> SmartQuery.FromWatchlist
             "title" -> SmartQuery.Plain(title.ifBlank { original })
             else -> SmartQuery.Filter(
