@@ -26,20 +26,27 @@ class AppContainer(context: Context) {
     val statusCache = StatusCache(context, api)
 
     private val navPrefs = context.getSharedPreferences("navigation", Context.MODE_PRIVATE)
-    private val navJson = Json { ignoreUnknownKeys = true }
+    // RowSource has its own "type" field, so the subtype marker needs another name ("kind").
+    private val navJson = Json {
+        ignoreUnknownKeys = true
+        classDiscriminator = "kind"
+    }
 
     /**
      * The list a "عرض الكل" button asked to open. Saved on disk so the page is still there
      * if Android closes the app in the background (e.g. while a film plays in Netflix).
      */
+    private var memoryBrowse: BrowseRequest? = null
+
     var browse: BrowseRequest?
-        get() = runCatching {
+        get() = memoryBrowse ?: runCatching {
             navPrefs.getString("browse", null)?.let { navJson.decodeFromString(BrowseRequest.serializer(), it) }
         }.getOrNull()
         set(value) {
-            navPrefs.edit()
-                .putString("browse", value?.let { navJson.encodeToString(BrowseRequest.serializer(), it) })
-                .apply()
+            // Saving is only a convenience; it must never take the app down.
+            val encoded = runCatching { value?.let { navJson.encodeToString(BrowseRequest.serializer(), it) } }.getOrNull()
+            navPrefs.edit().putString("browse", encoded).apply()
+            memoryBrowse = value
         }
 
     /** Last Home tab (series / movies / anime), restored on the next start. */
