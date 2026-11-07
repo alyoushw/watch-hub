@@ -96,8 +96,21 @@ fun appLinkFor(service: StreamingService, url: String): String {
         val id = Regex("/(?:gp/video/detail|dp|detail)/([A-Za-z0-9.]+)").find(url)?.groupValues?.get(1)
         if (id != null) return "https://www.primevideo.com/detail/$id"
     }
+    if (service == StreamingService.CRUNCHYROLL) {
+        // Drop a language prefix (crunchyroll.com/ar/series/...) and force https://www.
+        return url
+            .replace(Regex("^https?://(www\\.)?crunchyroll\\.com/"), "https://www.crunchyroll.com/")
+            .replace(Regex("crunchyroll\\.com/[a-z]{2}(-[a-z]{2})?/(?=(series|watch)/)"), "crunchyroll.com/")
+    }
     return url
 }
+
+/**
+ * Old-style Crunchyroll links (crunchyroll.com/anime-name, from before 2022) don't open in the app;
+ * for those the in-app search is the better target.
+ */
+private fun isLegacyCrunchyrollLink(url: String): Boolean =
+    "crunchyroll.com" in url && !Regex("crunchyroll\\.com/(?:[a-z]{2}(?:-[a-z]{2})?/)?(?:series|watch)/").containsMatchIn(url)
 
 private fun Context.tryView(url: String, pkg: String): Boolean = try {
     startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -115,6 +128,12 @@ fun Context.openInService(service: StreamingService, url: String, title: String)
     val pkg = installedPackage(service)
     if (pkg == null) {
         openUrl(url)
+        return
+    }
+    if (service == StreamingService.CRUNCHYROLL && isLegacyCrunchyrollLink(url) && "/search" !in url) {
+        // Straight to the app's search for links the app can't open.
+        if (tryView(service.searchUrl(title), pkg)) return
+        openCustomApp(pkg, title)
         return
     }
     val appUrl = appLinkFor(service, url)
