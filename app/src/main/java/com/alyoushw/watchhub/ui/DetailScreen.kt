@@ -360,8 +360,10 @@ class DetailViewModel(
         val genres = info.genreIds
         val base = buildMap {
             put("sort_by", "popularity.desc")
-            put("vote_count.gte", "10")
+            put("vote_count.gte", "5")
             if (lang != null) put("with_original_language", lang)
+            // Saudi stays Saudi (not all Arabic), Korean stays Korean, …
+            if (info.countries.isNotEmpty()) put("with_origin_country", info.countries.joinToString("|"))
         }
         suspend fun discover(withGenres: String?): List<SearchResult> = try {
             container.api.discover(
@@ -489,7 +491,13 @@ private fun DetailContent(
                 OutlinedButton(
                     modifier = Modifier.padding(horizontal = 16.dp).focusFrame(),
                     onClick = {
-                        val q = java.net.URLEncoder.encode("${info.searchTitle} ${info.year.orEmpty()} trailer".trim(), "UTF-8")
+                        // Arabic shows are found on YouTube by their Arabic name ("اعلان"/promo), others in English.
+                        val text = if (info.originalLanguage == "ar") {
+                            "${info.title} ${info.year.orEmpty()} اعلان"
+                        } else {
+                            "${info.searchTitle} ${info.year.orEmpty()} trailer"
+                        }
+                        val q = java.net.URLEncoder.encode(text.replace("  ", " ").trim(), "UTF-8")
                         context.openUrl("https://www.youtube.com/results?search_query=$q")
                     },
                 ) {

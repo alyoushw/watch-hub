@@ -99,6 +99,22 @@ data class DiscoverFilter(
         minRating?.let { add("تقييم $it+") }
     }
 
+    /**
+     * Whether a result really fits: every chosen genre, and the chosen country (or language).
+     * TMDB's discover is looser than that (e.g. language-only matches), so results are re-checked.
+     */
+    fun matches(r: SearchResult): Boolean {
+        val genreIds = genres.map { it.idFor(type) }.toSet()
+        if (genreIds.isNotEmpty() && r.genreIds.isNotEmpty() && !r.genreIds.containsAll(genreIds)) return false
+        val o = origin ?: return true
+        val countries = o.countries?.split("|")?.toSet()
+        return when {
+            countries != null && r.originCountry.isNotEmpty() -> r.originCountry.any { it in countries }
+            r.originalLanguage != null -> r.originalLanguage == o.language
+            else -> true
+        }
+    }
+
     /** TMDB /discover parameters for this filter. */
     fun toParams(today: LocalDate = LocalDate.now()): Map<String, String> = buildMap {
         val dateField = if (type == MediaType.MOVIE) "primary_release_date" else "first_air_date"

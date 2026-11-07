@@ -48,7 +48,7 @@ class DirectLinks {
               ?item ?claim ?value .
               ?property wikibase:directClaim ?claim ;
                         wdt:P1630 ?formatter .
-              FILTER(REGEX(STR(?formatter), "netflix\\.com/|primevideo\\.com/|amazon\\.[a-z.]+/gp/video/|crunchyroll\\.com/"))
+              FILTER(REGEX(STR(?formatter), "netflix\\.com/|primevideo\\.com/|amazon\\.[a-z.]+/gp/video/|crunchyroll\\.com/|shahid\\.mbc\\.net/|stctv\\.com/"))
             }
         """.trimIndent()
 
@@ -79,6 +79,8 @@ class DirectLinks {
             val value = row["value"]?.jsonObject?.get("value")?.jsonPrimitive?.content ?: continue
             val service = when {
                 "netflix" in formatter -> StreamingService.NETFLIX
+                "shahid" in formatter -> StreamingService.SHAHID
+                "stctv" in formatter -> StreamingService.STC_TV
                 "crunchyroll" in formatter -> StreamingService.CRUNCHYROLL
                 else -> StreamingService.PRIME
             }

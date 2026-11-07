@@ -172,17 +172,34 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             loadingMore = true
             try {
-                val next = page + 1
-                val more = container.api.discover(filter.type, filter.toParams(), next, streamableOnly = false)
-                page = next
+                val more = strictPages(filter, wanted = 12)
                 state = current.copy(
                     items = (current.items + more).distinctBy { "${it.mediaType}:${it.id}" },
-                    canLoadMore = more.size >= 20,
+                    canLoadMore = page < totalPages,
                 )
             } catch (_: ApiException) {
             }
             loadingMore = false
         }
+    }
+
+    private var totalPages = 1
+
+    /**
+     * Reads discover pages after [page] until [wanted] results pass [DiscoverFilter.matches]
+     * (or 6 pages / the end), so filters like "سعودي + كوميدي" show only Saudi comedies.
+     */
+    private suspend fun strictPages(filter: DiscoverFilter, wanted: Int): List<SearchResult> {
+        val out = mutableListOf<SearchResult>()
+        var read = 0
+        while (out.size < wanted && page < totalPages && read < 6) {
+            val response = container.api.discoverPage(filter.type, filter.toParams(), page + 1, streamableOnly = false)
+            page = response.page.coerceAtLeast(page + 1)
+            totalPages = response.totalPages.coerceIn(1, 500)
+            out += response.results.filter(filter::matches)
+            read++
+        }
+        return out
     }
 
     private suspend fun guard(block: suspend () -> SearchState): SearchState = try {
@@ -217,9 +234,10 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     private suspend fun filterResults(filter: DiscoverFilter, heading: String): SearchState {
-        page = 1
-        val items = container.api.discover(filter.type, filter.toParams(), 1, streamableOnly = false)
-        return SearchState.Results(items, heading, filter.summary(), filter, canLoadMore = items.size >= 20)
+        page = 0
+        totalPages = 1
+        val items = strictPages(filter, wanted = 15).distinctBy { "${it.mediaType}:${it.id}" }
+        return SearchState.Results(items, heading, filter.summary(), filter, canLoadMore = page < totalPages)
     }
 
     private suspend fun similar(q: SmartQuery.Similar): SearchState {
@@ -239,24 +257,39 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
             return SearchState.Results(emptyList(), "ما لقينا «${q.title}». جرّب تكتب اسمه بالإنجليزي.")
         }
 
-        // Same country as asked (or as the seed), same genres first; TMDB's picks after.
+        // Closest first: same country (as asked, or the seed's) AND all of the seed's main genres
+        // (e.g. Saudi + comedy), then same country + its main genre, then TMDB's own picks.
         val countries = q.origin?.countries ?: seed.originCountry.takeIf { it.isNotEmpty() }?.joinToString("|")
         val language = q.origin?.language ?: seed.originalLanguage
-        val params = buildMap {
-            put("sort_by", "popularity.desc")
-            language?.let { put("with_original_language", it) }
-            countries?.let { put("with_origin_country", it) }
-            if (seed.genreIds.isNotEmpty()) put("with_genres", seed.genreIds.take(2).joinToString("|"))
-        }
-        val close = try {
-            container.api.discover(seedType, params, streamableOnly = false)
+        val mainGenres = seed.genreIds.take(2)
+        suspend fun discoverWith(genres: String?): List<SearchResult> = try {
+            container.api.discover(
+                seedType,
+                buildMap {
+                    put("sort_by", "popularity.desc")
+                    language?.let { put("with_original_language", it) }
+                    countries?.let { put("with_origin_country", it) }
+                    genres?.let { put("with_genres", it) }
+                },
+                streamableOnly = false,
+            )
         } catch (_: ApiException) {
             emptyList()
         }
-        val recs = container.api.recommendations(seedType, seed.id)
         val countrySet = countries?.split("|")?.toSet()
-        val recsSameCountry = recs.filter { r -> countrySet == null || r.originCountry.any { it in countrySet } }
-        val items = (close + recsSameCountry + recs)
+        fun sameCountry(r: SearchResult) =
+            countrySet == null || r.originCountry.any { it in countrySet } || (r.originCountry.isEmpty() && r.originalLanguage == language)
+
+        val strict = if (mainGenres.isNotEmpty()) {
+            discoverWith(mainGenres.joinToString(",")).filter { r -> sameCountry(r) && r.genreIds.containsAll(mainGenres) }
+        } else {
+            emptyList()
+        }
+        val recs = container.api.recommendations(seedType, seed.id)
+        val recsClose = recs.filter { r -> sameCountry(r) && mainGenres.firstOrNull()?.let { it in r.genreIds } != false }
+        val loose = mainGenres.firstOrNull()?.let { g -> discoverWith("$g").filter(::sameCountry) }.orEmpty()
+        val recsSameCountry = recs.filter(::sameCountry)
+        val items = (strict + recsClose + loose + recsSameCountry + recs)
             .filter { it.id != seed.id }
             .distinctBy { "${it.mediaType}:${it.id}" }
         val where = q.origin?.label?.let { " ($it)" }.orEmpty()
