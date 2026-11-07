@@ -134,6 +134,7 @@ data class DetailInfo(
     val trailers: List<Trailer>,
     val reviews: List<ReviewInfo>,
     val recommendations: List<SearchResult>,
+    val imdbId: String?,
 ) {
     /** Services from our three that TMDB says carry this title in the region. */
     val availableServices: List<StreamingService>
@@ -202,6 +203,7 @@ data class DetailInfo(
                         )
                     },
                 latestAired = ar.latestAired(),
+                imdbId = (ar.imdbId ?: ar.externalIds?.imdbId)?.takeIf { it.startsWith("tt") },
                 cast = ar.credits?.cast.orEmpty().take(15).map { CastMember(it.name, it.character, it.profilePath) },
                 trailers = trailers,
                 reviews = reviews,
@@ -815,7 +817,7 @@ private fun OtherProviders(info: DetailInfo) {
     val context = LocalContext.current
     val others = info.providers?.streaming.orEmpty().filter { StreamingService.forProvider(it.id) == null }
     val paid = info.providers?.paid.orEmpty()
-    if (others.isEmpty() && paid.isEmpty() && info.providers?.link == null) return
+    if (others.isEmpty() && paid.isEmpty() && info.providers?.link == null && info.imdbId == null) return
 
     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SectionTitle("منصات ثانية (${info.region})")
@@ -829,6 +831,9 @@ private fun OtherProviders(info: DetailInfo) {
         }
         info.providers?.link?.let { link ->
             TextButton(onClick = { context.openUrl(link) }) { Text("كل خيارات المشاهدة على TMDB") }
+        }
+        info.imdbId?.let { imdb ->
+            TextButton(onClick = { context.openUrl("https://www.imdb.com/title/$imdb/") }) { Text("افتحه في IMDb") }
         }
     }
 }

@@ -63,6 +63,9 @@ data class Person(
 )
 
 @Serializable
+data class ExternalIds(@SerialName("imdb_id") val imdbId: String? = null)
+
+@Serializable
 data class Credits(val cast: List<Person> = emptyList(), val crew: List<Person> = emptyList())
 
 @Serializable
@@ -145,6 +148,9 @@ data class Details(
     val networks: List<Named> = emptyList(),
     @SerialName("created_by") val createdBy: List<Named> = emptyList(),
     val credits: Credits? = null,
+    @SerialName("external_ids") val externalIds: ExternalIds? = null,
+    /** Movies carry the IMDb id directly; series have it under external_ids. */
+    @SerialName("imdb_id") val imdbId: String? = null,
     val videos: Videos? = null,
     val reviews: Reviews? = null,
     val recommendations: SearchResponse? = null,
@@ -190,7 +196,7 @@ class TmdbApi(private val settings: SettingsStore) {
             "${type.path}/$id",
             mapOf(
                 "language" to "ar",
-                "append_to_response" to "watch/providers,credits,videos,recommendations",
+                "append_to_response" to "watch/providers,credits,videos,recommendations,external_ids",
                 "include_video_language" to "ar,en",
             ),
             Details.serializer(),

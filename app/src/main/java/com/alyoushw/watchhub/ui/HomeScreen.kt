@@ -34,7 +34,6 @@ import com.alyoushw.watchhub.data.MediaType
 import com.alyoushw.watchhub.data.SearchResult
 import com.alyoushw.watchhub.data.StreamingService
 import com.alyoushw.watchhub.data.ApiException
-import com.alyoushw.watchhub.data.JAnime
 import com.alyoushw.watchhub.data.WatchItem
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -51,12 +50,6 @@ data class HomeSection(
     val service: StreamingService? = null,
     val ranked: Boolean = false,
     val wide: Boolean = false,
-)
-
-private class AnimeRow(
-    val template: HomeSection,
-    val limit: Int = 20,
-    val fetch: suspend () -> List<JAnime>,
 )
 
 class HomeViewModel(private val container: AppContainer) : ViewModel() {
@@ -119,51 +112,72 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /**
-     * Anime rows from MyAnimeList. Jikan is rate limited, so rows load one after another
-     * and appear on screen as each one arrives.
-     */
-    private suspend fun buildAnimeSections(): List<HomeSection> {
-        val jikan = container.jikan
-        val specs = listOf(
-            AnimeRow(HomeSection("anime-airing", "الرائج الحين", emptyList(), subtitle = "الأعلى تقييماً من اللي ينعرض الحين")) { jikan.top("airing") },
-            AnimeRow(HomeSection("anime-top", "أفضل 10 أنمي على MyAnimeList", emptyList(), ranked = true), limit = 10) { jikan.top() },
-            AnimeRow(HomeSection("anime-season", "أنمي هذا الموسم", emptyList())) { jikan.seasonNow() },
-            AnimeRow(
-                HomeSection("anime-popular", "الأكثر شعبية", emptyList(), subtitle = "حسب عدد المتابعين على MyAnimeList", ranked = true),
-                limit = 10,
-            ) { jikan.top("bypopularity") },
-            AnimeRow(HomeSection("anime-upcoming", "قريباً", emptyList())) { jikan.top("upcoming") },
-        )
-        val out = mutableListOf<HomeSection>()
-        for (row in specs) {
-            val t = row.template
-            val section = section(t.id, t.title, t.subtitle, ranked = t.ranked, limit = row.limit) {
-                row.fetch().map { it.toSearchResult() }
-            } ?: continue
-            out += section
-            sections = out.toList()
+    /** Anime rows from TMDB: Japanese animation, as series and films. */
+    private suspend fun buildAnimeSections(): List<HomeSection> = coroutineScope {
+        val api = container.api
+        val today = LocalDate.now()
+        val anime = mapOf("with_genres" to "16", "with_original_language" to "ja")
+        fun tv(vararg extra: Pair<String, String>) = anime + extra
+        val jobs = buildList {
+            add(async {
+                section("anime-airing", "أنمي ينعرض الحين", subtitle = "نزلت له حلقات خلال آخر شهر") {
+                    api.discover(
+                        MediaType.TV,
+                        tv(
+                            "sort_by" to "popularity.desc",
+                            "air_date.gte" to today.minusDays(30).toString(),
+                            "air_date.lte" to today.plusDays(7).toString(),
+                        ),
+                        streamableOnly = false,
+                    )
+                }
+            })
+            StreamingService.entries.forEach { service ->
+                add(async {
+                    section(
+                        id = "anime-top-${service.key}",
+                        title = "أفضل 10 أنمي على ${service.label}",
+                        service = service,
+                        ranked = true,
+                        limit = 10,
+                    ) {
+                        api.discover(
+                            MediaType.TV,
+                            tv("sort_by" to "popularity.desc", "with_watch_providers" to service.tmdbIds.joinToString("|")),
+                        )
+                    }
+                })
+            }
+            add(async {
+                section("anime-top-rated", "الأعلى تقييماً من المشاهدين", ranked = true, limit = 10) {
+                    api.discover(MediaType.TV, tv("sort_by" to "vote_average.desc", "vote_count.gte" to "300"), streamableOnly = false)
+                }
+            })
+            add(async {
+                section("anime-popular", "الأشهر على الإطلاق") {
+                    api.discover(MediaType.TV, tv("sort_by" to "popularity.desc"), streamableOnly = false)
+                }
+            })
+            add(async {
+                section("anime-movies", "أفلام أنمي") {
+                    api.discover(
+                        MediaType.MOVIE,
+                        tv("sort_by" to "popularity.desc", "vote_count.gte" to "50"),
+                        streamableOnly = false,
+                    )
+                }
+            })
+            add(async {
+                section("anime-upcoming", "قريباً") {
+                    api.discover(
+                        MediaType.TV,
+                        tv("sort_by" to "popularity.desc", "first_air_date.gte" to today.toString()),
+                        streamableOnly = false,
+                    )
+                }
+            })
         }
-        if (out.isEmpty()) {
-            // MyAnimeList (Jikan) did not answer: show anime from TMDB instead of an empty tab.
-            val why = lastError ?: "MyAnimeList ما رد"
-            val api = container.api
-            val anime = mapOf("with_genres" to "16", "with_original_language" to "ja")
-            section("anime-tmdb-popular", "أنمي رائج", subtitle = "$why، عرضنا لك من TMDB") {
-                api.discover(MediaType.TV, anime + ("sort_by" to "popularity.desc"), streamableOnly = false)
-            }?.let { out += it }
-            section("anime-tmdb-top", "أفضل أنمي", ranked = true, limit = 10) {
-                api.discover(
-                    MediaType.TV,
-                    anime + mapOf("sort_by" to "vote_average.desc", "vote_count.gte" to "200"),
-                    streamableOnly = false,
-                )
-            }?.let { out += it }
-            section("anime-tmdb-movies", "أفلام أنمي") {
-                api.discover(MediaType.MOVIE, anime + ("sort_by" to "popularity.desc"), streamableOnly = false)
-            }?.let { out += it }
-        }
-        return out
+        jobs.awaitAll().filterNotNull()
     }
 
     private suspend fun buildSections(t: MediaType): List<HomeSection> {
