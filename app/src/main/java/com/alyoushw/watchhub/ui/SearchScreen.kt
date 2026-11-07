@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -657,6 +658,7 @@ private fun SearchRow(item: SearchResult, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
+            .focusHighlight(RoundedCornerShape(0.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),

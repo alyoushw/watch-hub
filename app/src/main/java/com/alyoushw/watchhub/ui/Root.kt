@@ -12,6 +12,9 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -58,26 +61,43 @@ fun WatchHubRoot() {
     val backStack by nav.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
 
+    val tv = isTv()
     Scaffold(
         contentWindowInsets = WindowInsets(0),
         bottomBar = {
-            NavigationBar {
-                Tab.entries.forEach { tab ->
-                    NavigationBarItem(
-                        selected = currentRoute == tab.route,
-                        onClick = { nav.switchTab(tab.route) },
-                        icon = { Icon(tab.icon, contentDescription = null) },
-                        label = { Text(tab.label, maxLines = 1) },
-                        alwaysShowLabel = false,
-                    )
+            if (!tv) {
+                NavigationBar {
+                    Tab.entries.forEach { tab ->
+                        NavigationBarItem(
+                            selected = currentRoute == tab.route,
+                            onClick = { nav.switchTab(tab.route) },
+                            icon = { Icon(tab.icon, contentDescription = null) },
+                            label = { Text(tab.label, maxLines = 1) },
+                            alwaysShowLabel = false,
+                        )
+                    }
                 }
             }
         },
     ) { padding ->
+      Row(Modifier.fillMaxSize().padding(padding)) {
+        if (tv) {
+            // On TV the tabs sit in a rail on the side, easy to reach with the remote.
+            NavigationRail {
+                Tab.entries.forEach { tab ->
+                    NavigationRailItem(
+                        selected = currentRoute == tab.route,
+                        onClick = { nav.switchTab(tab.route) },
+                        icon = { Icon(tab.icon, contentDescription = null) },
+                        label = { Text(tab.label, maxLines = 1) },
+                    )
+                }
+            }
+        }
         NavHost(
             navController = nav,
             startDestination = Tab.HOME.route,
-            modifier = Modifier.fillMaxSize().padding(padding),
+            modifier = Modifier.weight(1f).fillMaxSize(),
         ) {
             composable(Tab.HOME.route) {
                 val container = appContainer()
@@ -132,5 +152,6 @@ fun WatchHubRoot() {
                 }
             }
         }
+      }
     }
 }

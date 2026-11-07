@@ -79,7 +79,7 @@ fun Context.openUrl(url: String) {
 private val StreamingService.packages: List<String>
     get() = when (this) {
         StreamingService.NETFLIX -> listOf(packageName, "com.netflix.ninja")
-        StreamingService.PRIME -> listOf(packageName, "com.amazon.avod")
+        StreamingService.PRIME -> listOf(packageName, "com.amazon.avod", "com.amazon.amazonvideo.livingroom")
         StreamingService.CRUNCHYROLL -> listOf(packageName)
     }
 

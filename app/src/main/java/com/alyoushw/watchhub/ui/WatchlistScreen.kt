@@ -192,7 +192,7 @@ private fun WatchRow(item: WatchItem, onClick: () -> Unit) {
     val services = item.providerIds.mapNotNull { StreamingService.forProvider(it) }.distinct()
 
     Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = Modifier.fillMaxWidth().focusHighlight(androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
     ) {
         Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {

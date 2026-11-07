@@ -1,6 +1,11 @@
 package com.alyoushw.watchhub.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.border
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.LaunchedEffect
@@ -195,7 +200,7 @@ fun RatingChip(value: Double?, modifier: Modifier = Modifier) {
 @Composable
 fun PosterCard(item: SearchResult, rank: Int? = null, width: Dp = 120.dp, onClick: () -> Unit) {
     Column(
-        Modifier.width(width).clickable(onClick = onClick),
+        Modifier.width(width).focusHighlight().clickable(onClick = onClick),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Box {
@@ -233,6 +238,7 @@ fun BackdropCard(item: SearchResult, width: Dp = 280.dp, onClick: () -> Unit) {
         Modifier
             .width(width)
             .aspectRatio(16f / 9f)
+            .focusHighlight(RoundedCornerShape(12.dp))
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .clickable(onClick = onClick),
@@ -340,4 +346,35 @@ fun StatusBadge(tvId: Int, modifier: Modifier = Modifier) {
             .background(Color(color).copy(alpha = 0.92f))
             .padding(horizontal = 5.dp, vertical = 1.dp),
     )
+}
+
+/** True on Android TV / Google TV / Fire TV (driven by a remote, not touch). */
+@Composable
+fun isTv(): Boolean {
+    val context = LocalContext.current
+    return remember {
+        context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) ||
+            !context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN)
+    }
+}
+
+/**
+ * Makes the remote's current position obvious on TV: a bright border and a slight zoom
+ * on the focused card. Put it before `clickable` so it sees that element's focus.
+ */
+@Composable
+fun Modifier.focusHighlight(shape: Shape = RoundedCornerShape(10.dp)): Modifier {
+    var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (focused) 1.06f else 1f, label = "focusScale")
+    return this
+        .onFocusChanged { focused = it.isFocused || it.hasFocus }
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
+        .border(
+            width = if (focused) 3.dp else 0.dp,
+            color = if (focused) MaterialTheme.colorScheme.secondary else Color.Transparent,
+            shape = shape,
+        )
 }
