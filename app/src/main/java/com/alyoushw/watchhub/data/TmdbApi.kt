@@ -39,7 +39,7 @@ data class SearchResult(
 }
 
 @Serializable
-data class Genre(val name: String = "")
+data class TmdbGenre(val name: String = "")
 
 @Serializable
 data class SeasonDto(
@@ -148,7 +148,7 @@ data class Details(
     val videos: Videos? = null,
     val reviews: Reviews? = null,
     val recommendations: SearchResponse? = null,
-    val genres: List<Genre> = emptyList(),
+    val genres: List<TmdbGenre> = emptyList(),
     val seasons: List<SeasonDto> = emptyList(),
     @SerialName("last_episode_to_air") val lastEpisodeToAir: EpisodeRef? = null,
     @SerialName("next_episode_to_air") val nextEpisodeToAir: EpisodeRef? = null,
