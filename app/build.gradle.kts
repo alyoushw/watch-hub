@@ -21,6 +21,14 @@ android {
     // Without the secrets, builds fall back to the debug key.
     val releaseKeystore = System.getenv("WATCHHUB_KEYSTORE")?.let { file(it) }?.takeIf { it.exists() }
     signingConfigs {
+        // Shared debug key (standard public "android" passwords) checked into the repo, so every
+        // CI build is signed the same way and installs over the previous one without uninstalling.
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
         if (releaseKeystore != null) {
             create("release") {
                 storeFile = releaseKeystore
