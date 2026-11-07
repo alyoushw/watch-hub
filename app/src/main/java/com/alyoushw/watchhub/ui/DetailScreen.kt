@@ -82,6 +82,8 @@ import com.alyoushw.watchhub.data.TmdbApi
 import com.alyoushw.watchhub.data.TmdbException
 import com.alyoushw.watchhub.data.WatchItem
 import com.alyoushw.watchhub.data.WatchStatus
+import com.alyoushw.watchhub.data.appLabel
+import com.alyoushw.watchhub.data.openCustomApp
 import com.alyoushw.watchhub.data.openUrl
 import com.alyoushw.watchhub.data.watchOn
 import kotlinx.coroutines.async
@@ -558,11 +560,35 @@ private fun WatchButtons(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        CustomAppButtons(info.searchTitle)
+
         val others = StreamingService.entries.filter { it !in services }
         if (others.isNotEmpty()) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 others.forEach { service ->
                     OutlinedButton(onClick = { onWatch(service) }) { Text("ابحث في ${service.label}") }
+                }
+            }
+        }
+    }
+}
+
+/** The user's own extra apps, picked once in Settings. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CustomAppButtons(title: String) {
+    val container = appContainer()
+    val context = LocalContext.current
+    val apps by container.settings.customApps.collectAsStateWithLifecycle()
+    if (apps.isEmpty()) return
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        apps.forEach { pkg ->
+            val label = remember(pkg) { context.appLabel(pkg) }
+            if (label != null) {
+                OutlinedButton(onClick = { context.openCustomApp(pkg, title) }) {
+                    AppIcon(pkg, size = 20.dp)
+                    Spacer(Modifier.width(6.dp))
+                    Text(label)
                 }
             }
         }

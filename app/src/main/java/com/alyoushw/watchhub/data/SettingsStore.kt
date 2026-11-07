@@ -14,6 +14,19 @@ class SettingsStore(context: Context) {
     private val _region = MutableStateFlow(prefs.getString(KEY_REGION, "SA") ?: "SA")
     val region: StateFlow<String> = _region.asStateFlow()
 
+    private val _customApps = MutableStateFlow(
+        prefs.getString(KEY_APPS, "").orEmpty().split(',').filter { it.isNotBlank() },
+    )
+
+    /** Package names of the user's extra "open in" apps, in the order they were added. */
+    val customApps: StateFlow<List<String>> = _customApps.asStateFlow()
+
+    fun setCustomApps(packages: List<String>) {
+        val clean = packages.distinct()
+        prefs.edit().putString(KEY_APPS, clean.joinToString(",")).apply()
+        _customApps.value = clean
+    }
+
     fun setApiKey(value: String) {
         val v = value.trim()
         prefs.edit().putString(KEY_TMDB, v).apply()
@@ -28,5 +41,6 @@ class SettingsStore(context: Context) {
     private companion object {
         const val KEY_TMDB = "tmdb_key"
         const val KEY_REGION = "region"
+        const val KEY_APPS = "custom_apps"
     }
 }

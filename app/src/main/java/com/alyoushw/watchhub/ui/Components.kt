@@ -1,6 +1,11 @@
 package com.alyoushw.watchhub.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
+import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.graphics.drawable.toBitmap
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
@@ -285,5 +290,18 @@ fun TitleRow(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun AppIcon(packageName: String, size: Dp = 32.dp) {
+    val context = LocalContext.current
+    val bitmap = remember(packageName) {
+        runCatching { context.packageManager.getApplicationIcon(packageName).toBitmap(96, 96).asImageBitmap() }.getOrNull()
+    }
+    if (bitmap != null) {
+        Image(bitmap = bitmap, contentDescription = null, modifier = Modifier.size(size))
+    } else {
+        Box(Modifier.size(size).clip(RoundedCornerShape(6.dp)).background(MaterialTheme.colorScheme.surfaceVariant))
     }
 }

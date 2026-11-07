@@ -1,6 +1,20 @@
 package com.alyoushw.watchhub.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.runtime.LaunchedEffect
+import com.alyoushw.watchhub.data.InstalledApp
+import com.alyoushw.watchhub.data.appLabel
+import com.alyoushw.watchhub.data.launchableApps
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -145,6 +159,10 @@ fun SettingsScreen() {
 
             HorizontalDivider()
 
+            CustomAppsSection()
+
+            HorizontalDivider()
+
             SectionTitle("عن التطبيق")
             Text(
                 "Watch Hub ما يشغّل الفيديو بنفسه ولا يحفظ كلمات مرور حساباتك. يجمع لك المحتوى في مكان واحد، " +
@@ -157,4 +175,96 @@ fun SettingsScreen() {
             )
         }
     }
+}
+
+private const val MAX_CUSTOM_APPS = 5
+
+/** Pick a few installed apps once; each one becomes a button on every title page. */
+@Composable
+private fun CustomAppsSection() {
+    val container = appContainer()
+    val context = LocalContext.current
+    val apps by container.settings.customApps.collectAsStateWithLifecycle()
+    var picking by remember { mutableStateOf(false) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionTitle("تطبيقاتي الإضافية")
+        Text(
+            "اختار التطبيقات اللي تبيها مرة وحدة، وبيطلع لك زر لكل واحد في صفحة أي فيلم أو مسلسل. " +
+                "لما تضغطه ننسخ اسم العمل ونفتح التطبيق، وتلصق الاسم في البحث.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        apps.forEach { pkg ->
+            val label = remember(pkg) { context.appLabel(pkg) }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                AppIcon(pkg, size = 36.dp)
+                Text(label ?: "$pkg (مو مثبت)", modifier = Modifier.weight(1f))
+                TextButton(onClick = { container.settings.setCustomApps(apps - pkg) }) {
+                    Text("شيل", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+        if (apps.size < MAX_CUSTOM_APPS) {
+            OutlinedButton(onClick = { picking = true }) { Text("+ أضف تطبيق") }
+        }
+    }
+
+    if (picking) {
+        AppPickerDialog(
+            exclude = apps.toSet(),
+            onDismiss = { picking = false },
+            onPick = { pkg ->
+                container.settings.setCustomApps(apps + pkg)
+                picking = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun AppPickerDialog(exclude: Set<String>, onDismiss: () -> Unit, onPick: (String) -> Unit) {
+    val context = LocalContext.current
+    var all by remember { mutableStateOf<List<InstalledApp>?>(null) }
+    var filter by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        all = withContext(Dispatchers.IO) { context.launchableApps() }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("اختار تطبيق") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = filter,
+                    onValueChange = { filter = it },
+                    placeholder = { Text("ابحث باسم التطبيق") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                val list = all
+                if (list == null) {
+                    Box(Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                } else {
+                    val shown = list.filter { it.packageName !in exclude && it.label.contains(filter.trim(), ignoreCase = true) }
+                    LazyColumn(Modifier.fillMaxWidth().height(380.dp)) {
+                        items(shown, key = { it.packageName }) { app ->
+                            Row(
+                                Modifier.fillMaxWidth().clickable { onPick(app.packageName) }.padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                AppIcon(app.packageName, size = 36.dp)
+                                Text(app.label)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("إلغاء") } },
+    )
 }

@@ -8,6 +8,11 @@
         <package android:name="com.netflix.mediaclient" />
         <package android:name="com.amazon.avod.thirdpartyclient" />
         <package android:name="com.crunchyroll.crunchyroid" />
+        <!-- Lets the user pick any installed app as an extra "open in" shortcut. -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <category android:name="android.intent.category.BROWSABLE" />
