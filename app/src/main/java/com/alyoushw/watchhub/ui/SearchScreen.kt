@@ -664,6 +664,7 @@ private fun SearchRow(item: SearchResult, onClick: () -> Unit) {
     ) {
         Poster(item.posterPath, width = 56.dp)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            if (item.type == MediaType.TV) StatusBadge(item.id)
             Text(
                 item.displayTitle,
                 style = MaterialTheme.typography.titleSmall,

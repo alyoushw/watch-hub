@@ -28,6 +28,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.alyoushw.watchhub.AppContainer
+import com.alyoushw.watchhub.BrowseRequest
 import com.alyoushw.watchhub.WatchHubApp
 import com.alyoushw.watchhub.data.MediaType
 
@@ -79,10 +80,21 @@ fun WatchHubRoot() {
             modifier = Modifier.fillMaxSize().padding(padding),
         ) {
             composable(Tab.HOME.route) {
+                val container = appContainer()
                 HomeScreen(
                     onOpen = { type, id -> nav.openDetail(type, id) },
                     onOpenSettings = { nav.switchTab(Tab.SETTINGS.route) },
+                    onSeeAll = { section ->
+                        val source = section.source
+                        if (source != null) {
+                            container.browse = BrowseRequest(section.title, source, section.ranked)
+                            nav.navigate("browse")
+                        }
+                    },
                 )
+            }
+            composable("browse") {
+                BrowseScreen(onBack = { nav.popBackStack() }, onOpen = { type, id -> nav.openDetail(type, id) })
             }
             composable(Tab.SEARCH.route) {
                 SearchScreen(

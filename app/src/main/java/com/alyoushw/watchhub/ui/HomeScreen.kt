@@ -20,6 +20,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import com.alyoushw.watchhub.data.RowSource
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -50,6 +52,8 @@ data class HomeSection(
     val service: StreamingService? = null,
     val ranked: Boolean = false,
     val wide: Boolean = false,
+    /** Lets "عرض الكل" load the whole list page by page; null for rows that can't. */
+    val source: RowSource? = null,
 )
 
 class HomeViewModel(private val container: AppContainer) : ViewModel() {
@@ -67,6 +71,16 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     private var lastError: String? = null
 
     private var loadedFor: String? = null
+    private val loadedAt = mutableMapOf<MediaType, Long>()
+
+    /** TMDB changes all the time; reload when the shown lists are more than 3 hours old. */
+    fun refreshIfStale() {
+        val at = loadedAt[type] ?: return
+        if (System.currentTimeMillis() - at > 3 * 60 * 60 * 1000L) {
+            cache.remove(type)
+            load()
+        }
+    }
 
     /** Loads once per API key + region; returning to the tab keeps what is already shown. */
     fun ensureLoaded(apiKey: String, region: String) {
@@ -106,6 +120,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 error = lastError ?: "ما قدرنا نجيب المحتوى"
             } else {
                 cache[t] = result
+                loadedAt[t] = System.currentTimeMillis()
             }
             sections = result
             loading = false
@@ -114,67 +129,50 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
     /** Anime rows from TMDB: Japanese animation, as series and films. */
     private suspend fun buildAnimeSections(): List<HomeSection> = coroutineScope {
-        val api = container.api
         val today = LocalDate.now()
         val anime = mapOf("with_genres" to "16", "with_original_language" to "ja")
-        fun tv(vararg extra: Pair<String, String>) = anime + extra
+        fun tv(vararg extra: Pair<String, String>) = RowSource.Discover(MediaType.TV, anime + extra, streamableOnly = false)
         val jobs = buildList {
             add(async {
-                section("anime-airing", "أنمي ينعرض الحين", subtitle = "نزلت له حلقات خلال آخر شهر") {
-                    api.discover(
-                        MediaType.TV,
-                        tv(
-                            "sort_by" to "popularity.desc",
-                            "air_date.gte" to today.minusDays(30).toString(),
-                            "air_date.lte" to today.plusDays(7).toString(),
-                        ),
-                        streamableOnly = false,
-                    )
-                }
+                sourced(
+                    "anime-airing", "ينعرض الحين",
+                    // Everything with an episode in the last two weeks or the coming week: the full current season.
+                    tv(
+                        "sort_by" to "popularity.desc",
+                        "air_date.gte" to today.minusDays(14).toString(),
+                        "air_date.lte" to today.plusDays(7).toString(),
+                    ),
+                    subtitle = "كل الأنمي اللي تنزل له حلقات هالأيام",
+                )
             })
             StreamingService.entries.forEach { service ->
                 add(async {
-                    section(
-                        id = "anime-top-${service.key}",
-                        title = "أفضل 10 أنمي على ${service.label}",
-                        service = service,
-                        ranked = true,
-                        limit = 10,
-                    ) {
-                        api.discover(
+                    sourced(
+                        "anime-top-${service.key}", "أفضل 10 أنمي على ${service.label}",
+                        RowSource.Discover(
                             MediaType.TV,
-                            tv("sort_by" to "popularity.desc", "with_watch_providers" to service.tmdbIds.joinToString("|")),
-                        )
-                    }
+                            anime + mapOf("sort_by" to "popularity.desc", "with_watch_providers" to service.tmdbIds.joinToString("|")),
+                        ),
+                        service = service, ranked = true, limit = 10,
+                    )
                 })
             }
             add(async {
-                section("anime-top-rated", "الأعلى تقييماً من المشاهدين", ranked = true, limit = 10) {
-                    api.discover(MediaType.TV, tv("sort_by" to "vote_average.desc", "vote_count.gte" to "300"), streamableOnly = false)
-                }
+                sourced(
+                    "anime-top-rated", "الأعلى تقييماً من المشاهدين",
+                    tv("sort_by" to "vote_average.desc", "vote_count.gte" to "300"),
+                    ranked = true, limit = 10,
+                )
+            })
+            add(async { sourced("anime-popular", "الأشهر على الإطلاق", tv("sort_by" to "popularity.desc")) })
+            add(async {
+                sourced(
+                    "anime-movies", "أفلام أنمي",
+                    RowSource.Discover(MediaType.MOVIE, anime + mapOf("sort_by" to "popularity.desc", "vote_count.gte" to "50"), streamableOnly = false),
+                )
             })
             add(async {
-                section("anime-popular", "الأشهر على الإطلاق") {
-                    api.discover(MediaType.TV, tv("sort_by" to "popularity.desc"), streamableOnly = false)
-                }
-            })
-            add(async {
-                section("anime-movies", "أفلام أنمي") {
-                    api.discover(
-                        MediaType.MOVIE,
-                        tv("sort_by" to "popularity.desc", "vote_count.gte" to "50"),
-                        streamableOnly = false,
-                    )
-                }
-            })
-            add(async {
-                section("anime-upcoming", "قريباً") {
-                    api.discover(
-                        MediaType.TV,
-                        tv("sort_by" to "popularity.desc", "first_air_date.gte" to today.toString()),
-                        streamableOnly = false,
-                    )
-                }
+                sourced("anime-upcoming", "قريباً", tv("sort_by" to "popularity.desc", "first_air_date.gte" to today.toString()))
             })
         }
         jobs.awaitAll().filterNotNull()
@@ -190,35 +188,26 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         val allProviders = StreamingService.entries.flatMap { it.tmdbIds }.joinToString("|")
         val today = LocalDate.now()
         val dateField = if (t == MediaType.TV) "air_date" else "primary_release_date"
-        val api = container.api
 
         val jobs = buildList {
-            add(async {
-                section("trending", "الرائج هذا الأسبوع", wide = true, limit = 10) { api.trending(t) }
-            })
+            add(async { sourced("trending", "الرائج هذا الأسبوع", RowSource.Trending(t), wide = true) })
             add(async { forYou(t) })
             StreamingService.entries.forEach { service ->
                 add(async {
-                    section(
-                        id = "top-${service.key}",
-                        title = "أفضل 10 $kind على ${service.label}",
-                        service = service,
-                        ranked = true,
-                        limit = 10,
-                    ) {
-                        api.discover(
+                    sourced(
+                        "top-${service.key}", "أفضل 10 $kind على ${service.label}",
+                        RowSource.Discover(
                             t,
-                            mapOf(
-                                "with_watch_providers" to service.tmdbIds.joinToString("|"),
-                                "sort_by" to "popularity.desc",
-                            ),
-                        )
-                    }
+                            mapOf("with_watch_providers" to service.tmdbIds.joinToString("|"), "sort_by" to "popularity.desc"),
+                        ),
+                        service = service, ranked = true, limit = 10,
+                    )
                 })
             }
             add(async {
-                section("new", "الجديد على منصاتك", subtitle = "نزل خلال آخر ٤ شهور") {
-                    api.discover(
+                sourced(
+                    "new", "الجديد على منصاتك",
+                    RowSource.Discover(
                         t,
                         mapOf(
                             "with_watch_providers" to allProviders,
@@ -226,24 +215,44 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                             "$dateField.gte" to today.minusDays(120).toString(),
                             "$dateField.lte" to today.toString(),
                         ),
-                    )
-                }
+                    ),
+                    subtitle = "نزل خلال آخر ٤ شهور",
+                )
             })
             add(async {
-                section("top-rated", "الأعلى تقييماً من المشاهدين", subtitle = "على نتفلكس وبرايم وكرنشي رول") {
-                    api.discover(
+                sourced(
+                    "top-rated", "الأعلى تقييماً من المشاهدين",
+                    RowSource.Discover(
                         t,
                         mapOf(
                             "with_watch_providers" to allProviders,
                             "sort_by" to "vote_average.desc",
                             "vote_count.gte" to if (t == MediaType.TV) "200" else "500",
                         ),
-                    )
-                }
+                    ),
+                    subtitle = "على نتفلكس وبرايم وكرنشي رول",
+                )
+            })
+            add(async {
+                sourced("popular", "الأشهر على منصاتك", RowSource.Discover(t, mapOf("with_watch_providers" to allProviders, "sort_by" to "popularity.desc")))
             })
         }
         jobs.awaitAll().filterNotNull()
     }
+
+    /** A row whose items come from [source]'s first page; "عرض الكل" continues from there. */
+    private suspend fun sourced(
+        id: String,
+        title: String,
+        source: RowSource,
+        subtitle: String? = null,
+        service: StreamingService? = null,
+        ranked: Boolean = false,
+        wide: Boolean = false,
+        limit: Int = 20,
+    ): HomeSection? = section(id, title, subtitle, service, ranked, wide, limit) {
+        container.api.page(source, 1).results
+    }?.copy(source = source)
 
     /** Recommendations based on the latest titles in the user's watchlist. */
     private suspend fun forYou(t: MediaType): HomeSection? {
@@ -296,7 +305,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit) {
+fun HomeScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, onSeeAll: (HomeSection) -> Unit) {
     val container = appContainer()
     val vm: HomeViewModel = viewModel { HomeViewModel(container) }
     val apiKey by container.settings.apiKey.collectAsStateWithLifecycle()
@@ -305,6 +314,10 @@ fun HomeScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit) {
     // Load when the key is first added or the region changes.
     LaunchedEffect(apiKey, region) {
         if (apiKey.isNotBlank()) vm.ensureLoaded(apiKey, region)
+    }
+    LifecycleResumeEffect(Unit) {
+        vm.refreshIfStale()
+        onPauseOrDispose { }
     }
 
     Scaffold(
@@ -361,6 +374,7 @@ fun HomeScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit) {
                             service = section.service,
                             ranked = section.ranked,
                             wide = section.wide,
+                            onSeeAll = section.source?.let { { onSeeAll(section) } },
                             onOpen = { item -> item.type?.let { onOpen(it, item.id) } },
                         )
                     }

@@ -1,6 +1,14 @@
 package com.alyoushw.watchhub.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.alyoushw.watchhub.data.MediaType
+import com.alyoushw.watchhub.data.StatusCache
 import androidx.compose.foundation.Image
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.asImageBitmap
@@ -193,6 +201,9 @@ fun PosterCard(item: SearchResult, rank: Int? = null, width: Dp = 120.dp, onClic
         Box {
             Poster(item.posterPath, width = width)
             RatingChip(item.voteAverage, Modifier.align(Alignment.TopEnd).padding(4.dp))
+            if (item.type == MediaType.TV) {
+                StatusBadge(item.id, Modifier.align(Alignment.TopStart).padding(4.dp))
+            }
             if (rank != null) {
                 Text(
                     "$rank",
@@ -262,20 +273,24 @@ fun TitleRow(
     service: StreamingService? = null,
     ranked: Boolean = false,
     wide: Boolean = false,
+    onSeeAll: (() -> Unit)? = null,
     onOpen: (SearchResult) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
-            Modifier.padding(horizontal = 16.dp),
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (service != null) ServiceDot(Color(service.color), service.label.take(1), size = 24.dp)
-            Column {
+            Column(Modifier.weight(1f)) {
                 SectionTitle(title)
                 if (subtitle != null) {
                     Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+            }
+            if (onSeeAll != null) {
+                TextButton(onClick = onSeeAll) { Text("عرض الكل") }
             }
         }
         LazyRow(
@@ -304,4 +319,25 @@ fun AppIcon(packageName: String, size: Dp = 32.dp) {
     } else {
         Box(Modifier.size(size).clip(RoundedCornerShape(6.dp)).background(MaterialTheme.colorScheme.surfaceVariant))
     }
+}
+
+/** "مستمر / انتهى / انلغى / قريباً" on a series poster; looked up once and cached. */
+@Composable
+fun StatusBadge(tvId: Int, modifier: Modifier = Modifier) {
+    val cache = appContainer().statusCache
+    var status by remember(tvId) { mutableStateOf(cache.cached(tvId)) }
+    LaunchedEffect(tvId) {
+        if (status == null) status = cache.status(tvId)
+    }
+    val (label, color) = StatusCache.label(status) ?: return
+    Text(
+        label,
+        color = Color.White,
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color(color).copy(alpha = 0.92f))
+            .padding(horizontal = 5.dp, vertical = 1.dp),
+    )
 }

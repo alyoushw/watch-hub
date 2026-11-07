@@ -6,7 +6,9 @@ import com.alyoushw.watchhub.data.ClaudeAssistant
 import com.alyoushw.watchhub.data.DirectLinks
 import com.alyoushw.watchhub.data.JikanApi
 import com.alyoushw.watchhub.data.LocalStore
+import com.alyoushw.watchhub.data.RowSource
 import com.alyoushw.watchhub.data.SettingsStore
+import com.alyoushw.watchhub.data.StatusCache
 import com.alyoushw.watchhub.data.TmdbApi
 import java.io.File
 
@@ -18,7 +20,13 @@ class AppContainer(context: Context) {
     val links = DirectLinks()
     val jikan = JikanApi()
     val assistant = ClaudeAssistant(settings)
+    val statusCache = StatusCache(context, api)
+
+    /** The list a "عرض الكل" button asked to open; read by the browse screen. */
+    var browse: BrowseRequest? = null
 }
+
+data class BrowseRequest(val title: String, val source: RowSource, val ranked: Boolean)
 
 class WatchHubApp : Application() {
     lateinit var container: AppContainer

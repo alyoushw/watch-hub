@@ -18,7 +18,23 @@ open class ApiException(message: String) : Exception(message)
 class TmdbException(message: String) : ApiException(message)
 
 @Serializable
-data class SearchResponse(val results: List<SearchResult> = emptyList())
+data class SearchResponse(
+    val results: List<SearchResult> = emptyList(),
+    val page: Int = 1,
+    @SerialName("total_pages") val totalPages: Int = 1,
+    @SerialName("total_results") val totalResults: Int = 0,
+)
+
+/** Where a list of titles comes from, so it can be fetched page by page ("عرض الكل"). */
+sealed interface RowSource {
+    data class Discover(
+        val type: MediaType,
+        val params: Map<String, String>,
+        val streamableOnly: Boolean = true,
+    ) : RowSource
+
+    data class Trending(val type: MediaType) : RowSource
+}
 
 @Serializable
 data class SearchResult(
@@ -219,19 +235,39 @@ class TmdbApi(private val settings: SettingsStore) {
         params: Map<String, String>,
         page: Int = 1,
         streamableOnly: Boolean = true,
-    ): List<SearchResult> {
+    ): List<SearchResult> = discoverPage(type, params, page, streamableOnly).results
+
+    suspend fun discoverPage(
+        type: MediaType,
+        params: Map<String, String>,
+        page: Int = 1,
+        streamableOnly: Boolean = true,
+    ): SearchResponse {
         val base = mutableMapOf("language" to "ar", "include_adult" to "false", "page" to "$page")
         if (streamableOnly || "with_watch_providers" in params) {
             base["watch_region"] = settings.region.value
             base["with_watch_monetization_types"] = "flatrate|free|ads"
         }
-        return get("discover/${type.path}", base + params, SearchResponse.serializer())
-            .results.map { it.copy(mediaType = type.path) }
+        val response = get("discover/${type.path}", base + params, SearchResponse.serializer())
+        return response.copy(results = response.results.map { it.copy(mediaType = type.path) })
     }
 
-    suspend fun trending(type: MediaType): List<SearchResult> =
-        get("trending/${type.path}/week", mapOf("language" to "ar"), SearchResponse.serializer())
-            .results.map { it.copy(mediaType = type.path) }
+    suspend fun trending(type: MediaType): List<SearchResult> = trendingPage(type, 1).results
+
+    suspend fun trendingPage(type: MediaType, page: Int): SearchResponse {
+        val response = get("trending/${type.path}/week", mapOf("language" to "ar", "page" to "$page"), SearchResponse.serializer())
+        return response.copy(results = response.results.map { it.copy(mediaType = type.path) })
+    }
+
+    /** One page of any [RowSource]. TMDB serves at most 500 pages. */
+    suspend fun page(source: RowSource, page: Int): SearchResponse = when (source) {
+        is RowSource.Discover -> discoverPage(source.type, source.params, page, source.streamableOnly)
+        is RowSource.Trending -> trendingPage(source.type, page)
+    }
+
+    /** A series' status in English ("Returning Series", "Ended", …), for the poster badge. */
+    suspend fun tvStatus(id: Int): String? =
+        get("tv/$id", mapOf("language" to "en-US"), Details.serializer()).status
 
     suspend fun recommendations(type: MediaType, id: Int): List<SearchResult> =
         get("${type.path}/$id/recommendations", mapOf("language" to "ar"), SearchResponse.serializer())
