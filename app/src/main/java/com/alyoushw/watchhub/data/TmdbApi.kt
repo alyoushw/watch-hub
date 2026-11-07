@@ -258,21 +258,28 @@ class TmdbApi(private val settings: SettingsStore) {
             .apply { if (bearer) header("Authorization", "Bearer $key") }
             .build()
 
-        try {
-            client.newCall(request).execute().use { response ->
-                when {
-                    response.code == 401 -> throw TmdbException("مفتاح TMDB غير صحيح، راجعه في الإعدادات")
-                    response.code == 404 -> throw TmdbException("ما لقينا هذا العمل")
-                    !response.isSuccessful -> throw TmdbException("صار خطأ من TMDB (${response.code})")
+        // One quiet retry for dropped connections (common on mobile data when many rows load at once).
+        var lastIo: IOException? = null
+        repeat(2) { attempt ->
+            try {
+                return@withContext client.newCall(request).execute().use { response ->
+                    when {
+                        response.code == 401 -> throw TmdbException("مفتاح TMDB غير صحيح، راجعه في الإعدادات")
+                        response.code == 404 -> throw TmdbException("ما لقينا هذا العمل")
+                        !response.isSuccessful -> throw TmdbException("صار خطأ من TMDB (${response.code})")
+                    }
+                    val body = response.body?.string() ?: throw TmdbException("رد فاضي من TMDB")
+                    json.decodeFromString(deserializer, body)
                 }
-                val body = response.body?.string() ?: throw TmdbException("رد فاضي من TMDB")
-                json.decodeFromString(deserializer, body)
+            } catch (e: IOException) {
+                lastIo = e
+                if (attempt == 0) kotlinx.coroutines.delay(700)
+            } catch (e: kotlinx.serialization.SerializationException) {
+                throw TmdbException("ما قدرنا نقرأ رد TMDB")
             }
-        } catch (e: IOException) {
-            throw TmdbException("تأكد من اتصالك بالإنترنت")
-        } catch (e: kotlinx.serialization.SerializationException) {
-            throw TmdbException("ما قدرنا نقرأ رد TMDB")
         }
+        // Include the technical reason so a screenshot tells what went wrong.
+        throw TmdbException("تأكد من اتصالك بالإنترنت (TMDB: ${lastIo?.javaClass?.simpleName ?: "IO"})")
     }
 
     companion object {

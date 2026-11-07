@@ -204,7 +204,7 @@ class JikanApi {
                         }
                     }
                 } catch (e: IOException) {
-                    throw JikanException("تأكد من اتصالك بالإنترنت")
+                    throw JikanException("ما قدرنا نوصل لـ MyAnimeList (${e.javaClass.simpleName})")
                 } catch (e: SerializationException) {
                     throw JikanException("ما قدرنا نقرأ بيانات MyAnimeList")
                 } catch (e: JikanException) {
