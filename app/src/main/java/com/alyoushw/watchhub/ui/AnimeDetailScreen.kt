@@ -311,7 +311,7 @@ private fun AnimeWatchButtons(anime: JAnime, searchTitle: String) {
     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         known.forEach { (service, url) ->
             Button(
-                onClick = { context.openInService(service, url) },
+                onClick = { context.openInService(service, url, searchTitle) },
                 colors = ButtonDefaults.buttonColors(containerColor = Color(service.color), contentColor = Color.White),
                 modifier = Modifier.fillMaxWidth().height(52.dp),
             ) {

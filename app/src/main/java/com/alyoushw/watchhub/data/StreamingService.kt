@@ -75,33 +75,65 @@ fun Context.openUrl(url: String) {
     }
 }
 
-/** Opens [url] inside the service's app when it is installed, otherwise in the browser. */
-fun Context.openInService(service: StreamingService, url: String) {
-    if (isInstalled(service.packageName)) {
-        try {
-            startActivity(
-                Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                    .setPackage(service.packageName)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-            )
-            return
-        } catch (_: ActivityNotFoundException) {
-            // The app does not handle this link; fall through to the browser.
-        }
+/** Every package the service's app ships under (phone and Fire/TV builds). */
+private val StreamingService.packages: List<String>
+    get() = when (this) {
+        StreamingService.NETFLIX -> listOf(packageName, "com.netflix.ninja")
+        StreamingService.PRIME -> listOf(packageName, "com.amazon.avod")
+        StreamingService.CRUNCHYROLL -> listOf(packageName)
     }
-    openUrl(url)
+
+/** The installed copy of the service's app, if any. */
+fun Context.installedPackage(service: StreamingService): String? = service.packages.firstOrNull { isInstalled(it) }
+
+/**
+ * Rewrites a link into the form the service's app accepts.
+ * Wikidata often gives Prime titles as amazon.com/gp/video/detail/ID (the US store), which the
+ * Prime Video app ignores; the same ID works as primevideo.com/detail/ID.
+ */
+fun appLinkFor(service: StreamingService, url: String): String {
+    if (service == StreamingService.PRIME) {
+        val id = Regex("/(?:gp/video/detail|dp|detail)/([A-Za-z0-9.]+)").find(url)?.groupValues?.get(1)
+        if (id != null) return "https://www.primevideo.com/detail/$id"
+    }
+    return url
+}
+
+private fun Context.tryView(url: String, pkg: String): Boolean = try {
+    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    true
+} catch (_: ActivityNotFoundException) {
+    false
+}
+
+/**
+ * Opens [url] in the service's app. When the app is installed but won't take the link,
+ * it still opens the app (on its search screen if it has one) with [title] copied, rather
+ * than sending the user to the website. Only without the app does the browser open.
+ */
+fun Context.openInService(service: StreamingService, url: String, title: String) {
+    val pkg = installedPackage(service)
+    if (pkg == null) {
+        openUrl(url)
+        return
+    }
+    val appUrl = appLinkFor(service, url)
+    if (tryView(appUrl, pkg)) return
+    if (appUrl != url && tryView(url, pkg)) return
+    // The app doesn't accept web links: open it searching for the title, or just open it.
+    openCustomApp(pkg, title)
 }
 
 /** Opens a search for [title] inside the service's app, or its website if the app is missing. */
-fun Context.searchOn(service: StreamingService, title: String) = openInService(service, service.searchUrl(title))
+fun Context.searchOn(service: StreamingService, title: String) = openInService(service, service.searchUrl(title), title)
 
 /**
  * Opens the title itself when a direct link is known, otherwise a search for it.
- * Returns true when the direct page was opened.
+ * Returns true when a direct link was used.
  */
 fun Context.watchOn(service: StreamingService, directUrl: String?, title: String): Boolean {
     return if (directUrl != null) {
-        openInService(service, directUrl)
+        openInService(service, directUrl, title)
         true
     } else {
         searchOn(service, title)
@@ -111,7 +143,7 @@ fun Context.watchOn(service: StreamingService, directUrl: String?, title: String
 
 /** Launches the service's app, or its website if the app is missing. */
 fun Context.launchService(service: StreamingService) {
-    val launch = packageManager.getLaunchIntentForPackage(service.packageName)
+    val launch = installedPackage(service)?.let { packageManager.getLaunchIntentForPackage(it) }
     if (launch != null) {
         startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     } else {
