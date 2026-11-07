@@ -2,6 +2,7 @@ package com.alyoushw.watchhub
 
 import android.app.Application
 import android.content.Context
+import com.alyoushw.watchhub.data.ClaudeAssistant
 import com.alyoushw.watchhub.data.DirectLinks
 import com.alyoushw.watchhub.data.JikanApi
 import com.alyoushw.watchhub.data.LocalStore
@@ -16,6 +17,7 @@ class AppContainer(context: Context) {
     val api = TmdbApi(settings)
     val links = DirectLinks()
     val jikan = JikanApi()
+    val assistant = ClaudeAssistant(settings)
 }
 
 class WatchHubApp : Application() {

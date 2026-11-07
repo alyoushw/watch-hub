@@ -70,6 +70,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.alyoushw.watchhub.AppContainer
 import com.alyoushw.watchhub.R
 import com.alyoushw.watchhub.data.ApiException
+import com.alyoushw.watchhub.data.AssistantResult
 import com.alyoushw.watchhub.data.DiscoverFilter
 import com.alyoushw.watchhub.data.Genre
 import com.alyoushw.watchhub.data.MediaType
@@ -113,6 +114,10 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
     var loadingMore by mutableStateOf(false)
         private set
 
+    /** Why Claude was not used for the last request (shown under the results), if it wasn't. */
+    var notice by mutableStateOf<String?>(null)
+        private set
+
     private var job: Job? = null
     private var page = 1
 
@@ -125,13 +130,14 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
         }
         job = viewModelScope.launch {
             delay(600) // wait for the user to stop typing
-            runSmart(value)
+            // Live results use the offline parser; Claude runs on search / voice to save credit.
+            runSmart(value, useClaude = false)
         }
     }
 
     fun submit() {
         job?.cancel()
-        if (query.isNotBlank()) job = viewModelScope.launch { runSmart(query) }
+        if (query.isNotBlank()) job = viewModelScope.launch { runSmart(query, useClaude = true) }
     }
 
     /** Spoken or tapped request: show it in the box and run it right away. */
@@ -182,12 +188,25 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
         SearchState.Failed(e.message ?: "صار خطأ")
     }
 
-    private suspend fun runSmart(text: String) {
+    private suspend fun runSmart(text: String, useClaude: Boolean) {
         state = SearchState.Loading
+        notice = null
+        var query = SmartSearch.parse(text)
+        var heading = "فهمت إنك تبي:"
+        if (useClaude && container.assistant.isEnabled) {
+            when (val ai = container.assistant.interpret(text)) {
+                is AssistantResult.Understood -> {
+                    query = ai.query
+                    heading = "✨ ${ai.explanation}"
+                }
+                // Limit reached, no credit, offline…: keep the offline parser's answer.
+                is AssistantResult.Unavailable -> notice = ai.reason
+            }
+        }
         state = guard {
-            when (val q = SmartSearch.parse(text)) {
+            when (val q = query) {
                 is SmartQuery.Plain -> SearchState.Results(container.api.search(q.text))
-                is SmartQuery.Filter -> filterResults(q.filter, "فهمت إنك تبي:")
+                is SmartQuery.Filter -> filterResults(q.filter, heading)
                 is SmartQuery.Similar -> similar(q)
                 SmartQuery.FromWatchlist -> fromWatchlist()
             }
@@ -352,6 +371,16 @@ fun SearchScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit) {
                     SearchState.Loading -> CenteredLoading()
                     is SearchState.Failed -> MessageBox(s.message, actionLabel = "حاول مرة ثانية", onAction = vm::submit)
                     is SearchState.Results -> LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
+                        vm.notice?.let { notice ->
+                            item {
+                                Text(
+                                    "ℹ️ $notice",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                                )
+                            }
+                        }
                         if (s.heading != null) {
                             item {
                                 Understood(

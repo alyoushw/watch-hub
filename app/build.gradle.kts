@@ -13,8 +13,8 @@ android {
         applicationId = "com.alyoushw.watchhub"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.5.0"
+        versionCode = 6
+        versionName = "0.6.0"
     }
 
     // A fixed release key (from CI secrets) lets new APKs install over old ones and keep the data.
@@ -58,6 +58,21 @@ android {
     buildFeatures {
         compose = true
     }
+
+    packaging {
+        resources {
+            // Duplicate metadata files shipped by the Anthropic SDK's dependencies (Jackson, OpenTelemetry).
+            excludes += setOf(
+                "/META-INF/{AL2.0,LGPL2.1}",
+                "META-INF/DEPENDENCIES",
+                "META-INF/LICENSE*",
+                "META-INF/NOTICE*",
+                "META-INF/INDEX.LIST",
+                "META-INF/versions/9/OSGI-INF/MANIFEST.MF",
+                "META-INF/*.kotlin_module",
+            )
+        }
+    }
 }
 
 dependencies {
@@ -75,5 +90,6 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.coil.compose)
+    implementation(libs.anthropic.java)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

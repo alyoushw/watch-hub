@@ -181,7 +181,11 @@ class JikanApi {
         val url = "$BASE/$path".toHttpUrl().newBuilder().apply {
             params.forEach { (k, v) -> addQueryParameter(k, v) }
         }.build()
-        val request = Request.Builder().url(url).header("Accept", "application/json").build()
+        val request = Request.Builder()
+            .url(url)
+            .header("Accept", "application/json")
+            .header("User-Agent", "WatchHub/0.6 (Android)")
+            .build()
 
         repeat(3) { attempt ->
             gate.withLock {
@@ -203,6 +207,12 @@ class JikanApi {
                     throw JikanException("تأكد من اتصالك بالإنترنت")
                 } catch (e: SerializationException) {
                     throw JikanException("ما قدرنا نقرأ بيانات MyAnimeList")
+                } catch (e: JikanException) {
+                    throw e
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    throw JikanException("MyAnimeList ما رد: ${e.javaClass.simpleName}")
                 }
             }
             if (result != null) return result

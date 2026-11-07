@@ -123,7 +123,7 @@ class AnimeDetailViewModel(private val container: AppContainer, private val id: 
             } catch (_: ApiException) {
             }
             try {
-                recommendations = container.jikan.recommendations(id).take(15).map { it.toSearchResult() }
+                recommendations = container.jikan.recommendations(id).distinctBy { it.malId }.take(15).map { it.toSearchResult() }
             } catch (_: ApiException) {
             }
         }

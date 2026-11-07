@@ -27,6 +27,25 @@ class SettingsStore(context: Context) {
         _customApps.value = clean
     }
 
+    private val _claudeKey = MutableStateFlow(prefs.getString(KEY_CLAUDE, "").orEmpty())
+
+    /** The user's own Claude API key (from the Claude Console), used for smarter search. */
+    val claudeKey: StateFlow<String> = _claudeKey.asStateFlow()
+
+    private val _useClaude = MutableStateFlow(prefs.getBoolean(KEY_USE_CLAUDE, true))
+    val useClaude: StateFlow<Boolean> = _useClaude.asStateFlow()
+
+    fun setClaudeKey(value: String) {
+        val v = value.trim()
+        prefs.edit().putString(KEY_CLAUDE, v).apply()
+        _claudeKey.value = v
+    }
+
+    fun setUseClaude(value: Boolean) {
+        prefs.edit().putBoolean(KEY_USE_CLAUDE, value).apply()
+        _useClaude.value = value
+    }
+
     fun setApiKey(value: String) {
         val v = value.trim()
         prefs.edit().putString(KEY_TMDB, v).apply()
@@ -42,5 +61,7 @@ class SettingsStore(context: Context) {
         const val KEY_TMDB = "tmdb_key"
         const val KEY_REGION = "region"
         const val KEY_APPS = "custom_apps"
+        const val KEY_CLAUDE = "claude_key"
+        const val KEY_USE_CLAUDE = "use_claude"
     }
 }

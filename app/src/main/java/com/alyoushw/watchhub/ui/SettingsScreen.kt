@@ -13,6 +13,7 @@ import androidx.compose.runtime.LaunchedEffect
 import com.alyoushw.watchhub.data.InstalledApp
 import com.alyoushw.watchhub.data.appLabel
 import com.alyoushw.watchhub.data.launchableApps
+import com.alyoushw.watchhub.data.supportsDirectSearch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.compose.foundation.layout.Column
@@ -159,6 +160,10 @@ fun SettingsScreen() {
 
             HorizontalDivider()
 
+            ClaudeSection()
+
+            HorizontalDivider()
+
             CustomAppsSection()
 
             HorizontalDivider()
@@ -199,7 +204,15 @@ private fun CustomAppsSection() {
             val label = remember(pkg) { context.appLabel(pkg) }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 AppIcon(pkg, size = 36.dp)
-                Text(label ?: "$pkg (مو مثبت)", modifier = Modifier.weight(1f))
+                Column(Modifier.weight(1f)) {
+                    Text(label ?: "$pkg (مو مثبت)")
+                    val direct = remember(pkg) { context.supportsDirectSearch(pkg) }
+                    Text(
+                        if (direct) "يفتح على البحث مباشرة" else "ينسخ الاسم ويفتح التطبيق",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 TextButton(onClick = { container.settings.setCustomApps(apps - pkg) }) {
                     Text("شيل", color = MaterialTheme.colorScheme.error)
                 }
@@ -267,4 +280,69 @@ private fun AppPickerDialog(exclude: Set<String>, onDismiss: () -> Unit, onPick:
         confirmButton = {},
         dismissButton = { TextButton(onClick = onDismiss) { Text("إلغاء") } },
     )
+}
+
+/** Optional: the user's own Claude API key makes voice and text search understand anything. */
+@Composable
+private fun ClaudeSection() {
+    val container = appContainer()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val savedKey by container.settings.claudeKey.collectAsStateWithLifecycle()
+    val enabled by container.settings.useClaude.collectAsStateWithLifecycle()
+    var key by remember(savedKey) { mutableStateOf(savedKey) }
+    var show by remember { mutableStateOf(false) }
+    var testing by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<String?>(null) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionTitle("البحث الذكي بـ Claude")
+        Text(
+            "مع مفتاح Claude، البحث بالصوت والكتابة يفهم أي طلب بكلامك العادي. " +
+                "المفتاح من Claude Console (حساب API، غير اشتراك Claude العادي) والاستخدام يُحسب من رصيدك هناك. " +
+                "إذا خلص الحد أو الرصيد، التطبيق يرجع للبحث العادي تلقائياً.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        TextButton(onClick = { context.openUrl("https://platform.claude.com/settings/keys") }) {
+            Text("افتح صفحة مفاتيح Claude")
+        }
+        OutlinedTextField(
+            value = key,
+            onValueChange = {
+                key = it
+                result = null
+            },
+            label = { Text("مفتاح Claude API") },
+            singleLine = true,
+            visualTransformation = if (show) VisualTransformation.None else PasswordVisualTransformation(),
+            trailingIcon = { TextButton(onClick = { show = !show }) { Text(if (show) "إخفاء" else "إظهار") } },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                enabled = !testing && key.isNotBlank(),
+                onClick = {
+                    container.settings.setClaudeKey(key)
+                    container.settings.setUseClaude(true)
+                    testing = true
+                    result = null
+                    scope.launch {
+                        result = container.assistant.test()
+                        testing = false
+                    }
+                },
+            ) { Text(if (testing) "جاري التحقق…" else "احفظ وجرّب") }
+            if (savedKey.isNotBlank()) {
+                FilterChip(
+                    selected = enabled,
+                    onClick = { container.settings.setUseClaude(!enabled) },
+                    label = { Text(if (enabled) "مفعّل" else "متوقف") },
+                )
+            }
+        }
+        result?.let {
+            Text(it, color = if (it.startsWith("✓")) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error)
+        }
+    }
 }

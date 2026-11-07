@@ -144,6 +144,25 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             out += section
             sections = out.toList()
         }
+        if (out.isEmpty()) {
+            // MyAnimeList (Jikan) did not answer: show anime from TMDB instead of an empty tab.
+            val why = lastError ?: "MyAnimeList ما رد"
+            val api = container.api
+            val anime = mapOf("with_genres" to "16", "with_original_language" to "ja")
+            section("anime-tmdb-popular", "أنمي رائج", subtitle = "$why، عرضنا لك من TMDB") {
+                api.discover(MediaType.TV, anime + ("sort_by" to "popularity.desc"), streamableOnly = false)
+            }?.let { out += it }
+            section("anime-tmdb-top", "أفضل أنمي", ranked = true, limit = 10) {
+                api.discover(
+                    MediaType.TV,
+                    anime + mapOf("sort_by" to "vote_average.desc", "vote_count.gte" to "200"),
+                    streamableOnly = false,
+                )
+            }?.let { out += it }
+            section("anime-tmdb-movies", "أفلام أنمي") {
+                api.discover(MediaType.MOVIE, anime + ("sort_by" to "popularity.desc"), streamableOnly = false)
+            }?.let { out += it }
+        }
         return out
     }
 
@@ -251,6 +270,12 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         if (items.isEmpty()) null else HomeSection(id, title, items, subtitle, service, ranked, wide)
     } catch (e: ApiException) {
         lastError = e.message
+        null
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        // Never let one bad row crash the home screen.
+        lastError = "صار خطأ: ${e.javaClass.simpleName}"
         null
     }
 }
