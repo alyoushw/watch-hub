@@ -86,6 +86,7 @@ import com.alyoushw.watchhub.data.WatchItem
 import com.alyoushw.watchhub.data.WatchStatus
 import com.alyoushw.watchhub.data.appLabel
 import com.alyoushw.watchhub.data.openCustomApp
+import com.alyoushw.watchhub.data.openProviderApp
 import com.alyoushw.watchhub.data.openUrl
 import com.alyoushw.watchhub.data.watchOn
 import kotlinx.coroutines.async
@@ -935,7 +936,13 @@ private fun OtherProviders(info: DetailInfo) {
 
     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SectionTitle("منصات ثانية (${info.region})")
-        others.forEach { ProviderLine(it) }
+        others.forEach { provider ->
+            ProviderLine(provider) {
+                if (!context.openProviderApp(provider.name, info.searchTitle)) {
+                    info.providers?.link?.let { context.openUrl(it) }
+                }
+            }
+        }
         if (paid.isNotEmpty()) {
             Text(
                 "للإيجار أو الشراء: " + paid.joinToString("، ") { it.name },
@@ -953,13 +960,18 @@ private fun OtherProviders(info: DetailInfo) {
 }
 
 @Composable
-private fun ProviderLine(provider: ProviderDto) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+private fun ProviderLine(provider: ProviderDto, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().focusHighlight(RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
         AsyncImage(
             model = TmdbApi.image(provider.logoPath, "w92"),
             contentDescription = null,
             modifier = Modifier.size(32.dp).clip(RoundedCornerShape(6.dp)),
         )
-        Text(provider.name)
+        Text(provider.name, modifier = Modifier.weight(1f))
+        Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
     }
 }

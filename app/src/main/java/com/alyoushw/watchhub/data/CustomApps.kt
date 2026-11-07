@@ -92,3 +92,29 @@ fun Context.supportsDirectSearch(packageName: String): Boolean {
     val search = Intent(Intent.ACTION_SEARCH).setPackage(packageName)
     return packageManager.queryIntentActivities(search, 0).isNotEmpty()
 }
+
+/**
+ * Opens the installed app of a service we only know by name (Shahid, OSN+, STC tv, …),
+ * looking for [title] in it. Returns false when no matching app is installed.
+ */
+@Suppress("DEPRECATION")
+fun Context.openProviderApp(providerName: String, title: String): Boolean {
+    val key = providerName.lowercase().replace("+", "").substringBefore(" ").trim()
+    if (key.length < 2) return false
+    val aliases = when {
+        "shahid" in key -> listOf("shahid", "شاهد")
+        "stc" in key || "jawwy" in key -> listOf("stc", "jawwy")
+        else -> listOf(key)
+    }
+    val pm = packageManager
+    for (category in listOf(Intent.CATEGORY_LEANBACK_LAUNCHER, Intent.CATEGORY_LAUNCHER)) {
+        for (info in pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(category), 0)) {
+            val label = info.loadLabel(pm).toString().lowercase()
+            if (aliases.any { it in label } && info.activityInfo.packageName != packageName) {
+                openCustomApp(info.activityInfo.packageName, title)
+                return true
+            }
+        }
+    }
+    return false
+}

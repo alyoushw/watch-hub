@@ -56,6 +56,12 @@ data class HomeSection(
     val source: RowSource? = null,
 )
 
+/** ISO codes of the Gulf states, as TMDB's with_origin_country "OR" list. */
+private const val GULF_COUNTRIES = "SA|AE|KW|BH|QA|OM"
+
+/** Regional services worth a row of their own when TMDB lists them for the user's region. */
+private val REGIONAL_KEYWORDS = listOf("shahid", "شاهد", "stc", "jawwy", "osn", "starz", "tod", "weyyak", "viu", "yango", "apple tv")
+
 class HomeViewModel(private val container: AppContainer) : ViewModel() {
     var type by mutableStateOf(container.homeType)
         private set
@@ -189,9 +195,51 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         val today = LocalDate.now()
         val dateField = if (t == MediaType.TV) "air_date" else "primary_release_date"
 
+        // Regional services (Shahid, OSN+, STARZPLAY, …): whatever TMDB lists for the region.
+        val regional = try {
+            container.api.regionProviders(t)
+                .filter { p -> StreamingService.forProvider(p.id) == null && REGIONAL_KEYWORDS.any { it in p.name.lowercase() } }
+                .distinctBy { it.name.lowercase().substringBefore(" ") }
+                .take(6)
+        } catch (_: ApiException) {
+            emptyList()
+        }
+
         val jobs = buildList {
             add(async { sourced("trending", "الرائج هذا الأسبوع", RowSource.Trending(t), wide = true) })
             add(async { forYou(t) })
+            // Gulf productions (Saudi, UAE, Kuwait, Bahrain, Qatar, Oman), from all of TMDB.
+            val gulf = mapOf("with_origin_country" to GULF_COUNTRIES)
+            add(async {
+                sourced(
+                    "gulf-new", "${if (t == MediaType.TV) "مسلسلات" else "أفلام"} خليجية جديدة",
+                    RowSource.Discover(
+                        t,
+                        gulf + mapOf(
+                            "sort_by" to "popularity.desc",
+                            "$dateField.gte" to today.minusDays(365).toString(),
+                            "$dateField.lte" to today.plusDays(30).toString(),
+                        ),
+                        streamableOnly = false,
+                    ),
+                    subtitle = "السعودية والإمارات والكويت والبحرين وقطر وعُمان",
+                )
+            })
+            add(async {
+                sourced(
+                    "gulf-popular", "الأشهر خليجياً",
+                    RowSource.Discover(t, gulf + ("sort_by" to "popularity.desc"), streamableOnly = false),
+                )
+            })
+            regional.forEach { provider ->
+                add(async {
+                    sourced(
+                        "provider-${provider.id}", "أفضل 10 $kind على ${provider.name}",
+                        RowSource.Discover(t, mapOf("with_watch_providers" to "${provider.id}", "sort_by" to "popularity.desc")),
+                        ranked = true, limit = 10,
+                    )
+                })
+            }
             StreamingService.entries.forEach { service ->
                 add(async {
                     sourced(

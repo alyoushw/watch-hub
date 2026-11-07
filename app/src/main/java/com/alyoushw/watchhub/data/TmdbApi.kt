@@ -127,7 +127,11 @@ data class ProviderDto(
     @SerialName("provider_id") val id: Int,
     @SerialName("provider_name") val name: String = "",
     @SerialName("logo_path") val logoPath: String? = null,
+    @SerialName("display_priority") val displayPriority: Int = 999,
 )
+
+@Serializable
+data class ProviderList(val results: List<ProviderDto> = emptyList())
 
 @Serializable
 data class RegionProviders(
@@ -263,6 +267,14 @@ class TmdbApi(private val settings: SettingsStore) {
         val response = get("trending/${type.path}/week", mapOf("language" to "ar", "page" to "$page"), SearchResponse.serializer())
         return response.copy(results = response.results.map { it.copy(mediaType = type.path) })
     }
+
+    /** Every streaming service TMDB (via JustWatch) knows in the user's region, most popular first. */
+    suspend fun regionProviders(type: MediaType): List<ProviderDto> =
+        get(
+            "watch/providers/${type.path}",
+            mapOf("language" to "ar", "watch_region" to settings.region.value),
+            ProviderList.serializer(),
+        ).results.sortedBy { it.displayPriority }
 
     /** One page of any [RowSource]. TMDB serves at most 500 pages. */
     suspend fun page(source: RowSource, page: Int): SearchResponse = when (source) {
