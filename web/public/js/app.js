@@ -2,6 +2,8 @@
 import * as tmdb from "./tmdb.js";
 import * as xt from "./xtream.js";
 import { play, fmt } from "./player.js";
+import * as smart from "./smart.js";
+import { fillTranslated } from "./translate.js";
 import { settings, watchlist, favorites, recent, xtreamReady, history, isFinished, progressOf, accounts, restoreHistory } from "./store.js";
 
 const view = document.getElementById("view");
@@ -81,6 +83,7 @@ const routes = [
   [/^#\/live$/, live, "live"],
   [/^#\/search(?:\?q=(.*))?$/, searchPage, "search"],
   [/^#\/title\/(movie|tv)\/(\d+)$/, titlePage, null],
+  [/^#\/person\/(\d+)$/, personPage, null],
   [/^#\/list$/, listPage, "list"],
   [/^#\/xtream(?:\/(movie|series))?$/, xtreamPage, "xtream"],
   [/^#\/xseries\/(.+)$/, xseriesPage, "xtream"],
@@ -121,14 +124,14 @@ async function home(id) {
     </div>`;
 
   if (!settings.tmdbKey) {
-    view.innerHTML = tabs + continueRow() + message("خطوة وحدة قبل نبدأ: حط مفتاح TMDB المجاني في الإعدادات عشان نعرض لك أفضل الأعمال في كل منصة.", goSettings);
+    view.innerHTML = tabs + continueRow(type) + message("خطوة وحدة قبل نبدأ: حط مفتاح TMDB المجاني في الإعدادات عشان نعرض لك أفضل الأعمال في كل منصة.", goSettings);
     bindTypeTabs();
     bindContinue();
     return;
   }
 
   // "تابع المشاهدة" shows at once, before (and whatever happens to) the TMDB rows.
-  view.innerHTML = `${tabs}${continueRow()}<div id="home-rest">${loading()}</div>`;
+  view.innerHTML = `${tabs}${continueRow(type)}<div id="home-rest">${loading()}</div>`;
   bindTypeTabs();
   bindContinue();
   let trend;
@@ -144,7 +147,7 @@ async function home(id) {
   const word = type === "tv" ? "المسلسلات" : "الأفلام";
 
   view.innerHTML = `${tabs}
-    ${continueRow()}
+    ${continueRow(type)}
     ${hero ? `<section class="hero">
       ${hero.backdrop_path ? `<img class="bg" src="${tmdb.image(hero.backdrop_path, "w1280")}" alt="">` : ""}
       <div class="info">
@@ -186,39 +189,181 @@ function bindTypeTabs() {
 
 // ---------- search ----------
 
+/** Saved filter presets ("أنماطي"), like the Android app. */
+const presets = {
+  all: () => settings.savedFilters || [],
+  save(name, filter) {
+    settings.savedFilters = [{ name, filter }, ...presets.all().filter((p) => p.name !== name)].slice(0, 20);
+  },
+  remove(name) {
+    settings.savedFilters = presets.all().filter((p) => p.name !== name);
+  },
+};
+
 async function searchPage(id, q = "") {
-  view.innerHTML = `<label class="pill" style="margin-top:10px">${SEARCH_ICON}
-      <input id="q" type="search" placeholder="ابحث عن فيلم أو مسلسل" value="${esc(q)}" autocomplete="off"></label>
+  let filter = smart.emptyFilter();
+  view.innerHTML = `<h2 class="section-title" style="margin-top:6px">وش تبي تشوف؟</h2>
+    <div style="display:flex;gap:8px;align-items:center">
+      <label class="pill" style="flex:1">${SEARCH_ICON}
+        <input id="q" type="search" placeholder="اكتب: «فيلم رعب إندونيسي» أو اسم عمل" value="${esc(q)}" autocomplete="off" enterkeyhint="search"></label>
+      <button class="btn ghost" id="open-filters">⚙ الفلاتر</button>
+    </div>
+    <div class="chips scroll" id="quick" style="margin-top:10px"></div>
+    <div id="filters" hidden></div>
+    <div id="understood"></div>
     <div id="results"></div>`;
   const input = $("#q");
   const results = $("#results");
-  let timer;
+  const understoodEl = $("#understood");
   let seq = 0;
-  const run = async (text) => {
+
+  const renderQuick = () => {
+    $("#quick").innerHTML = [
+      ...(watchlist.all().length ? [`<button class="chip" data-ask="رشّح لي من قائمتي">✨ من قائمتي</button>`] : []),
+      ...presets.all().map((p, i) => `<button class="chip" data-preset="${i}">★ ${esc(p.name)}</button>`),
+    ].join("");
+    $("#quick").querySelectorAll("[data-ask]").forEach((b) => b.addEventListener("click", () => ask(b.dataset.ask)));
+    $("#quick").querySelectorAll("[data-preset]").forEach((b) => b.addEventListener("click", () => {
+      const p = presets.all()[Number(b.dataset.preset)];
+      applyFilter(p.filter, `نمطك «${p.name}»`);
+    }));
+  };
+
+  const idle = () => {
+    understoodEl.innerHTML = "";
+    results.innerHTML = `<div style="margin-top:20px"><b>اطلب بكلامك العادي</b>
+      <p class="muted" style="margin:6px 0 12px">جرّب:</p>
+      <div class="chips">${smart.EXAMPLES.map((e) => `<button class="chip" data-ex="${esc(e)}">${esc(e)}</button>`).join("")}</div></div>`;
+    results.querySelectorAll("[data-ex]").forEach((b) => b.addEventListener("click", () => {
+      input.value = b.dataset.ex;
+      ask(b.dataset.ex);
+    }));
+  };
+
+  const showUnderstood = (chips, f) => {
+    understoodEl.innerHTML = `<div class="understood"><span class="muted">فهمت:</span>
+      ${chips.map((c) => `<span class="chip on">${esc(c)}</span>`).join("")}
+      ${f ? `<button class="linklike" id="edit-f">عدّل</button><button class="linklike" id="save-f">★ احفظه كنمط</button>` : ""}</div>`;
+    $("#edit-f")?.addEventListener("click", () => openFilters(f));
+    $("#save-f")?.addEventListener("click", () => {
+      const name = prompt("اسم النمط:", smart.summary(f).slice(1).join(" ") || "نمطي");
+      if (name && name.trim()) {
+        presets.save(name.trim(), f);
+        renderQuick();
+        toast("انحفظ النمط ✓");
+      }
+    });
+  };
+
+  const grid = (list, title) => list.length
+    ? `<h2 class="section-title">${esc(title)} <small>${list.length}</small></h2><div class="grid">${list.map((r) => card(r)).join("")}</div>`
+    : "";
+
+  /** Several discover pages, keeping only titles that really fit (TMDB's filter is loose). */
+  async function strict(f, wanted = 40) {
+    const ids = f.services.some((k) => k === "shahid" || k === "stctv") ? await tmdb.regionServiceIds(f.type) : {};
+    const params = smart.toParams(f, ids);
+    const out = [];
+    for (let page = 1; page <= 4 && out.length < wanted; page++) {
+      const r = await tmdb.discoverPage(f.type, params, page, f.services.length > 0);
+      out.push(...r.results.filter((x) => x.poster_path && smart.matches(f, x)));
+      if (page >= r.total_pages) break;
+    }
+    return out.filter((x, i, a) => a.findIndex((y) => y.id === x.id) === i);
+  }
+
+  async function applyFilter(f, heading) {
     const mine = ++seq;
-    if (!text.trim()) {
-      results.innerHTML = "";
+    filter = f;
+    $("#filters").hidden = true;
+    showUnderstood(smart.summary(f), f);
+    results.innerHTML = loading();
+    try {
+      const list = await strict(f);
+      if (mine !== seq) return;
+      results.innerHTML = grid(list, heading || "النتائج حسب الفلتر") || message("ما لقينا أعمال بهذي الفلاتر. جرّب تخفف شوي.");
+    } catch (e) {
+      if (mine === seq) results.innerHTML = message(e.message);
+    }
+  }
+
+  async function similar(qq) {
+    const mine = ++seq;
+    showUnderstood([`مشابه لـ «${qq.title}»`]);
+    results.innerHTML = loading();
+    try {
+      const words = qq.title.split(/\s+/);
+      let seed = null;
+      for (let n = words.length; n >= 1 && !seed; n--) {
+        seed = (await tmdb.search(words.slice(0, n).join(" "))).find((r) => !qq.type || r.media_type === qq.type) || null;
+      }
+      if (mine !== seq) return;
+      if (!seed) {
+        results.innerHTML = message(`ما لقينا «${qq.title}». تأكد من الاسم.`);
+        return;
+      }
+      const type = seed.media_type;
+      const main = (seed.genre_ids || []).slice(0, 2);
+      const lang = qq.origin ? smart.ORIGINS.find((o) => o.key === qq.origin).lang : seed.original_language;
+      const [recs, close] = await Promise.all([
+        tmdb.recommendations(type, seed.id).catch(() => []),
+        main.length ? tmdb.discoverPage(type, { with_genres: main.join(","), with_original_language: lang, sort_by: "popularity.desc", "vote_count.gte": "20" }, 1, false).then((r) => r.results).catch(() => []) : [],
+      ]);
+      if (mine !== seq) return;
+      const sameLang = (r) => r.original_language === lang;
+      const list = [...recs.filter(sameLang), ...close, ...recs]
+        .filter((r, i, a) => r.id !== seed.id && r.poster_path && a.findIndex((x) => x.id === r.id) === i).slice(0, 40);
+      results.innerHTML = grid(list, `الأقرب لـ «${titleOf(seed)}»`) || message("ما لقينا أعمال مشابهة");
+    } catch (e) {
+      if (mine === seq) results.innerHTML = message(e.message);
+    }
+  }
+
+  async function fromWatchlist() {
+    const mine = ++seq;
+    showUnderstood(["✨ من قائمتي"]);
+    const items = watchlist.all().slice(0, 6);
+    if (!items.length) {
+      results.innerHTML = message("قائمتك فاضية. أضف أعمال تحبها وبعدين اطلب ترشيحات.");
       return;
     }
     results.innerHTML = loading();
+    const lists = await Promise.all(items.map((w) => tmdb.recommendations(w.type, w.id).catch(() => [])));
+    if (mine !== seq) return;
+    const have = new Set(watchlist.all().map((w) => `${w.type}:${w.id}`));
+    const score = new Map();
+    lists.flat().forEach((r) => {
+      const k = `${r.media_type}:${r.id}`;
+      if (have.has(k) || !r.poster_path) return;
+      const e = score.get(k) || { r, n: 0 };
+      e.n++;
+      score.set(k, e);
+    });
+    const list = [...score.values()].sort((a, b) => b.n - a.n || (b.r.popularity || 0) - (a.r.popularity || 0)).map((e) => e.r).slice(0, 40);
+    results.innerHTML = grid(list, "مرشّح لك حسب قائمتك") || message("ما لقينا ترشيحات");
+  }
+
+  async function plain(text) {
+    const mine = ++seq;
+    understoodEl.innerHTML = "";
+    results.innerHTML = loading();
     // TMDB (where it streams) and the user's own Xtream accounts, side by side.
-    const [tm, mine2] = await Promise.all([
+    const [tm, inAccounts] = await Promise.all([
       settings.tmdbKey ? tmdb.search(text).then((l) => l.filter((r) => r.poster_path)).catch((e) => e) : Promise.resolve([]),
       xtreamReady() ? xt.searchAll(text).catch(() => []) : Promise.resolve([]),
     ]);
     if (mine !== seq) return;
     const kindName = { movie: "فيلم", series: "مسلسل", live: "قناة" };
     const many = accounts.all().length > 1;
-    const xHtml = mine2.length ? `<h2 class="section-title">في حساباتك <small>${mine2.length}</small></h2>
-      <div class="grid">${mine2.map((x, i) => `<button class="card" style="background:none;border:0;text-align:right;padding:0" data-xi="${i}">
+    const xHtml = inAccounts.length ? `<h2 class="section-title">في حساباتك <small>${inAccounts.length}</small></h2>
+      <div class="grid">${inAccounts.map((x, i) => `<button class="card" style="background:none;border:0;text-align:right;padding:0" data-xi="${i}">
         <div class="poster" ${x.kind === "live" ? 'style="aspect-ratio:16/10"' : ""}>${x.image ? `<img loading="lazy" src="${esc(xt.img(x.image))}" alt="" style="${x.kind === "live" ? "object-fit:contain;padding:12px" : ""}" onerror="this.remove()">` : ""}
           <span class="badge">${kindName[x.kind]}</span></div>
         <div class="name" dir="auto">${esc(x.name)}</div>${many ? `<small style="color:var(--gold);font-size:12px">${esc(accounts.label(accounts.get(x.accountId)))}</small>` : ""}</button>`).join("")}</div>` : "";
-    const tmHtml = tm instanceof Error ? `<p class="muted">${esc(tm.message)}</p>`
-      : tm.length ? `<h2 class="section-title">كل الأعمال <small>${tm.length}</small></h2><div class="grid">${tm.map((r) => card(r)).join("")}</div>` : "";
+    const tmHtml = tm instanceof Error ? `<p class="muted">${esc(tm.message)}</p>` : grid(tm, "كل الأعمال");
     results.innerHTML = xHtml + tmHtml || (settings.tmdbKey || xtreamReady() ? message("ما لقينا شي بهذا الاسم") : message("أضف مفتاح TMDB أو حساب Xtream من الإعدادات أول", goSettings));
     results.querySelectorAll("[data-xi]").forEach((b) => b.addEventListener("click", () => {
-      const x = mine2[Number(b.dataset.xi)];
+      const x = inAccounts[Number(b.dataset.xi)];
       if (x.kind === "series") {
         accounts.setActive(x.accountId);
         location.hash = `#/xseries/${encodeURIComponent(x.id)}`;
@@ -226,16 +371,116 @@ async function searchPage(id, q = "") {
         play(xt.playUrls(x), x.kind === "live" ? xt.entryLive(x) : xt.entryMovie(x));
       }
     }));
-  };
+  }
+
+  function ask(text) {
+    window.history.replaceState(null, "", `#/search?q=${encodeURIComponent(text)}`);
+    if (!text.trim()) return idle();
+    const qq = smart.parse(text);
+    if (!settings.tmdbKey && qq.kind !== "plain") {
+      results.innerHTML = message("الفلاتر والترشيحات تحتاج مفتاح TMDB من الإعدادات", goSettings);
+      return;
+    }
+    if (qq.kind === "filter") applyFilter(qq.filter);
+    else if (qq.kind === "similar") similar(qq);
+    else if (qq.kind === "watchlist") fromWatchlist();
+    else plain(qq.text);
+  }
+
+  // ---- the filters panel (same groups as the phone)
+  function openFilters(start) {
+    let f = JSON.parse(JSON.stringify(start || filter));
+    if (f.type === "anime") f.type = "tv";
+    const box = $("#filters");
+    const chip = (on, label, attrs) => `<button class="chip ${on ? "on" : ""}" ${attrs}>${esc(label)}</button>`;
+    const draw = () => {
+      box.innerHTML = `<div class="filters">
+        <div class="fg"><b>النوع</b><div class="chips">
+          ${chip(f.type === "tv", "مسلسلات", 'data-type="tv"')}${chip(f.type === "movie", "أفلام", 'data-type="movie"')}</div></div>
+        <div class="fg"><b>التصنيف <small class="muted">(تقدر تختار أكثر من واحد)</small></b><div class="chips">
+          ${smart.GENRES.map((g) => chip(f.genres.includes(g.key), g.label, `data-genre="${g.key}"`)).join("")}</div></div>
+        <div class="fg"><b>البلد / اللغة</b><div class="chips">
+          ${chip(!f.origin, "الكل", 'data-origin=""')}${smart.ORIGINS.map((o) => chip(f.origin === o.key, o.label, `data-origin="${o.key}"`)).join("")}</div></div>
+        <div class="fg"><b>المنصة</b><div class="chips">
+          ${chip(!f.services.length, "أي منصة", 'data-service=""')}${tmdb.SERVICES.map((sv) => chip(f.services.includes(sv.key), sv.label, `data-service="${sv.key}"`)).join("")}</div></div>
+        <div class="fg"><b>الترتيب</b><div class="chips">
+          ${smart.SORTS.map(([k, l]) => chip(f.sort === k, l, `data-sort="${k}"`)).join("")}</div></div>
+        <div class="fg"><b>الفترة</b><div class="chips">
+          ${smart.ERAS.map(([l, a, b], i) => chip(f.yearFrom === a && f.yearTo === b, l, `data-era="${i}"`)).join("")}</div></div>
+        <div class="fg"><b>أقل تقييم</b><div class="chips">
+          ${[null, 6, 7, 8].map((r) => chip(f.minRating === r, r ? `${r}+` : "الكل", `data-rating="${r ?? ""}"`)).join("")}</div></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" id="f-apply" style="flex:1">اعرض النتائج</button>
+          <button class="btn ghost" id="f-save">★ احفظ</button>
+          <button class="btn ghost" id="f-clear">مسح</button>
+          <button class="btn ghost" id="f-close">إغلاق</button>
+        </div>
+        ${presets.all().length ? `<div class="fg"><b>أنماطي المحفوظة</b>${presets.all().map((p, i) => `<div class="preset">
+            <button class="linklike" data-use="${i}">★ ${esc(p.name)}</button><small class="muted">${esc(smart.summary(p.filter).join(" · "))}</small>
+            <button class="linklike danger" data-del="${i}">حذف</button></div>`).join("")}</div>` : ""}
+      </div>`;
+      const on = (sel, fn) => box.querySelectorAll(sel).forEach((b) => b.addEventListener("click", () => {
+        fn(b);
+        draw();
+      }));
+      on("[data-type]", (b) => (f.type = b.dataset.type));
+      on("[data-genre]", (b) => (f.genres = f.genres.includes(b.dataset.genre) ? f.genres.filter((k) => k !== b.dataset.genre) : [...f.genres, b.dataset.genre]));
+      on("[data-origin]", (b) => (f.origin = b.dataset.origin || null));
+      on("[data-service]", (b) => (f.services = !b.dataset.service ? [] : f.services.includes(b.dataset.service) ? f.services.filter((k) => k !== b.dataset.service) : [...f.services, b.dataset.service]));
+      on("[data-sort]", (b) => (f.sort = b.dataset.sort));
+      on("[data-era]", (b) => ([, f.yearFrom, f.yearTo] = smart.ERAS[Number(b.dataset.era)]));
+      on("[data-rating]", (b) => (f.minRating = b.dataset.rating ? Number(b.dataset.rating) : null));
+      on("#f-clear", () => (f = smart.emptyFilter(f.type)));
+      box.querySelector("#f-close").addEventListener("click", () => (box.hidden = true));
+      box.querySelector("#f-apply").addEventListener("click", () => {
+        if (!settings.tmdbKey) return toast("أضف مفتاح TMDB من الإعدادات أول");
+        applyFilter(f);
+      });
+      box.querySelector("#f-save").addEventListener("click", () => {
+        const name = prompt("اسم النمط:", smart.summary(f).slice(1).join(" ") || "نمطي");
+        if (!name || !name.trim()) return;
+        presets.save(name.trim(), f);
+        renderQuick();
+        draw();
+        toast("انحفظ النمط ✓");
+      });
+      box.querySelectorAll("[data-use]").forEach((b) => b.addEventListener("click", () => {
+        const p = presets.all()[Number(b.dataset.use)];
+        applyFilter(p.filter, `نمطك «${p.name}»`);
+      }));
+      box.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", () => {
+        presets.remove(presets.all()[Number(b.dataset.del)].name);
+        renderQuick();
+        draw();
+      }));
+    };
+    draw();
+    box.hidden = false;
+  }
+
+  $("#open-filters").addEventListener("click", () => {
+    const box = $("#filters");
+    if (box.hidden) openFilters();
+    else box.hidden = true;
+  });
+
+  let timer;
   input.addEventListener("input", () => {
     clearTimeout(timer);
-    timer = setTimeout(() => {
-      window.history.replaceState(null, "", `#/search?q=${encodeURIComponent(input.value)}`);
-      run(input.value);
-    }, 400);
+    // Requests like "فيلم رعب إندونيسي" wait for Enter or a pause; plain titles search as you type.
+    timer = setTimeout(() => ask(input.value), 700);
   });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      clearTimeout(timer);
+      input.blur();
+      ask(input.value);
+    }
+  });
+  renderQuick();
+  if (q) ask(q);
+  else idle();
   input.focus();
-  run(q);
 }
 
 // ---------- title page ----------
@@ -279,14 +524,19 @@ async function titlePage(id, type, tmdbId) {
       ${services.map((s) => `<a class="btn service" style="background:${s.color}" target="_blank" rel="noopener" href="${s.search}${encodeURIComponent(enTitle)}">▶ شاهد على ${esc(s.label)}</a>`).join("")}
       ${services.length ? "" : `<span class="muted">ما لقينا هذا العمل على منصات منطقتك (${esc(settings.region)}).</span>`}
     </div>
-    ${overview ? `<h2 class="section-title">القصة</h2><p class="overview">${esc(overview)}</p>` : ""}
+    ${d.tagline || (en && en.tagline) ? `<p class="muted" style="font-style:italic;margin:14px 0 0" id="tagline"></p>` : ""}
+    ${overview ? `<h2 class="section-title">القصة</h2><p class="overview" id="overview"></p>` : ""}
     ${trailers.length ? `<h2 class="section-title">الإعلانات</h2><div class="trailers">${trailers.map((v) =>
       `<iframe loading="lazy" src="https://www.youtube-nocookie.com/embed/${esc(v.key)}" allow="encrypted-media; fullscreen; picture-in-picture" allowfullscreen title="${esc(v.name)}"></iframe>`).join("")}</div>` : ""}
-    ${cast.length ? `<h2 class="section-title">الممثلين</h2><div class="cast">${cast.map((c) => `<div>
+    ${cast.length ? `<h2 class="section-title">الممثلين</h2><div class="cast">${cast.map((c) => `<a href="#/person/${c.id}" class="person">
         <div class="face">${c.profile_path ? `<img loading="lazy" src="${tmdb.image(c.profile_path, "w185")}" alt="">` : ""}</div>
-        <div>${esc(c.name)}</div><div class="muted">${esc(c.character || "")}</div></div>`).join("")}</div>` : ""}
+        <div>${esc(c.name)}</div><div class="muted">${esc(c.character || "")}</div></a>`).join("")}</div>` : ""}
     ${rowSection("إذا عجبك، بيعجبك", recs)}
     <p class="muted" style="font-size:12px;margin-top:30px">البيانات من TMDB، وبيانات التوفر من JustWatch.</p>`;
+
+  // English-only story or tagline: shown in Arabic (with a link to the original).
+  if (overview) fillTranslated($("#overview"), overview);
+  if ($("#tagline")) fillTranslated($("#tagline"), d.tagline || en.tagline);
 
   $("#save").addEventListener("click", (e) => {
     if (watchlist.get(key)) {
@@ -333,6 +583,45 @@ async function xtreamWatchButton(slot, type, tmdbId, titles, year) {
       play(xt.playUrls(m), xt.entryMovie(m, Number(tmdbId)));
     }
   }));
+}
+
+// ---------- actor page ----------
+
+async function personPage(id, personId) {
+  const [p, en] = await Promise.all([tmdb.person(personId), tmdb.personEnglish(personId)]);
+  if (stale(id)) return;
+  const credits = ((p.combined_credits || {}).cast || [])
+    .filter((c) => (c.media_type === "movie" || c.media_type === "tv") && c.poster_path)
+    .reduce((acc, c) => (acc.some((x) => x.id === c.id && x.media_type === c.media_type) ? acc : [...acc, c]), [])
+    .sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+  const bio = p.biography || (en && en.biography) || "";
+  const born = [p.birthday, p.place_of_birth].filter(Boolean).join(" · ");
+  let tab = "all";
+  const render = () => {
+    const list = credits.filter((c) => tab === "all" || c.media_type === tab);
+    $("#works").innerHTML = `<div class="grid">${list.map((c) => `<div>${card(c)}${c.character ? `<div class="muted" style="font-size:12px">${esc(c.character)}</div>` : ""}</div>`).join("")}</div>`;
+    view.querySelectorAll("[data-t]").forEach((b) => b.classList.toggle("on", b.dataset.t === tab));
+  };
+  view.innerHTML = `<section class="title-head"><div class="inner">
+      <div class="poster" style="width:180px">${p.profile_path ? `<img src="${tmdb.image(p.profile_path, "h632")}" alt="">` : ""}</div>
+      <div class="meta">
+        <h1>${esc(p.name)}</h1>
+        ${en && en.name && en.name !== p.name ? `<div class="muted">${esc(en.name)}</div>` : ""}
+        ${born ? `<div class="muted">${esc(born)}</div>` : ""}
+        <div class="muted">${credits.length} عمل</div>
+      </div></div></section>
+    ${bio ? `<h2 class="section-title">نبذة</h2><p class="overview" id="bio"></p>` : ""}
+    <h2 class="section-title">أعماله</h2>
+    <div class="chips" style="margin-bottom:14px">
+      <button class="chip" data-t="all">الكل</button><button class="chip" data-t="movie">أفلام</button><button class="chip" data-t="tv">مسلسلات</button>
+    </div>
+    <div id="works"></div>`;
+  if (bio) fillTranslated($("#bio"), bio);
+  view.querySelectorAll("[data-t]").forEach((b) => b.addEventListener("click", () => {
+    tab = b.dataset.t;
+    render();
+  }));
+  render();
 }
 
 // ---------- my list ----------
@@ -719,9 +1008,11 @@ async function xseriesPage(id, seriesId) {
 
 // ---------- continue watching ----------
 
-function continueRow() {
+/** "تابع المشاهدة" for the open Home tab: episodes under series, films under films. */
+function continueRow(type) {
   if (!xtreamReady()) return "";
-  const list = history.continueList().slice(0, 20);
+  const kind = type === "movie" ? "movie" : "episode";
+  const list = history.continueList().filter((e) => e.kind === kind).slice(0, 20);
   if (!list.length) return "";
   const many = accounts.all().length > 1;
   return `<section id="continue"><h2 class="section-title">تابع المشاهدة</h2>
@@ -831,7 +1122,7 @@ function bindContinue() {
 // Refresh the row after watching something.
 window.addEventListener("watchhub:history", () => {
   const root = $("#continue");
-  const html = continueRow();
+  const html = continueRow(sessionStorage.getItem("homeType") || "tv");
   if (root) {
     if (html) {
       root.outerHTML = html;

@@ -619,6 +619,8 @@ fun ProgressStrip(entry: WatchEntry, modifier: Modifier = Modifier) {
 @Composable
 fun ContinueWatchingRow(
     onOpenSeries: (String) -> Unit,
+    /** Which kinds this row shows: episodes on the series tab, films on the films tab. */
+    kinds: Set<String> = setOf(WatchEntry.EPISODE, WatchEntry.MOVIE),
     onOpenTitle: (MediaType, Int) -> Unit = { _, _ -> },
     onOpenLive: () -> Unit = {},
 ) {
@@ -629,9 +631,9 @@ fun ContinueWatchingRow(
     val entries by container.history.entries.collectAsStateWithLifecycle()
     var menuFor by remember { mutableStateOf<WatchEntry?>(null) }
     if (accounts.isEmpty()) return
-    val list = remember(entries, accounts) {
+    val list = remember(entries, accounts, kinds) {
         val ids = accounts.map { it.id }.toSet()
-        container.history.continueList().filter { it.accountId in ids }.take(20)
+        container.history.continueList().filter { it.accountId in ids && it.kind in kinds }.take(20)
     }
     if (list.isEmpty()) return
 

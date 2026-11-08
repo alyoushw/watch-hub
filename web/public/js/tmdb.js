@@ -54,14 +54,30 @@ const withType = (type) => (r) => ({ ...r, media_type: r.media_type || type });
 export const trending = (type) => get(`trending/${type}/week`, { language: "ar" }).then((r) => r.results.map(withType(type)));
 
 export function discover(type, params) {
-  return get(`discover/${type}`, {
-    language: "ar",
-    include_adult: "false",
-    watch_region: settings.region,
-    with_watch_monetization_types: "flatrate|free|ads",
-    ...params,
-  }).then((r) => r.results.map(withType(type)));
+  return discoverPage(type, params).then((r) => r.results);
 }
+
+/**
+ * One page of TMDB discover. With [streamableOnly] (the default, and always when a
+ * provider is chosen) only titles that stream in the user's region come back.
+ */
+export async function discoverPage(type, params, page = 1, streamableOnly = true) {
+  const base = { language: "ar", include_adult: "false", page: String(page) };
+  if (streamableOnly || params.with_watch_providers) {
+    base.watch_region = settings.region;
+    base.with_watch_monetization_types = "flatrate|free|ads";
+  }
+  const r = await get(`discover/${type}`, { ...base, ...params });
+  return { ...r, results: r.results.map(withType(type)) };
+}
+
+export const recommendations = (type, id) =>
+  get(`${type}/${id}/recommendations`, { language: "ar" }).then((r) => r.results.map(withType(type)));
+
+/** An actor's details (Arabic where TMDB has it) with every film and series they appear in. */
+export const person = (id) => get(`person/${id}`, { language: "ar", append_to_response: "combined_credits" });
+
+export const personEnglish = (id) => get(`person/${id}`, { language: "en-US" }).catch(() => null);
 
 export const search = (q) =>
   get("search/multi", { query: q, language: "ar", include_adult: "false" })

@@ -1,5 +1,6 @@
 package com.alyoushw.watchhub.ui
 
+import com.alyoushw.watchhub.data.WatchEntry
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Box
@@ -408,6 +409,12 @@ fun HomeScreen(
     }
 
     var live by rememberSaveable { mutableStateOf(false) }
+    // Each tab keeps its own: episodes under series, films under films (channels live in «مباشر»).
+    val continueKinds = when (vm.type) {
+        MediaType.TV -> setOf(WatchEntry.EPISODE)
+        MediaType.MOVIE -> setOf(WatchEntry.MOVIE)
+        else -> emptySet()
+    }
     val header: @Composable () -> Unit = {
         HeroTabs(
             selected = vm.type,
@@ -427,7 +434,7 @@ fun HomeScreen(
             apiKey.isBlank() -> Column {
                 header()
                 // "تابع المشاهدة" never waits for (or depends on) the TMDB rows.
-                ContinueWatchingRow(onOpenXtreamSeries, onOpenTitle = onOpen, onOpenLive = { live = true })
+                ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true })
                 MessageBox(
                     title = "خطوة وحدة قبل نبدأ",
                     body = "حط مفتاح TMDB المجاني في الإعدادات عشان نعرض لك أفضل الأعمال في كل منصة.",
@@ -438,13 +445,13 @@ fun HomeScreen(
 
             vm.loading && vm.sections.isEmpty() -> Column {
                 header()
-                ContinueWatchingRow(onOpenXtreamSeries, onOpenTitle = onOpen, onOpenLive = { live = true })
+                ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true })
                 CenteredLoading()
             }
 
             vm.error != null && vm.sections.isEmpty() -> Column {
                 header()
-                ContinueWatchingRow(onOpenXtreamSeries, onOpenTitle = onOpen, onOpenLive = { live = true })
+                ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true })
                 MessageBox(vm.error.orEmpty(), actionLabel = "حاول مرة ثانية", onAction = vm::refresh)
             }
 
@@ -462,7 +469,7 @@ fun HomeScreen(
                             onOpen = { item -> item.type?.let { onOpen(it, item.id) } },
                         )
                     }
-                    item(key = "continue") { ContinueWatchingRow(onOpenXtreamSeries, onOpenTitle = onOpen, onOpenLive = { live = true }) }
+                    item(key = "continue") { ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true }) }
                     items(vm.sections.filter { !(it.wide && it.id == hero?.id) }, key = { it.id }) { section ->
                         TitleRow(
                             title = section.title,
