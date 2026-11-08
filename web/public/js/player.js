@@ -5,6 +5,7 @@
 // Safari plays HLS itself; other browsers use hls.js, and MPEG-TS live streams use mpegts.js.
 import { via } from "./xtream.js";
 import { settings, history, isFinished, historySaved } from "./store.js";
+import * as cloud from "./cloud.js";
 
 const HLS_JS = "https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js";
 const MPEGTS_JS = "https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js";
@@ -191,32 +192,40 @@ function openOverlay(entry, live) {
   wake();
 }
 
-function saveProgress() {
-  if (!current || current.live) return;
+function saveProgress(important = false) {
+  if (!current || current.live || !current.started) return;
   const d = video.duration;
   if (!isFinite(d) || d <= 0) return;
-  history.save({ ...current.entry, positionMs: Math.round(video.currentTime * 1000), durationMs: Math.round(d * 1000) });
+  history.save({ ...current.entry, positionMs: Math.round(video.currentTime * 1000), durationMs: Math.round(d * 1000) }, important);
 }
 
 /** Plays [urls] (tried in order); [entry] names it and keeps its place in the watch history. */
 export function play(urls, entry) {
-  history.save(entry);
-  if (isIOS() && settings.vlcOnIos !== false) return openInVlc(urls, entry);
+  if (isIOS() && settings.vlcOnIos !== false) {
+    history.save(entry, true);
+    return openInVlc(urls, entry);
+  }
   return playHere(urls, entry);
 }
 
 async function playHere(urls, entry) {
   const live = entry.kind === "live";
   const mine = ++session;
-  current = { urls, entry, live };
+  current = { urls, entry, live, started: false };
   openOverlay(entry, live);
+  ui.spin.hidden = false;
+  // Another device may have moved on a moment ago: take the newest spot from the account first.
+  await cloud.refreshEntry(entry.key);
+  if (mine !== session) return;
   const saved = history.get(entry.key);
+  history.save(entry, true);
   const startAt = !live && saved && !isFinished(saved) && saved.positionMs > 10000 ? saved.positionMs / 1000 : 0;
   ui.spin.hidden = false;
   for (const url of urls) {
     try {
       await tryOne(url, startAt);
       if (mine !== session) return;
+      current.started = true;
       if (startAt) flash(`نكمل من ${fmt(startAt)}`);
       clearInterval(saveTimer);
       saveTimer = setInterval(saveProgress, 5000);
@@ -265,8 +274,8 @@ function openInVlc(urls, entry) {
   document.addEventListener("visibilitychange", away);
   window.addEventListener("pagehide", away);
   panel("نفتحها في VLC…", [["شغّل هنا في المتصفح", () => playHere(urls, entry)]]);
-  // Leave for VLC only once "تابع المشاهدة" is safely stored.
-  historySaved().then(() => {
+  // Leave for VLC only once "تابع المشاهدة" is safely stored (here and in the account).
+  Promise.all([historySaved(), Promise.race([cloud.flush(), new Promise((r) => setTimeout(r, 1500))])]).then(() => {
     if (mine === session) location.href = vlcLink(link);
   });
   setTimeout(() => {
@@ -286,7 +295,7 @@ function openInVlc(urls, entry) {
 }
 
 export function close() {
-  saveProgress();
+  saveProgress(true);
   clearInterval(saveTimer);
   session++;
   current = null;
@@ -360,11 +369,11 @@ video.addEventListener("playing", () => {
 });
 video.addEventListener("canplay", () => (ui.spin.hidden = true));
 video.addEventListener("pause", () => {
-  saveProgress();
+  saveProgress(true);
   wake();
 });
 video.addEventListener("ended", () => {
-  saveProgress();
+  saveProgress(true);
   close();
 });
 
@@ -628,7 +637,7 @@ ui.gest.addEventListener("wheel", (e) => {
   setVolume(video.volume + (e.deltaY < 0 ? 0.05 : -0.05));
 }, { passive: false });
 
-window.addEventListener("pagehide", saveProgress);
+window.addEventListener("pagehide", () => saveProgress(true));
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden") saveProgress();
+  if (document.visibilityState === "hidden") saveProgress(true);
 });

@@ -24,6 +24,18 @@ function save() {
   }
 }
 
+/**
+ * Changes made in this browser, for the account sync (cloud.js):
+ * ("history" | "watchlist", item or null, key, removedAt, important) and ("xtream", list, updatedAt).
+ */
+const changeListeners = [];
+export const onLocalChange = (fn) => changeListeners.push(fn);
+const emit = (...args) => changeListeners.forEach((fn) => {
+  try {
+    fn(...args);
+  } catch { /* a listener problem must not break saving */ }
+});
+
 export const settings = new Proxy(data.settings, {
   set(target, prop, value) {
     target[prop] = value;
@@ -37,11 +49,46 @@ settings.proxy ??= "/proxy";
 
 // ---------- Xtream accounts (several, each with the user's name for it) ----------
 
+const normalizeHost = (raw) => {
+  let h = (raw || "").trim().replace(/\/+$/, "").replace(/\/?player_api\.php$/i, "");
+  if (h && !/^https?:\/\//i.test(h)) h = `http://${h}`;
+  return h;
+};
+
+/**
+ * The same id for the same login on every device (phone, TV, web), so synced history points at
+ * the right account everywhere: FNV-1a of "host|username", base 36. Same as XtreamAccount.stableId.
+ */
+export function stableAccountId(host, user) {
+  const text = `${normalizeHost(host).toLowerCase()}|${(user || "").trim()}`;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `x${h.toString(36)}`;
+}
+
 // The single account of earlier versions becomes the first one in the list.
 if (!Array.isArray(settings.xAccounts)) {
   settings.xAccounts = settings.xHost && settings.xUser && settings.xPass
     ? [{ id: "a1", name: "حسابي", host: settings.xHost, user: settings.xUser, pass: settings.xPass }]
     : [];
+}
+
+// Old per-device ids become stable ones; the history is re-pointed below.
+const accountIdChanges = {};
+{
+  const fixed = [];
+  for (const a of settings.xAccounts) {
+    const id = stableAccountId(a.host, a.user);
+    if (id !== a.id) accountIdChanges[a.id] = id;
+    if (!fixed.some((x) => x.id === id)) fixed.push({ ...a, id });
+  }
+  if (Object.keys(accountIdChanges).length) {
+    settings.xAccounts = fixed;
+    if (accountIdChanges[settings.xActive]) settings.xActive = accountIdChanges[settings.xActive];
+  }
 }
 
 export const accounts = {
@@ -52,33 +99,83 @@ export const accounts = {
   setActive(id) {
     settings.xActive = id;
   },
-  /** Adds the account, or replaces the one with the same id. Returns the saved copy. */
+  /** Adds the account, or replaces the one being edited. Returns the saved copy. */
   save(acc) {
-    const saved = { ...acc, id: acc.id || `a${Date.now().toString(36)}` };
+    const host = normalizeHost(acc.host);
+    const user = (acc.user || "").trim();
+    const saved = { ...acc, host, user, id: stableAccountId(host, user) };
     const list = accounts.all();
-    settings.xAccounts = list.some((a) => a.id === saved.id) ? list.map((a) => (a.id === saved.id ? saved : a)) : [...list, saved];
-    if (!list.length) settings.xActive = saved.id;
+    const editing = acc.id && list.some((a) => a.id === acc.id);
+    const next = editing ? list.map((a) => (a.id === acc.id ? saved : a)) : [...list.filter((a) => a.id !== saved.id), saved];
+    store(next.filter((a, i) => next.findIndex((x) => x.id === a.id) === i));
+    if (!list.length || settings.xActive === acc.id) settings.xActive = saved.id;
     return saved;
   },
   remove(id) {
-    settings.xAccounts = accounts.all().filter((a) => a.id !== id);
+    store(accounts.all().filter((a) => a.id !== id));
     if (settings.xActive === id) settings.xActive = accounts.all()[0]?.id || null;
+  },
+  /** When the list last changed (here, or through sync on another device). */
+  updatedAt: () => settings.xAccountsUpdatedAt || 0,
+  /** The list as synced from another device. */
+  setFromCloud(list, updatedAt) {
+    const fixed = list.map((a) => ({ ...a, id: stableAccountId(a.host, a.user) }))
+      .filter((a, i, arr) => arr.findIndex((x) => x.id === a.id) === i);
+    settings.xAccounts = fixed;
+    settings.xAccountsUpdatedAt = updatedAt;
   },
   label: (a) => (a ? a.name || a.host.replace(/^https?:\/\//, "").split("/")[0] : ""),
 };
 
+function store(list) {
+  const at = Date.now();
+  settings.xAccounts = list;
+  settings.xAccountsUpdatedAt = at;
+  emit("xtream", list, at);
+}
+
 export const xtreamReady = () => accounts.all().length > 0;
+
+data.removedWatch ??= {};
+
+/** What other devices should see change: adding, removing, the status. */
+const visibleChange = (old, item) => !old || old.status !== item.status;
 
 export const watchlist = {
   all: () => data.watchlist,
   get: (key) => data.watchlist.find((w) => w.key === key),
   upsert(item) {
-    data.watchlist = [item, ...data.watchlist.filter((w) => w.key !== item.key)];
+    const old = watchlist.get(item.key);
+    const changed = visibleChange(old, item);
+    const stamped = { ...item, updatedAt: changed ? Date.now() : old?.updatedAt || item.updatedAt || 0 };
+    data.watchlist = [stamped, ...data.watchlist.filter((w) => w.key !== item.key)];
+    delete data.removedWatch[item.key];
     save();
+    if (changed) emit("watchlist", stamped, stamped.key, null);
   },
   remove(key) {
+    const at = Date.now();
     data.watchlist = data.watchlist.filter((w) => w.key !== key);
+    data.removedWatch[key] = at;
     save();
+    emit("watchlist", null, key, at);
+  },
+  removed: () => data.removedWatch,
+  /** A change from another device, kept when newer than this browser's copy. */
+  applyRemote(key, item, updatedAt) {
+    const local = watchlist.get(key);
+    if (local && (local.updatedAt || 0) >= updatedAt) return false;
+    if (!local && (data.removedWatch[key] || 0) >= updatedAt) return false;
+    if (!item) {
+      if (!local) return false;
+      data.watchlist = data.watchlist.filter((w) => w.key !== key);
+      data.removedWatch[key] = updatedAt;
+    } else {
+      data.watchlist = [{ ...local, ...item, updatedAt }, ...data.watchlist.filter((w) => w.key !== key)];
+      delete data.removedWatch[key];
+    }
+    save();
+    return true;
   },
 };
 
@@ -106,6 +203,18 @@ export const recent = {
  */
 if (!Array.isArray(data.watchHistory)) data.watchHistory = [];
 delete data.history;
+// Removed keys → when (older versions kept a plain list).
+if (!data.removedHistory || Array.isArray(data.removedHistory)) {
+  data.removedHistory = Object.fromEntries((data.removedHistory || []).map((k) => [k, Date.now()]));
+}
+// Entries re-pointed to the stable account ids.
+if (Object.keys(accountIdChanges).length) {
+  data.watchHistory = data.watchHistory.map((e) => {
+    const to = accountIdChanges[e.accountId];
+    return to ? { ...e, accountId: to, key: to + e.key.slice(String(e.accountId).length) } : e;
+  }).filter((e, i, arr) => arr.findIndex((x) => x.key === e.key) === i);
+  save();
+}
 
 // A second copy of the history in IndexedDB. Safari can drop a localStorage write when the
 // page is suspended right after it (opening VLC does exactly that); an IndexedDB write is on
@@ -154,8 +263,8 @@ export async function restoreHistory() {
       const old = byKey.get(e.key);
       if (!old || (e.updatedAt || 0) >= (old.updatedAt || 0)) byKey.set(e.key, e);
     }
-    const removed = new Set(data.removedHistory || []);
-    data.watchHistory = [...byKey.values()].filter((e) => !removed.has(e.key))
+    const removed = data.removedHistory || {};
+    data.watchHistory = [...byKey.values()].filter((e) => !(removed[e.key] >= (e.updatedAt || 0)))
       .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 80);
     save();
     persistHistory();
@@ -167,7 +276,7 @@ export async function restoreHistory() {
 export const history = {
   list: () => data.watchHistory,
   get: (key) => data.watchHistory.find((e) => e.key === key),
-  save(entry) {
+  save(entry, important = false) {
     const old = history.get(entry.key);
     const merged = {
       ...entry,
@@ -176,16 +285,39 @@ export const history = {
       updatedAt: Date.now(),
     };
     data.watchHistory = [merged, ...data.watchHistory.filter((e) => e.key !== entry.key)].slice(0, 80);
-    data.removedHistory = (data.removedHistory || []).filter((k) => k !== entry.key);
+    delete data.removedHistory[entry.key];
     save();
     persistHistory();
+    emit("history", merged, merged.key, null, important);
+    return merged;
   },
   remove(key) {
+    const at = Date.now();
     data.watchHistory = data.watchHistory.filter((e) => e.key !== key);
-    // Remembered so an older copy cannot bring it back.
-    data.removedHistory = [key, ...(data.removedHistory || []).filter((k) => k !== key)].slice(0, 200);
+    // Remembered so an older copy (another device, or the IndexedDB copy) cannot bring it back.
+    data.removedHistory[key] = at;
     save();
     persistHistory();
+    emit("history", null, key, at, true);
+  },
+  removed: () => data.removedHistory,
+  /** A change from another device (through the account), kept when newer. Nothing is sent back. */
+  applyRemote(key, entry, updatedAt) {
+    const local = history.get(key);
+    if (local && (local.updatedAt || 0) >= updatedAt) return false;
+    if (!local && (data.removedHistory[key] || 0) >= updatedAt) return false;
+    if (!entry) {
+      if (!local) return false;
+      data.watchHistory = data.watchHistory.filter((e) => e.key !== key);
+      data.removedHistory[key] = updatedAt;
+    } else {
+      data.watchHistory = [...data.watchHistory.filter((e) => e.key !== key), { ...entry, updatedAt }]
+        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 80);
+      delete data.removedHistory[key];
+    }
+    save();
+    persistHistory();
+    return true;
   },
   /** One card per series (its latest episode); finished films left out. */
   continueList() {

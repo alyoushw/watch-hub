@@ -440,22 +440,30 @@ class CloudSync(
     )
 
     private fun DocumentSnapshot.toWatchItem(): WatchItem? {
-        getString("android")?.let { raw -> runCatching { json.decodeFromString(WatchItem.serializer(), raw) }.getOrNull()?.let { return it } }
-        val type = MediaType.fromPath(getString("type")) ?: return null
-        val id = getLong("id")?.toInt() ?: return null
         val season = getLong("progressSeason")?.toInt()
         val episode = getLong("progressEpisode")?.toInt()
+        val status = when (getString("status")) {
+            "watching" -> WatchStatus.WATCHING
+            "done" -> WatchStatus.DONE
+            else -> WatchStatus.PLANNED
+        }
+        val progress = if (season != null && episode != null) EpisodeMark(season, episode) else null
+        // The top-level fields are what every device edits (the web app only changes those),
+        // so they win over the Android-only copy kept alongside.
+        getString("android")?.let { raw ->
+            runCatching { json.decodeFromString(WatchItem.serializer(), raw) }.getOrNull()?.let {
+                return it.copy(status = status, progress = progress ?: it.progress, title = getString("title") ?: it.title)
+            }
+        }
+        val type = MediaType.fromPath(getString("type")) ?: return null
+        val id = getLong("id")?.toInt() ?: return null
         return WatchItem(
             id = id,
             type = type,
             title = getString("title").orEmpty(),
             posterPath = getString("poster"),
-            status = when (getString("status")) {
-                "watching" -> WatchStatus.WATCHING
-                "done" -> WatchStatus.DONE
-                else -> WatchStatus.PLANNED
-            },
-            progress = if (season != null && episode != null) EpisodeMark(season, episode) else null,
+            status = status,
+            progress = progress,
             addedAt = getLong("addedAt") ?: System.currentTimeMillis(),
         )
     }

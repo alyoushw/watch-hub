@@ -134,6 +134,8 @@ function config(): Response {
     },
     googleWebClientId: env("GOOGLE_WEB_CLIENT_ID"),
     deviceLogin: Boolean(env("GOOGLE_TV_CLIENT_ID") && env("GOOGLE_TV_CLIENT_SECRET")),
+    // Only for testing against the local Firebase emulators (never set on the real site).
+    ...(env("WATCHHUB_EMULATOR_HOST") ? { emulatorHost: env("WATCHHUB_EMULATOR_HOST") } : {}),
   });
 }
 

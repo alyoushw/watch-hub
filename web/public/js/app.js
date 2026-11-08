@@ -4,6 +4,7 @@ import * as xt from "./xtream.js";
 import { play, fmt } from "./player.js";
 import * as smart from "./smart.js";
 import { fillTranslated } from "./translate.js";
+import * as cloud from "./cloud.js";
 import { settings, watchlist, favorites, recent, xtreamReady, history, isFinished, progressOf, accounts, restoreHistory } from "./store.js";
 
 const view = document.getElementById("view");
@@ -1265,6 +1266,83 @@ function renderAccounts(editingId) {
   });
 }
 
+/** «حسابك»: Google sign-in so the list, "تابع المشاهدة" and the Xtream accounts follow you to every device. */
+function renderCloud() {
+  const box = $("#account-box");
+  if (!box) return;
+  const draw = (st) => {
+    if (!box.isConnected) return;
+    const head = `<h3>حسابك</h3>`;
+    if (st.status === "loading") {
+      box.innerHTML = head + `<p class="muted" style="margin:0">…</p>`;
+    } else if (st.status === "off") {
+      box.innerHTML = head + `<p class="muted" style="margin:0;line-height:1.8">الحساب يحتاج إعداد مرة وحدة في Render (خطوات «حساب Watch Hub» في ملف README). بعدها يطلع لك هنا زر تسجيل الدخول.</p>`;
+    } else if (st.status === "signedOut") {
+      box.innerHTML = head + `<p class="muted" style="margin:0;line-height:1.8">سجّل دخولك بحساب Google، وكل أجهزتك (الجوال والتلفاز والموقع) تصير على نفس القائمة ونفس «تابع المشاهدة». توقف حلقة في الجوال، وتكملها في التلفاز من نفس الثانية.</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn" id="cl-google">سجّل دخول بـ Google</button>
+          ${cloud.deviceLoginAvailable() ? `<button class="btn ghost" id="cl-code">دخول برمز</button>` : ""}
+        </div><pre class="msg err" id="cl-msg"></pre>`;
+      $("#cl-google").addEventListener("click", async () => {
+        $("#cl-msg").textContent = "";
+        try {
+          await cloud.signInWithGoogle();
+        } catch (e) {
+          if ($("#cl-msg")) $("#cl-msg").textContent = e.message;
+        }
+      });
+      $("#cl-code")?.addEventListener("click", deviceLoginSheet);
+    } else {
+      const time = st.lastSync ? new Date(st.lastSync).toLocaleTimeString("en-GB") : "";
+      box.innerHTML = head + `<div class="acc-row">
+          ${st.photo ? `<img src="${esc(st.photo)}" alt="" style="width:44px;height:44px;border-radius:50%">` : ""}
+          <div><b>${esc(st.name || st.email || "")}</b><small>${esc(st.email || "")}</small>
+            <small style="color:var(--gold)">${time ? `✓ مزامن · آخر تحديث ${time}` : "✓ متصل · نجهّز المزامنة…"}</small></div>
+          <button class="btn ghost small" id="cl-out">خروج</button>
+        </div>
+        <p class="muted" style="margin:0;font-size:13px">قائمتي، وتابع المشاهدة (لين الثانية اللي وقفت عندها)، وحسابات Xtream تتحدّث على كل جهاز داخل بنفس الحساب.</p>`;
+      $("#cl-out").addEventListener("click", () => cloud.signOut());
+    }
+  };
+  draw(cloud.getState());
+  const off = cloud.onStateChange((st) => (box.isConnected ? draw(st) : off()));
+}
+
+/** Code sign-in: enter the code at google.com/device (works where the Google popup can't). */
+async function deviceLoginSheet() {
+  document.querySelector(".sheet-wrap")?.remove();
+  const wrap = document.createElement("div");
+  wrap.className = "sheet-wrap";
+  wrap.innerHTML = `<div class="sheet" style="text-align:center"><b class="sheet-title">دخول برمز</b><div id="dl-body">${loading()}</div>
+    <button class="btn ghost" id="dl-x">إلغاء</button></div>`;
+  document.body.appendChild(wrap);
+  let cancelled = false;
+  const close = () => {
+    cancelled = true;
+    wrap.remove();
+  };
+  wrap.querySelector("#dl-x").addEventListener("click", close);
+  const body = wrap.querySelector("#dl-body");
+  try {
+    const code = await cloud.startDeviceLogin();
+    if (cancelled) return;
+    body.innerHTML = `<p class="muted" style="margin:6px 0">افتح هذا الرابط واختر حسابك، واكتب الرمز:</p>
+      <a class="btn" href="${esc(code.verificationUrl)}" target="_blank" rel="noopener">${esc(code.verificationUrl.replace(/^https?:\/\//, ""))}</a>
+      <div style="font-size:34px;font-weight:700;letter-spacing:4px;margin:14px 0;background:var(--surface);border-radius:12px;padding:8px" dir="ltr">${esc(code.userCode)}</div>
+      <p class="muted" style="margin:0">ننتظر موافقتك…</p>`;
+    const ok = await cloud.finishDeviceLogin(code, () => cancelled);
+    if (cancelled) return;
+    if (ok) {
+      close();
+      toast("✓ دخلت، ونزامن الحين");
+    } else {
+      body.innerHTML = `<p class="err">انتهت صلاحية الرمز أو انرفض. سكّر وجرّب مرة ثانية.</p>`;
+    }
+  } catch (e) {
+    if (!cancelled) body.innerHTML = `<p class="err">${esc(e.message)}</p>`;
+  }
+}
+
 async function settingsPage() {
   view.innerHTML = `<div class="settings">
     <h2 class="section-title" style="margin-bottom:0">الإعدادات</h2>
@@ -1277,6 +1355,8 @@ async function settingsPage() {
       <div><button class="btn" id="tmdb-save">احفظ وجرّب</button></div>
       <pre class="msg" id="tmdb-msg"></pre>
     </section>
+
+    <section class="card-box" id="account-box"></section>
 
     <section class="card-box">
       <h3>المظهر</h3>
@@ -1358,6 +1438,7 @@ async function settingsPage() {
   }));
 
   renderAccounts();
+  renderCloud();
 
   $("#vlc").addEventListener("change", (e) => {
     settings.vlcOnIos = e.target.checked;
@@ -1375,7 +1456,10 @@ async function settingsPage() {
   });
 }
 
-restoreHistory().finally(route);
+restoreHistory().finally(() => {
+  route();
+  cloud.start();
+});
 
 // Open instantly from the device's copy, even while the free server wakes up.
 if ("serviceWorker" in navigator) {
