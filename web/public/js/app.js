@@ -687,7 +687,8 @@ const STATUSES = { want: "أبي أشوفه", watching: "أتابعه", done: "�
 async function listPage() {
   let filter = sessionStorage.getItem("listFilter") || "all";
   const render = () => {
-    const items = watchlist.all().filter((w) => filter === "all" || w.status === filter);
+    // Anime (MyAnimeList ids, from the Android app) has no page on the web yet.
+    const items = watchlist.all().filter((w) => w.type !== "anime" && (filter === "all" || w.status === filter));
     view.innerHTML = `<h2 class="section-title">قائمتي</h2>
       <div class="chips">${[["all", "الكل"], ...Object.entries(STATUSES)].map(([k, v]) =>
         `<button class="chip ${filter === k ? "on" : ""}" data-f="${k}">${v}</button>`).join("")}</div>
