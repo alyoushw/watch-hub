@@ -1,5 +1,6 @@
 package com.alyoushw.watchhub.ui
 
+import android.net.Uri
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -7,6 +8,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
@@ -19,6 +21,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -44,6 +47,7 @@ private enum class Tab(val route: String, val label: String, val icon: ImageVect
     SEARCH("search", "البحث", Icons.Filled.Search),
     WATCHLIST("watchlist", "قائمتي", Icons.AutoMirrored.Filled.List),
     SUBSCRIPTIONS("subscriptions", "اشتراكاتي", Icons.Filled.DateRange),
+    XTREAM("xtream", "قنواتي", Icons.Filled.PlayArrow),
     SETTINGS("settings", "الإعدادات", Icons.Filled.Settings),
 }
 
@@ -62,12 +66,15 @@ fun WatchHubRoot() {
     val currentRoute = backStack?.destination?.route
 
     val tv = isTv()
+    // The Xtream tab only shows once an account is saved in Settings.
+    val xtream by appContainer().settings.xtream.collectAsStateWithLifecycle()
+    val tabs = Tab.entries.filter { it != Tab.XTREAM || xtream.isComplete }
     Scaffold(
         contentWindowInsets = WindowInsets(0),
         bottomBar = {
             if (!tv) {
                 NavigationBar {
-                    Tab.entries.forEach { tab ->
+                    tabs.forEach { tab ->
                         NavigationBarItem(
                             selected = currentRoute == tab.route,
                             onClick = { nav.switchTab(tab.route) },
@@ -84,7 +91,7 @@ fun WatchHubRoot() {
         if (tv) {
             // On TV the tabs sit in a rail on the side, easy to reach with the remote.
             NavigationRail {
-                Tab.entries.forEach { tab ->
+                tabs.forEach { tab ->
                     NavigationRailItem(
                     modifier = Modifier.focusFrame(),
                         selected = currentRoute == tab.route,
@@ -137,7 +144,19 @@ fun WatchHubRoot() {
                 WatchlistScreen(onOpen = { type, id -> nav.openDetail(type, id) })
             }
             composable(Tab.SUBSCRIPTIONS.route) { SubscriptionsScreen() }
-            composable(Tab.SETTINGS.route) { SettingsScreen() }
+            composable(Tab.SETTINGS.route) { SettingsScreen(onOpenXtream = { nav.switchTab(Tab.XTREAM.route) }) }
+            composable(Tab.XTREAM.route) {
+                XtreamScreen(
+                    onOpenSeries = { id -> nav.navigate("xtream/series/${Uri.encode(id)}") },
+                    onOpenSettings = { nav.switchTab(Tab.SETTINGS.route) },
+                )
+            }
+            composable(
+                route = "xtream/series/{id}",
+                arguments = listOf(navArgument("id") { type = NavType.StringType }),
+            ) { entry ->
+                XtreamSeriesScreen(seriesId = entry.arguments?.getString("id").orEmpty(), onBack = { nav.popBackStack() })
+            }
             composable(
                 route = "detail/{type}/{id}",
                 arguments = listOf(

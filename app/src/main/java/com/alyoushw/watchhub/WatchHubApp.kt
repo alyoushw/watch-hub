@@ -24,7 +24,7 @@ class AppContainer(context: Context) {
     val links = DirectLinks()
     val jikan = JikanApi()
     val assistant = ClaudeAssistant(settings)
-    val xtream = XtreamApi()
+    val xtream = XtreamApi(settings)
     val statusCache = StatusCache(context, api)
 
     private val navPrefs = context.getSharedPreferences("navigation", Context.MODE_PRIVATE)

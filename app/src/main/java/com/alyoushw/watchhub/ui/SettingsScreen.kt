@@ -69,7 +69,7 @@ private val Regions = listOf(
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(onOpenXtream: () -> Unit = {}) {
     val container = appContainer()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -173,13 +173,13 @@ fun SettingsScreen() {
 
             HorizontalDivider()
 
-            XtreamSection()
+            XtreamSection(onOpenXtream)
 
             HorizontalDivider()
 
             SectionTitle("عن التطبيق")
             Text(
-                "Watch Hub ما يشغّل الفيديو بنفسه ولا يحفظ كلمات مرور حساباتك (إلا حساب Xtream Codes إذا أضفته). يجمع لك المحتوى في مكان واحد، " +
+                "Watch Hub ما يشغّل الفيديو بنفسه (إلا محتوى حساب Xtream Codes إذا أضفته) ولا يحفظ كلمات مرور حساباتك غير هذا الحساب. يجمع لك المحتوى في مكان واحد، " +
                     "ولما تضغط «شاهد» يفتح العمل في تطبيق المنصة الرسمي.\n\n" +
                     "كل بياناتك (قائمتك واشتراكاتك) محفوظة على جوالك بس.\n\n" +
                     "This product uses the TMDB API but is not endorsed or certified by TMDB. " +
@@ -378,7 +378,7 @@ private fun ClaudeSection() {
 
 /** The user's Xtream Codes login from their official provider: host, username and password. */
 @Composable
-private fun XtreamSection() {
+private fun XtreamSection(onOpen: () -> Unit) {
     val container = appContainer()
     val scope = rememberCoroutineScope()
     val saved by container.settings.xtream.collectAsStateWithLifecycle()
@@ -394,7 +394,8 @@ private fun XtreamSection() {
         SectionTitle("Xtream Codes")
         Text(
             "إذا عندك اشتراك من مزوّد رسمي يستخدم Xtream Codes، حط الهوست واسم المستخدم وكلمة المرور " +
-                "اللي عطاك إياها المزوّد. البيانات محفوظة على جهازك بس.",
+                "اللي عطاك إياها المزوّد. بعدها يطلع لك تبويب «قنواتي» فيه القنوات والأفلام والمسلسلات. " +
+                "البيانات محفوظة على جهازك بس.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -467,6 +468,9 @@ private fun XtreamSection() {
         }
         result?.let {
             Text(it, color = if (it.startsWith("✓")) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error)
+        }
+        if (saved.isComplete) {
+            OutlinedButton(modifier = Modifier.focusFrame(), onClick = onOpen) { Text("افتح محتوى الحساب") }
         }
     }
 }
