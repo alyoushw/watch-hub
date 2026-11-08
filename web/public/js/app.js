@@ -2,7 +2,7 @@
 import * as tmdb from "./tmdb.js";
 import * as xt from "./xtream.js";
 import { play, fmt } from "./player.js";
-import { settings, watchlist, favorites, recent, xtreamReady, history, isFinished, progressOf, accounts } from "./store.js";
+import { settings, watchlist, favorites, recent, xtreamReady, history, isFinished, progressOf, accounts, restoreHistory } from "./store.js";
 
 const view = document.getElementById("view");
 
@@ -127,7 +127,18 @@ async function home(id) {
     return;
   }
 
-  const [trend, ids] = await Promise.all([tmdb.trending(type), tmdb.regionServiceIds(type)]);
+  // "تابع المشاهدة" shows at once, before (and whatever happens to) the TMDB rows.
+  view.innerHTML = `${tabs}${continueRow()}<div id="home-rest">${loading()}</div>`;
+  bindTypeTabs();
+  bindContinue();
+  let trend;
+  let ids;
+  try {
+    [trend, ids] = await Promise.all([tmdb.trending(type), tmdb.regionServiceIds(type)]);
+  } catch (e) {
+    if (!stale(id)) $("#home-rest").innerHTML = message(e.message || "صار خطأ", `<button class="btn" onclick="location.reload()">حاول مرة ثانية</button>`);
+    return;
+  }
   if (stale(id)) return;
   const hero = trend.find((r) => r.backdrop_path) || trend[0];
   const word = type === "tv" ? "المسلسلات" : "الأفلام";
@@ -999,7 +1010,7 @@ async function settingsPage() {
   });
 }
 
-route();
+restoreHistory().finally(route);
 
 // Open instantly from the device's copy, even while the free server wakes up.
 if ("serviceWorker" in navigator) {

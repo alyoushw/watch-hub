@@ -87,6 +87,14 @@ class WatchHistory(context: Context) {
         _entries.value = load()
     }
 
+    /**
+     * Written straight to disk (commit, not apply): the player saves just before the user may
+     * leave the app, and a write still queued then could be lost if Android closes the app.
+     */
+    private fun write(list: List<WatchEntry>) {
+        prefs.edit().putString(prefKey(), json.encodeToString(serializer, list)).commit()
+    }
+
     fun get(key: String): WatchEntry? = _entries.value.firstOrNull { it.key == key }
 
     /** Records [entry] as the latest thing watched, keeping a saved position unless a new one is given. */
@@ -100,13 +108,13 @@ class WatchHistory(context: Context) {
         )
         val next = (listOf(merged) + _entries.value.filter { it.key != entry.key }).take(MAX)
         _entries.value = next
-        prefs.edit().putString(prefKey(), json.encodeToString(serializer, next)).apply()
+        write(next)
     }
 
     fun remove(key: String) {
         val next = _entries.value.filter { it.key != key }
         _entries.value = next
-        prefs.edit().putString(prefKey(), json.encodeToString(serializer, next)).apply()
+        write(next)
     }
 
     /** For the "تابع المشاهدة" row: one card per series (its latest episode), finished films left out. */

@@ -4,7 +4,7 @@
 //
 // Safari plays HLS itself; other browsers use hls.js, and MPEG-TS live streams use mpegts.js.
 import { via } from "./xtream.js";
-import { settings, history, isFinished } from "./store.js";
+import { settings, history, isFinished, historySaved } from "./store.js";
 
 const HLS_JS = "https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js";
 const MPEGTS_JS = "https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js";
@@ -265,7 +265,10 @@ function openInVlc(urls, entry) {
   document.addEventListener("visibilitychange", away);
   window.addEventListener("pagehide", away);
   panel("نفتحها في VLC…", [["شغّل هنا في المتصفح", () => playHere(urls, entry)]]);
-  location.href = vlcLink(link);
+  // Leave for VLC only once "تابع المشاهدة" is safely stored.
+  historySaved().then(() => {
+    if (mine === session) location.href = vlcLink(link);
+  });
   setTimeout(() => {
     document.removeEventListener("visibilitychange", away);
     window.removeEventListener("pagehide", away);
@@ -279,7 +282,7 @@ function openInVlc(urls, entry) {
       ["افتح في VLC", () => openInVlc(urls, entry)],
       ["شغّل هنا في المتصفح", () => playHere(urls, entry)],
     ]);
-  }, 2500);
+  }, 3500);
 }
 
 export function close() {

@@ -107,6 +107,63 @@ export const recent = {
 if (!Array.isArray(data.watchHistory)) data.watchHistory = [];
 delete data.history;
 
+// A second copy of the history in IndexedDB. Safari can drop a localStorage write when the
+// page is suspended right after it (opening VLC does exactly that); an IndexedDB write is on
+// disk once its transaction completes, so the player waits for it before leaving the page.
+let idb = null;
+function openIdb() {
+  idb ??= new Promise((resolve, reject) => {
+    const r = indexedDB.open("watchhub", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("kv");
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+  return idb;
+}
+
+let lastWrite = Promise.resolve();
+function persistHistory() {
+  const copy = data.watchHistory.slice();
+  lastWrite = openIdb().then((db) => new Promise((resolve) => {
+    const tx = db.transaction("kv", "readwrite", { durability: "strict" });
+    tx.objectStore("kv").put(copy, "watchHistory");
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = tx.onabort = () => resolve(false);
+  })).catch(() => false);
+  return lastWrite;
+}
+
+/** Resolves once the latest history change is safely stored (at most ~1.5 s). */
+export const historySaved = () => Promise.race([lastWrite, new Promise((r) => setTimeout(r, 1500))]);
+
+/** On start: merge in the IndexedDB copy (it may hold what localStorage lost). */
+export async function restoreHistory() {
+  try {
+    const db = await openIdb();
+    const saved = await new Promise((resolve) => {
+      const req = db.transaction("kv").objectStore("kv").get("watchHistory");
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+    });
+    if (!Array.isArray(saved) || !saved.length) {
+      if (data.watchHistory.length) persistHistory();
+      return;
+    }
+    const byKey = new Map();
+    for (const e of [...saved, ...data.watchHistory]) {
+      const old = byKey.get(e.key);
+      if (!old || (e.updatedAt || 0) >= (old.updatedAt || 0)) byKey.set(e.key, e);
+    }
+    const removed = new Set(data.removedHistory || []);
+    data.watchHistory = [...byKey.values()].filter((e) => !removed.has(e.key))
+      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 80);
+    save();
+    persistHistory();
+  } catch {
+    // No IndexedDB (private mode): localStorage alone.
+  }
+}
+
 export const history = {
   list: () => data.watchHistory,
   get: (key) => data.watchHistory.find((e) => e.key === key),
@@ -119,11 +176,16 @@ export const history = {
       updatedAt: Date.now(),
     };
     data.watchHistory = [merged, ...data.watchHistory.filter((e) => e.key !== entry.key)].slice(0, 80);
+    data.removedHistory = (data.removedHistory || []).filter((k) => k !== entry.key);
     save();
+    persistHistory();
   },
   remove(key) {
     data.watchHistory = data.watchHistory.filter((e) => e.key !== key);
+    // Remembered so an older copy cannot bring it back.
+    data.removedHistory = [key, ...(data.removedHistory || []).filter((k) => k !== key)].slice(0, 200);
     save();
+    persistHistory();
   },
   /** One card per series (its latest episode); finished films left out. */
   continueList() {
