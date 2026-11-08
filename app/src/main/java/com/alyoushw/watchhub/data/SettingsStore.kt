@@ -56,6 +56,33 @@ class SettingsStore(context: Context) {
         _titleHintSeconds.value = value
     }
 
+    private val _xtream = MutableStateFlow(
+        XtreamAccount(
+            host = prefs.getString(KEY_XTREAM_HOST, "").orEmpty(),
+            username = prefs.getString(KEY_XTREAM_USER, "").orEmpty(),
+            password = prefs.getString(KEY_XTREAM_PASS, "").orEmpty(),
+        ),
+    )
+
+    /** The user's Xtream Codes login (host, username, password) from their official provider. */
+    val xtream: StateFlow<XtreamAccount> = _xtream.asStateFlow()
+
+    fun setXtream(account: XtreamAccount) {
+        val clean = XtreamAccount(
+            host = account.host.trim().takeIf { it.isNotEmpty() }?.let { XtreamApi.normalizeHost(it) }.orEmpty(),
+            username = account.username.trim(),
+            password = account.password,
+        )
+        prefs.edit()
+            .putString(KEY_XTREAM_HOST, clean.host)
+            .putString(KEY_XTREAM_USER, clean.username)
+            .putString(KEY_XTREAM_PASS, clean.password)
+            .apply()
+        _xtream.value = clean
+    }
+
+    fun clearXtream() = setXtream(XtreamAccount("", "", ""))
+
     fun setApiKey(value: String) {
         val v = value.trim()
         prefs.edit().putString(KEY_TMDB, v).apply()
@@ -74,5 +101,8 @@ class SettingsStore(context: Context) {
         const val KEY_CLAUDE = "claude_key"
         const val KEY_USE_CLAUDE = "use_claude"
         const val KEY_HINT_SECONDS = "title_hint_seconds"
+        const val KEY_XTREAM_HOST = "xtream_host"
+        const val KEY_XTREAM_USER = "xtream_user"
+        const val KEY_XTREAM_PASS = "xtream_pass"
     }
 }

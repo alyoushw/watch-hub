@@ -10,6 +10,7 @@ import com.alyoushw.watchhub.data.RowSource
 import com.alyoushw.watchhub.data.SettingsStore
 import com.alyoushw.watchhub.data.StatusCache
 import com.alyoushw.watchhub.data.TmdbApi
+import com.alyoushw.watchhub.data.XtreamApi
 import com.alyoushw.watchhub.data.MediaType
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -23,6 +24,7 @@ class AppContainer(context: Context) {
     val links = DirectLinks()
     val jikan = JikanApi()
     val assistant = ClaudeAssistant(settings)
+    val xtream = XtreamApi()
     val statusCache = StatusCache(context, api)
 
     private val navPrefs = context.getSharedPreferences("navigation", Context.MODE_PRIVATE)
