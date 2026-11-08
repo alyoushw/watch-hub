@@ -26,6 +26,7 @@ import com.alyoushw.watchhub.data.RowSource
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
@@ -401,9 +402,23 @@ fun HomeScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, onS
         onPauseOrDispose { }
     }
 
-    val header: @Composable () -> Unit = { HeroTabs(vm.type, vm::selectType, vm::refresh) }
+    var live by rememberSaveable { mutableStateOf(false) }
+    val header: @Composable () -> Unit = {
+        HeroTabs(
+            selected = vm.type,
+            onSelect = { live = false; vm.selectType(it) },
+            onRefresh = vm::refresh,
+            live = live,
+            onLive = { live = true },
+        )
+    }
     Box(Modifier.fillMaxSize()) {
         when {
+            live -> Column {
+                header()
+                XtreamLiveChannels(onOpenSettings)
+            }
+
             apiKey.isBlank() -> Column {
                 header()
                 MessageBox(

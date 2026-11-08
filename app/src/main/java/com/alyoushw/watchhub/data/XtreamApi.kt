@@ -33,7 +33,7 @@ data class XtreamAccountInfo(
 
 /** The three kinds of content an Xtream Codes account has. */
 enum class XtreamKind(val label: String, val categoriesAction: String, val listAction: String, val pathSegment: String) {
-    LIVE("القنوات", "get_live_categories", "get_live_streams", "live"),
+    LIVE("مباشر", "get_live_categories", "get_live_streams", "live"),
     MOVIE("الأفلام", "get_vod_categories", "get_vod_streams", "movie"),
     SERIES("المسلسلات", "get_series_categories", "get_series", "series"),
 }

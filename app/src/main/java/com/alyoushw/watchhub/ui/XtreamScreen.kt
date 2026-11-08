@@ -65,8 +65,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /** Channels, films and series of the user's Xtream Codes account, one category at a time. */
-class XtreamViewModel(private val api: XtreamApi) : ViewModel() {
-    var kind by mutableStateOf(XtreamKind.LIVE)
+class XtreamViewModel(private val api: XtreamApi, start: XtreamKind = XtreamKind.LIVE) : ViewModel() {
+    var kind by mutableStateOf(start)
         private set
     var categories by mutableStateOf<List<XtreamCategory>>(emptyList())
         private set
@@ -82,7 +82,7 @@ class XtreamViewModel(private val api: XtreamApi) : ViewModel() {
     private var job: Job? = null
 
     init {
-        selectKind(XtreamKind.LIVE)
+        selectKind(start)
     }
 
     fun selectKind(value: XtreamKind) {
@@ -145,26 +145,44 @@ fun XtreamScreen(onOpenSeries: (String) -> Unit, onOpenSettings: () -> Unit) {
     }
 }
 
+/** Live channels only, for the "مباشر" tab on the Home screen. */
 @Composable
-private fun XtreamContent(onOpenSeries: (String) -> Unit) {
+fun XtreamLiveChannels(onOpenSettings: () -> Unit) {
+    val account by appContainer().settings.xtream.collectAsStateWithLifecycle()
+    if (account.isComplete) {
+        XtreamContent(onOpenSeries = {}, kinds = listOf(XtreamKind.LIVE))
+    } else {
+        MessageBox(
+            title = "أضف حساب Xtream Codes من الإعدادات عشان تطلع لك القنوات المباشرة هنا",
+            actionLabel = "افتح الإعدادات",
+            onAction = onOpenSettings,
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind> = XtreamKind.entries) {
     val container = appContainer()
     val context = LocalContext.current
     val account by container.settings.xtream.collectAsStateWithLifecycle()
     // A new login starts a fresh list.
-    val vm: XtreamViewModel = viewModel(key = "xtream:${account.host}:${account.username}") {
-        XtreamViewModel(container.xtream)
+    val vm: XtreamViewModel = viewModel(key = "xtream:${kinds.joinToString()}:${account.host}:${account.username}") {
+        XtreamViewModel(container.xtream, kinds.first())
     }
     var filter by remember(vm.kind, vm.selected) { mutableStateOf("") }
 
     Column(Modifier.fillMaxSize()) {
-        PrimaryTabRow(selectedTabIndex = vm.kind.ordinal) {
-            XtreamKind.entries.forEach { k ->
-                Tab(
-                    modifier = Modifier.focusFrame(RoundedCornerShape(8.dp)),
-                    selected = vm.kind == k,
-                    onClick = { if (vm.kind != k) vm.selectKind(k) },
-                    text = { Text(k.label) },
-                )
+        if (kinds.size > 1) {
+            PrimaryTabRow(selectedTabIndex = kinds.indexOf(vm.kind).coerceAtLeast(0)) {
+                kinds.forEach { k ->
+                    Tab(
+                        modifier = Modifier.focusFrame(RoundedCornerShape(8.dp)),
+                        selected = vm.kind == k,
+                        onClick = { if (vm.kind != k) vm.selectKind(k) },
+                        text = { Text(k.label) },
+                    )
+                }
             }
         }
         if (vm.categories.isNotEmpty()) {

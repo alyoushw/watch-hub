@@ -62,17 +62,32 @@ import kotlinx.coroutines.launch
 
 /** Tabs drawn over the hero: text with a gold underline on the selected one. */
 @Composable
-fun HeroTabs(selected: MediaType, onSelect: (MediaType) -> Unit, onRefresh: () -> Unit) {
+fun HeroTabs(
+    selected: MediaType,
+    onSelect: (MediaType) -> Unit,
+    onRefresh: () -> Unit,
+    live: Boolean = false,
+    onLive: (() -> Unit)? = null,
+) {
     Row(
         Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(22.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Watch Hub", color = Gold, fontWeight = FontWeight.Black, fontSize = 22.sp)
-        listOf(MediaType.TV to "مسلسلات", MediaType.MOVIE to "أفلام", MediaType.ANIME to "أنمي").forEach { (type, label) ->
-            val on = type == selected
+        // "مباشر" (the Xtream Codes live channels) comes first, before series and films.
+        val entries = buildList<Pair<MediaType?, String>> {
+            if (onLive != null) add(null to "مباشر")
+            add(MediaType.TV to "مسلسلات")
+            add(MediaType.MOVIE to "أفلام")
+            add(MediaType.ANIME to "أنمي")
+        }
+        entries.forEach { (type, label) ->
+            val on = if (type == null) live else !live && type == selected
             Column(
-                Modifier.focusFrame(RoundedCornerShape(8.dp)).clickable { onSelect(type) }.padding(horizontal = 4.dp, vertical = 2.dp),
+                Modifier.focusFrame(RoundedCornerShape(8.dp))
+                    .clickable { if (type == null) onLive?.invoke() else onSelect(type) }
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
