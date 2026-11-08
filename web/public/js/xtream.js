@@ -17,8 +17,10 @@ export function normalizeHost(raw) {
 
 /** Sends a URL through the proxy, unless the user turned the proxy off. */
 export function via(url) {
-  const base = (settings.proxy || "").trim();
+  let base = (settings.proxy || "").trim();
   if (!base) return url;
+  // Anything that is not a path or a link (e.g. a password typed in the wrong box) means the built-in proxy.
+  if (!base.startsWith("/") && !/^https?:\/\//i.test(base)) base = "/proxy";
   const abs = new URL(base, location.href).href;
   const key = settings.proxyKey ? `&key=${encodeURIComponent(settings.proxyKey)}` : "";
   return `${abs}${abs.includes("?") ? "&" : "?"}url=${encodeURIComponent(url)}${key}`;

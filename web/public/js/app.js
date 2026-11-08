@@ -672,7 +672,7 @@ async function settingsPage() {
       <h3>البروكسي</h3>
       <p class="muted" style="margin:0;line-height:1.8">المتصفح ما يقدر يوصل لسيرفرات Xtream مباشرة، فنمرّر الطلبات عن طريق البروكسي اللي مع الموقع.
         خلّه <code dir="ltr">/proxy</code> إذا الموقع شغال على سيرفر Watch Hub، أو حط رابط بروكسي ثاني.</p>
-      <div class="field"><label>رابط البروكسي</label><input class="input" id="px" value="${esc(settings.proxy || "")}" dir="ltr" placeholder="/proxy"></div>
+      <div class="field"><label>رابط البروكسي (خلّه /proxy)</label><input class="input" id="px" value="${esc(settings.proxy || "")}" dir="ltr" placeholder="/proxy"></div>
       <div class="field"><label>مفتاح البروكسي (إذا حطيت PROXY_KEY في السيرفر)</label><input class="input" id="pk" type="password" value="${esc(settings.proxyKey || "")}" dir="ltr" autocomplete="off"></div>
       <div><button class="btn ghost" id="p-save">احفظ</button></div>
     </section>
@@ -741,7 +741,10 @@ async function settingsPage() {
   });
 
   $("#p-save").addEventListener("click", () => {
-    settings.proxy = $("#px").value.trim();
+    const px = $("#px").value.trim();
+    // Only a path ("/proxy") or a full link belongs here; anything else falls back to the built-in proxy.
+    settings.proxy = !px || px.startsWith("/") || /^https?:\/\//i.test(px) ? px : "/proxy";
+    $("#px").value = settings.proxy;
     settings.proxyKey = $("#pk").value;
     xt.clearCache();
     toast("تم الحفظ");
