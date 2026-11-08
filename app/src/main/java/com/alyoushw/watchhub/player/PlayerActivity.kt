@@ -13,6 +13,8 @@ import androidx.annotation.OptIn
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -40,6 +42,8 @@ class PlayerActivity : ComponentActivity() {
     private var entry: WatchEntry? = null
     private val handler = Handler(Looper.getMainLooper())
     private val history get() = (application as WatchHubApp).container.history
+    private val cloud get() = (application as WatchHubApp).container.cloud
+    private var started = false
 
     private val saver = object : Runnable {
         override fun run() {
@@ -89,18 +93,31 @@ class PlayerActivity : ComponentActivity() {
 
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) {
-                    saveProgress()
+                    saveProgress(important = true)
                     finish()
                 }
+            }
+
+            // A pause is a natural "I stopped here": other devices get the exact spot at once.
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (!isPlaying && started && player.playbackState == Player.STATE_READY) saveProgress(important = true)
             }
         })
 
         val e = entry
-        val saved = e?.let { history.get(it.key) }
-        val resumeAt = saved?.takeIf { !it.isLive && !it.finished && it.positionMs > 10_000 }?.positionMs ?: 0L
-        e?.let { history.save(it) }
-        load(resumeAt)
-        if (resumeAt > 0) Toast.makeText(this, "نكمل من حيث وقفت", Toast.LENGTH_SHORT).show()
+        lifecycleScope.launch {
+            // Another device may have moved on a moment ago: take the newest spot from the account
+            // first (at most ~2 s; offline or signed out, this device's own copy is used).
+            e?.let { cloud.refreshEntry(it.key) }
+            val saved = e?.let { history.get(it.key) }
+            val resumeAt = saved?.takeIf { !it.isLive && !it.finished && it.positionMs > 10_000 }?.positionMs ?: 0L
+            e?.let { history.save(it, important = true) }
+            load(resumeAt)
+            started = true
+            if (resumeAt > 0) {
+                Toast.makeText(this@PlayerActivity, "نكمل من ${formatTime(resumeAt)}", Toast.LENGTH_SHORT).show()
+            }
+        }
 
         setContent {
             WatchHubTheme(forceDark = true) {
@@ -125,11 +142,11 @@ class PlayerActivity : ComponentActivity() {
         player.playWhenReady = true
     }
 
-    private fun saveProgress() {
+    private fun saveProgress(important: Boolean = false) {
         val e = entry ?: return
-        if (e.isLive) return
+        if (e.isLive || !started) return
         val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: return
-        history.save(e.copy(positionMs = player.currentPosition.coerceAtLeast(0), durationMs = duration))
+        history.save(e.copy(positionMs = player.currentPosition.coerceAtLeast(0), durationMs = duration), important)
     }
 
     override fun onStart() {
@@ -144,7 +161,7 @@ class PlayerActivity : ComponentActivity() {
         super.onStop()
         handler.removeCallbacks(saver)
         if (::player.isInitialized) {
-            saveProgress()
+            saveProgress(important = true)
             player.pause()
         }
     }

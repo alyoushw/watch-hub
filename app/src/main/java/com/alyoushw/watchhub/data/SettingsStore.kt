@@ -74,7 +74,29 @@ class SettingsStore(context: Context) {
         return if (old.isComplete) listOf(old) else emptyList()
     }
 
-    private val _xtreamAccounts = MutableStateFlow(loadAccounts())
+    /**
+     * Old account ids (random, per device) → stable ids, from moving to [XtreamAccount.stableId].
+     * The watch history uses it once to re-point its entries (see AppContainer).
+     */
+    val accountIdChanges: Map<String, String>
+
+    private val _xtreamAccounts: MutableStateFlow<List<XtreamAccount>>
+
+    init {
+        val loaded = loadAccounts()
+        val changes = mutableMapOf<String, String>()
+        val fixed = loaded.map { a ->
+            val stable = XtreamAccount.stableId(a.host, a.username)
+            if (a.id != stable) changes[a.id] = stable
+            a.copy(id = stable)
+        }.distinctBy { it.id }
+        accountIdChanges = changes
+        _xtreamAccounts = MutableStateFlow(fixed)
+        if (changes.isNotEmpty() || prefs.getString(KEY_XTREAM_ACCOUNTS, null) == null && fixed.isNotEmpty()) {
+            prefs.edit().putString(KEY_XTREAM_ACCOUNTS, accountsJson.encodeToString(accountsSerializer, fixed)).apply()
+            prefs.getString(KEY_XTREAM_ACTIVE, null)?.let { old -> changes[old]?.let { prefs.edit().putString(KEY_XTREAM_ACTIVE, it).apply() } }
+        }
+    }
 
     /** Every Xtream Codes login the user added, in the order added. */
     val xtreamAccounts: StateFlow<List<XtreamAccount>> = _xtreamAccounts.asStateFlow()
@@ -89,24 +111,40 @@ class SettingsStore(context: Context) {
 
     fun xtreamAccount(id: String?): XtreamAccount? = _xtreamAccounts.value.firstOrNull { it.id == id }
 
-    private fun storeAccounts(list: List<XtreamAccount>) {
+    /** When the account list last changed (here or, through sync, on another device). */
+    val xtreamAccountsUpdatedAt: Long get() = prefs.getLong(KEY_XTREAM_UPDATED, 0)
+
+    /** Called after the user changes the list here (the account sync uploads it). */
+    var onXtreamAccountsChanged: ((List<XtreamAccount>, Long) -> Unit)? = null
+
+    private fun storeAccounts(list: List<XtreamAccount>, updatedAt: Long = System.currentTimeMillis(), fromCloud: Boolean = false) {
         _xtreamAccounts.value = list
-        prefs.edit().putString(KEY_XTREAM_ACCOUNTS, accountsJson.encodeToString(accountsSerializer, list)).apply()
+        prefs.edit()
+            .putString(KEY_XTREAM_ACCOUNTS, accountsJson.encodeToString(accountsSerializer, list))
+            .putLong(KEY_XTREAM_UPDATED, updatedAt)
+            .apply()
         _xtream.value = pickActive(_xtream.value.id)
+        if (!fromCloud) onXtreamAccountsChanged?.invoke(list, updatedAt)
     }
+
+    /** The list as synced from another device. */
+    fun setXtreamAccountsFromCloud(list: List<XtreamAccount>, updatedAt: Long) =
+        storeAccounts(list.map { it.copy(id = XtreamAccount.stableId(it.host, it.username)) }.distinctBy { it.id }, updatedAt, fromCloud = true)
 
     /** Adds [account], or replaces the one with the same id. Returns the saved copy. */
     fun saveXtreamAccount(account: XtreamAccount): XtreamAccount {
-        val id = account.id.ifBlank { "a" + System.currentTimeMillis().toString(36) }
-        val clean = account.copy(
-            id = id,
-            name = account.name.trim(),
-            host = account.host.trim().takeIf { it.isNotEmpty() }?.let { XtreamApi.normalizeHost(it) }.orEmpty(),
-            username = account.username.trim(),
-        )
+        val host = account.host.trim().takeIf { it.isNotEmpty() }?.let { XtreamApi.normalizeHost(it) }.orEmpty()
+        val user = account.username.trim()
+        val id = XtreamAccount.stableId(host, user)
+        val clean = account.copy(id = id, name = account.name.trim(), host = host, username = user)
         val list = _xtreamAccounts.value
-        storeAccounts(if (list.any { it.id == id }) list.map { if (it.id == id) clean else it } else list + clean)
-        if (list.isEmpty()) setActiveXtream(id)
+        // Editing may change the login (and so the id): the old entry is replaced in place.
+        val replaced = account.id.isNotBlank() && list.any { it.id == account.id }
+        storeAccounts(
+            if (replaced) list.map { if (it.id == account.id) clean else it }.distinctBy { it.id }
+            else list.filter { it.id != id } + clean,
+        )
+        if (list.isEmpty() || _xtream.value.id == account.id) setActiveXtream(id)
         return clean
     }
 
@@ -154,6 +192,17 @@ class SettingsStore(context: Context) {
         _region.value = value
     }
 
+    private val _webUrl = MutableStateFlow(prefs.getString(KEY_WEB_URL, null) ?: DEFAULT_WEB_URL)
+
+    /** The user's Watch Hub web app (Render): where the account settings and the TV code sign-in live. */
+    val webUrl: StateFlow<String> = _webUrl.asStateFlow()
+
+    fun setWebUrl(value: String) {
+        val v = value.trim().trimEnd('/').let { if (it.isNotEmpty() && !it.startsWith("http")) "https://$it" else it }
+        prefs.edit().putString(KEY_WEB_URL, v).apply()
+        _webUrl.value = v.ifEmpty { DEFAULT_WEB_URL }
+    }
+
     private val _themeMode = MutableStateFlow(prefs.getString(KEY_THEME, "dark") ?: "dark")
 
     /** "dark", "light" or "system". */
@@ -176,6 +225,9 @@ class SettingsStore(context: Context) {
 
     private companion object {
         const val KEY_THEME = "theme_mode"
+        const val KEY_WEB_URL = "web_url"
+        const val KEY_XTREAM_UPDATED = "xtream_accounts_updated"
+        const val DEFAULT_WEB_URL = "https://watch-hub-ddfg.onrender.com"
         const val KEY_ACCENT = "accent"
         const val KEY_TMDB = "tmdb_key"
         const val KEY_REGION = "region"

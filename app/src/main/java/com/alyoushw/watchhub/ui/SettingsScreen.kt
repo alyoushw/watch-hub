@@ -1,5 +1,7 @@
 package com.alyoushw.watchhub.ui
 
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Spacer
@@ -101,6 +103,10 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            AccountSection()
+
+            HorizontalDivider()
+
             SectionTitle("مفتاح TMDB")
             Text(
                 "TMDB قاعدة بيانات مجانية للأفلام والمسلسلات، ومنها نعرف وين متوفر كل عمل. سوّ حساب مجاني، " +
@@ -604,5 +610,219 @@ private fun AppearanceSection() {
                 }
             }
         }
+    }
+}
+
+
+/**
+ * «حسابك»: sign in with Google so "قائمتي", "تابع المشاهدة" (with the exact spot) and the Xtream
+ * accounts are the same on every device. Phones use Google's sign-in sheet; TVs show a code.
+ */
+@Composable
+private fun AccountSection() {
+    val container = appContainer()
+    val cloud = container.cloud
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val state by cloud.state.collectAsStateWithLifecycle()
+    val lastSync by cloud.lastSync.collectAsStateWithLifecycle()
+    val webUrl by container.settings.webUrl.collectAsStateWithLifecycle()
+    val tv = isTv()
+    var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var showCode by remember { mutableStateOf(false) }
+    var editUrl by remember(webUrl) { mutableStateOf(webUrl) }
+    var showUrl by remember { mutableStateOf(false) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionTitle("حسابك")
+        when (val st = state) {
+            is com.alyoushw.watchhub.data.CloudSync.State.SignedIn -> {
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Box(Modifier.size(44.dp).clip(CircleShape).background(Gold), contentAlignment = Alignment.Center) {
+                        if (st.photo != null) {
+                            coil.compose.AsyncImage(model = st.photo, contentDescription = null, modifier = Modifier.fillMaxSize())
+                        } else {
+                            Text((st.name ?: st.email ?: "؟").take(1), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
+                        }
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(st.name ?: st.email.orEmpty(), fontWeight = FontWeight.Bold)
+                        st.email?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        Text(
+                            if (lastSync > 0) "✓ مزامن · آخر تحديث ${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(lastSync))}" else "✓ متصل · نجهّز المزامنة…",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.secondary,
+                        )
+                    }
+                    TextButton(modifier = Modifier.focusFrame(), onClick = { cloud.signOut() }) { Text("خروج") }
+                }
+                Text(
+                    "قائمتي، وتابع المشاهدة (لين الثانية اللي وقفت عندها)، وحسابات Xtream تتحدّث على كل جهاز داخل بنفس الحساب.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            com.alyoushw.watchhub.data.CloudSync.State.SignedOut -> {
+                Text(
+                    "سجّل دخولك بحساب Google، وكل أجهزتك (الجوال والتلفاز والموقع) تصير على نفس القائمة ونفس «تابع المشاهدة». " +
+                        "توقف حلقة في الجوال، وتكملها في التلفاز من نفس الثانية.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!tv) {
+                        Button(
+                            modifier = Modifier.focusFrame(),
+                            enabled = !busy,
+                            onClick = {
+                                busy = true
+                                message = null
+                                scope.launch {
+                                    message = try {
+                                        cloud.signInWithGoogle(context as android.app.Activity)
+                                        null
+                                    } catch (e: com.alyoushw.watchhub.data.CloudException) {
+                                        e.message
+                                    }
+                                    busy = false
+                                }
+                            },
+                        ) { Text(if (busy) "جاري الدخول…" else "سجّل دخول بـ Google") }
+                    }
+                    if (cloud.config?.deviceLogin == true || tv) {
+                        if (tv) {
+                            Button(modifier = Modifier.focusFrame(), onClick = { showCode = true }) { Text("سجّل دخول برمز") }
+                        } else {
+                            OutlinedButton(modifier = Modifier.focusFrame(), onClick = { showCode = true }) { Text("دخول برمز") }
+                        }
+                    }
+                }
+            }
+            com.alyoushw.watchhub.data.CloudSync.State.NotConfigured -> {
+                Text(
+                    "الحساب يحتاج إعداد مرة وحدة في موقعك على Render (خطوات «حساب Watch Hub» في ملف README). " +
+                        "بعدها يطلع لك هنا زر تسجيل الدخول.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedButton(
+                    modifier = Modifier.focusFrame(),
+                    enabled = !busy,
+                    onClick = {
+                        busy = true
+                        message = null
+                        scope.launch {
+                            message = if (cloud.refreshConfig()) "✓ وصلت الإعدادات" else "لسا ما وصلت إعدادات الحساب من موقعك ($webUrl)"
+                            busy = false
+                        }
+                    },
+                ) { Text(if (busy) "نتحقق…" else "تحقق من جديد") }
+            }
+        }
+        message?.let { Text(it, color = if (it.startsWith("✓")) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error) }
+
+        TextButton(modifier = Modifier.focusFrame(), onClick = { showUrl = !showUrl }) {
+            Text("رابط موقعك: ${webUrl.removePrefix("https://")}", style = MaterialTheme.typography.labelSmall)
+        }
+        if (showUrl) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = editUrl,
+                    onValueChange = { editUrl = it },
+                    label = { Text("رابط موقع Watch Hub") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                )
+                Button(modifier = Modifier.focusFrame(), onClick = {
+                    container.settings.setWebUrl(editUrl)
+                    showUrl = false
+                    scope.launch { cloud.refreshConfig() }
+                }) { Text("حفظ") }
+            }
+        }
+    }
+
+    if (showCode) DeviceLoginDialog(onDone = { ok ->
+        showCode = false
+        if (ok) android.widget.Toast.makeText(context, "✓ دخلت، ونزامن الحين", android.widget.Toast.LENGTH_SHORT).show()
+    })
+}
+
+/** TV sign-in: a short code to enter at google.com/device on a phone (with a QR code to get there). */
+@Composable
+private fun DeviceLoginDialog(onDone: (Boolean) -> Unit) {
+    val cloud = appContainer().cloud
+    var code by remember { mutableStateOf<com.alyoushw.watchhub.data.DeviceCode?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var attempt by remember { mutableStateOf(0) }
+
+    LaunchedEffect(attempt) {
+        error = null
+        code = null
+        try {
+            val c = cloud.startDeviceLogin()
+            code = c
+            if (cloud.finishDeviceLogin(c)) onDone(true) else error = "انتهت صلاحية الرمز أو انرفض. جرّب رمز جديد."
+        } catch (e: com.alyoushw.watchhub.data.CloudException) {
+            error = e.message
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = { onDone(false) },
+        title = { Text("سجّل دخول برمز") },
+        text = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                val c = code
+                when {
+                    error != null -> Text(error.orEmpty(), color = MaterialTheme.colorScheme.error)
+                    c == null -> CircularProgressIndicator()
+                    else -> {
+                        Text("من جوالك أو كمبيوترك افتح:", style = MaterialTheme.typography.bodyMedium)
+                        Text(c.verificationUrl.removePrefix("https://"), fontWeight = FontWeight.Bold, color = Gold)
+                        QrCode(c.verificationUrl, Modifier.size(150.dp))
+                        Text("واكتب هذا الرمز:", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            c.userCode,
+                            fontSize = 34.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 4.sp,
+                            modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 16.dp, vertical = 6.dp),
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Text("ننتظر موافقتك…", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (error != null) TextButton(modifier = Modifier.focusFrame(), onClick = { attempt++ }) { Text("رمز جديد") }
+        },
+        dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = { onDone(false) }) { Text("إلغاء") } },
+    )
+}
+
+/** A QR code for [text] (zxing), drawn as an image. */
+@Composable
+private fun QrCode(text: String, modifier: Modifier = Modifier) {
+    val bitmap = remember(text) {
+        runCatching {
+            val m = com.google.zxing.qrcode.QRCodeWriter().encode(text, com.google.zxing.BarcodeFormat.QR_CODE, 300, 300)
+            val bmp = android.graphics.Bitmap.createBitmap(m.width, m.height, android.graphics.Bitmap.Config.ARGB_8888)
+            for (x in 0 until m.width) for (y in 0 until m.height) {
+                bmp.setPixel(x, y, if (m[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+            }
+            bmp.asImageBitmap()
+        }.getOrNull()
+    }
+    bitmap?.let {
+        androidx.compose.foundation.Image(it, contentDescription = "رمز QR", modifier = modifier.clip(RoundedCornerShape(8.dp)))
     }
 }

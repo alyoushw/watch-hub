@@ -95,5 +95,14 @@ dependencies {
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.exoplayer.hls)
     implementation(libs.media3.ui)
+    // Watch Hub account: Google sign-in and sync (Firebase, configured at runtime from the web app).
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.auth)
+    implementation(libs.firebase.firestore)
+    implementation(libs.kotlinx.coroutines.play.services)
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play)
+    implementation(libs.googleid)
+    implementation(libs.zxing.core)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

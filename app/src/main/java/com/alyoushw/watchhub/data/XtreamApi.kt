@@ -35,6 +35,23 @@ data class XtreamAccount(
 
     /** What to call it on buttons: the user's name for it, else the server's host. */
     val label: String get() = name.ifBlank { host.substringAfter("://").substringBefore("/") }
+
+    companion object {
+        /**
+         * The same id for the same login on every device (phone, TV, web), so synced history
+         * points at the right account everywhere: FNV-1a of "host|username", base 36.
+         * The web app computes it the same way (store.js stableAccountId).
+         */
+        fun stableId(host: String, username: String): String {
+            val text = XtreamApi.normalizeHost(host).lowercase() + "|" + username.trim()
+            var h = 0x811C9DC5L
+            for (c in text) {
+                h = h xor c.code.toLong()
+                h = (h * 0x01000193L) and 0xFFFFFFFFL
+            }
+            return "x" + h.toString(36)
+        }
+    }
 }
 
 /** What the provider says about the account (from player_api.php's user_info). */

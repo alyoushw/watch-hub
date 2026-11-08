@@ -6,6 +6,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 
 /**
@@ -97,24 +99,106 @@ class WatchHistory(context: Context) {
 
     fun get(key: String): WatchEntry? = _entries.value.firstOrNull { it.key == key }
 
+    /**
+     * Called after every change made on this device, for the account sync: the entry (or the
+     * removed key), and whether it is worth sending at once (start, pause, stop) rather than
+     * with the next periodic update.
+     */
+    var onChange: ((entry: WatchEntry?, key: String, removedAt: Long?, important: Boolean) -> Unit)? = null
+
     /** Records [entry] as the latest thing watched, keeping a saved position unless a new one is given. */
-    @Synchronized
-    fun save(entry: WatchEntry) {
-        val old = get(entry.key)
-        val merged = entry.copy(
-            positionMs = if (entry.positionMs > 0 || entry.durationMs > 0) entry.positionMs else old?.positionMs ?: 0,
-            durationMs = if (entry.durationMs > 0) entry.durationMs else old?.durationMs ?: 0,
-            updatedAt = System.currentTimeMillis(),
-        )
-        val next = (listOf(merged) + _entries.value.filter { it.key != entry.key }).take(MAX)
-        _entries.value = next
-        write(next)
+    fun save(entry: WatchEntry, important: Boolean = false) {
+        val merged: WatchEntry
+        synchronized(this) {
+            val old = get(entry.key)
+            merged = entry.copy(
+                positionMs = if (entry.positionMs > 0 || entry.durationMs > 0) entry.positionMs else old?.positionMs ?: 0,
+                durationMs = if (entry.durationMs > 0) entry.durationMs else old?.durationMs ?: 0,
+                updatedAt = System.currentTimeMillis(),
+            )
+            val next = (listOf(merged) + _entries.value.filter { it.key != entry.key }).take(MAX)
+            _entries.value = next
+            write(next)
+            forgetRemoval(entry.key)
+        }
+        onChange?.invoke(merged, merged.key, null, important)
     }
 
     fun remove(key: String) {
-        val next = _entries.value.filter { it.key != key }
+        val now = System.currentTimeMillis()
+        synchronized(this) {
+            val next = _entries.value.filter { it.key != key }
+            _entries.value = next
+            write(next)
+            rememberRemoval(key, now)
+        }
+        onChange?.invoke(null, key, now, true)
+    }
+
+    // ---- removals are remembered for a while, so a copy on another device cannot bring them back
+
+    private val removalsSerializer = MapSerializer(String.serializer(), Long.serializer())
+
+    private fun removals(): MutableMap<String, Long> = runCatching {
+        json.decodeFromString(removalsSerializer, prefs.getString(KEY_REMOVED, "{}") ?: "{}").toMutableMap()
+    }.getOrDefault(mutableMapOf())
+
+    private fun storeRemovals(map: Map<String, Long>) {
+        val kept = map.entries.sortedByDescending { it.value }.take(200).associate { it.key to it.value }
+        prefs.edit().putString(
+            KEY_REMOVED,
+            json.encodeToString(removalsSerializer, kept),
+        ).commit()
+    }
+
+    private fun rememberRemoval(key: String, at: Long) = storeRemovals(removals().apply { put(key, at) })
+
+    private fun forgetRemoval(key: String) {
+        val r = removals()
+        if (r.remove(key) != null) storeRemovals(r)
+    }
+
+    /** Removed keys and when, for the first sync after signing in. */
+    fun removedKeys(): Map<String, Long> = removals()
+
+    /**
+     * A change from another device (through the account): kept when newer than what this
+     * device has. [entry] null means it was removed at [updatedAt]. Nothing is sent back.
+     */
+    @Synchronized
+    fun applyRemote(key: String, entry: WatchEntry?, updatedAt: Long): Boolean {
+        val local = get(key)
+        val removedHere = removals()[key]
+        if (local != null && local.updatedAt >= updatedAt) return false
+        if (local == null && removedHere != null && removedHere >= updatedAt) return false
+        val others = _entries.value.filter { it.key != key }
+        val next = if (entry == null) {
+            if (local == null) return false
+            rememberRemoval(key, updatedAt)
+            others
+        } else {
+            forgetRemoval(key)
+            (others + entry.copy(updatedAt = updatedAt)).sortedByDescending { it.updatedAt }.take(MAX)
+        }
         _entries.value = next
         write(next)
+        return true
+    }
+
+    /** Re-points entries after account ids changed (old id → new id). */
+    @Synchronized
+    fun remapAccounts(changes: Map<String, String>) {
+        if (changes.isEmpty()) return
+        var touched = false
+        val next = _entries.value.map { e ->
+            val to = changes[e.accountId] ?: return@map e
+            touched = true
+            e.copy(accountId = to, key = to + e.key.removePrefix(e.accountId.orEmpty()))
+        }.distinctBy { it.key }
+        if (touched) {
+            _entries.value = next
+            write(next)
+        }
     }
 
     /** For the "تابع المشاهدة" row: one card per series (its latest episode), finished films left out. */
@@ -130,6 +214,7 @@ class WatchHistory(context: Context) {
     }
 
     private companion object {
+        const val KEY_REMOVED = "removed_v2"
         const val MAX = 80
     }
 }

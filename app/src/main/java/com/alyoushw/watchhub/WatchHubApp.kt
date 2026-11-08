@@ -12,6 +12,7 @@ import com.alyoushw.watchhub.data.StatusCache
 import com.alyoushw.watchhub.data.TmdbApi
 import com.alyoushw.watchhub.data.XtreamApi
 import com.alyoushw.watchhub.data.WatchHistory
+import com.alyoushw.watchhub.data.CloudSync
 import com.alyoushw.watchhub.data.MediaType
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -26,7 +27,8 @@ class AppContainer(context: Context) {
     val jikan = JikanApi()
     val assistant = ClaudeAssistant(settings)
     val xtream = XtreamApi(settings)
-    val history = WatchHistory(context)
+    val history = WatchHistory(context).also { it.remapAccounts(settings.accountIdChanges) }
+    val cloud = CloudSync(context, settings, history, store)
     val statusCache = StatusCache(context, api)
 
     private val navPrefs = context.getSharedPreferences("navigation", Context.MODE_PRIVATE)
@@ -69,5 +71,6 @@ class WatchHubApp : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        container.cloud.start()
     }
 }

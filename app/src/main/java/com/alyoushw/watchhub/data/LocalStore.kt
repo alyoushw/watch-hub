@@ -38,20 +38,86 @@ class LocalStore(private val file: File) {
         }
     }
 
-    suspend fun upsertWatch(item: WatchItem) = update { d ->
-        val exists = d.watchlist.any { it.key == item.key }
-        d.copy(
-            watchlist = if (exists) d.watchlist.map { if (it.key == item.key) item else it }
-            else d.watchlist + item,
-        )
+    /**
+     * Called after the user changes the watchlist on this device (added, status or episode
+     * changed, removed), for the account sync. [item] null means [key] was removed at [removedAt].
+     */
+    var onWatchChanged: ((item: WatchItem?, key: String, removedAt: Long?) -> Unit)? = null
+
+    /** What other devices should see change: adding, removing, the status or the last episode. */
+    private fun userVisibleChange(old: WatchItem?, new: WatchItem) =
+        old == null || old.status != new.status || old.progress != new.progress
+
+    suspend fun upsertWatch(item: WatchItem) {
+        var changed: WatchItem? = null
+        update { d ->
+            val old = d.watchlist.firstOrNull { it.key == item.key }
+            val stamped = if (userVisibleChange(old, item)) item.copy(updatedAt = System.currentTimeMillis()).also { changed = it }
+            else item.copy(updatedAt = old?.updatedAt ?: item.updatedAt)
+            d.copy(
+                watchlist = if (old != null) d.watchlist.map { if (it.key == item.key) stamped else it } else d.watchlist + stamped,
+                removedWatch = d.removedWatch - item.key,
+            )
+        }
+        changed?.let { onWatchChanged?.invoke(it, it.key, null) }
     }
 
-    suspend fun updateWatch(key: String, transform: (WatchItem) -> WatchItem) = update { d ->
-        d.copy(watchlist = d.watchlist.map { if (it.key == key) transform(it) else it })
+    suspend fun updateWatch(key: String, transform: (WatchItem) -> WatchItem) {
+        var changed: WatchItem? = null
+        update { d ->
+            d.copy(
+                watchlist = d.watchlist.map { old ->
+                    if (old.key != key) return@map old
+                    val new = transform(old)
+                    if (userVisibleChange(old, new)) new.copy(updatedAt = System.currentTimeMillis()).also { changed = it } else new
+                },
+            )
+        }
+        changed?.let { onWatchChanged?.invoke(it, it.key, null) }
     }
 
-    suspend fun removeWatch(key: String) = update { d ->
-        d.copy(watchlist = d.watchlist.filterNot { it.key == key })
+    suspend fun removeWatch(key: String) {
+        val now = System.currentTimeMillis()
+        update { d ->
+            d.copy(
+                watchlist = d.watchlist.filterNot { it.key == key },
+                removedWatch = (d.removedWatch + (key to now)).entries.sortedByDescending { it.value }.take(300).associate { it.key to it.value },
+            )
+        }
+        onWatchChanged?.invoke(null, key, now)
+    }
+
+    /**
+     * A watchlist change from another device, kept when newer than this device's copy.
+     * [item] null means it was removed at [updatedAt]. Nothing is sent back.
+     */
+    suspend fun applyRemoteWatch(key: String, item: WatchItem?, updatedAt: Long) = update { d ->
+        val local = d.watchlist.firstOrNull { it.key == key }
+        val removedHere = d.removedWatch[key]
+        when {
+            local != null && local.updatedAt >= updatedAt -> d
+            local == null && removedHere != null && removedHere >= updatedAt -> d
+            item == null -> d.copy(
+                watchlist = d.watchlist.filterNot { it.key == key },
+                removedWatch = d.removedWatch + (key to updatedAt),
+            )
+            else -> {
+                // Keep this device's extra details (seasons, links…) and take the synced choices.
+                val merged = (local ?: item).copy(
+                    title = item.title.ifBlank { local?.title.orEmpty() },
+                    posterPath = item.posterPath ?: local?.posterPath,
+                    status = item.status,
+                    progress = item.progress ?: local?.progress,
+                    seasons = item.seasons.ifEmpty { local?.seasons.orEmpty() },
+                    addedAt = item.addedAt,
+                    updatedAt = updatedAt,
+                )
+                d.copy(
+                    watchlist = if (local != null) d.watchlist.map { if (it.key == key) merged else it } else d.watchlist + merged,
+                    removedWatch = d.removedWatch - key,
+                )
+            }
+        }
     }
 
     suspend fun upsertSubscription(sub: Subscription) = update { d ->

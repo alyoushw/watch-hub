@@ -16,7 +16,7 @@ const PUBLIC_DIR = new URL("./public", import.meta.url).pathname;
 
 const CORS: Record<string, string> = {
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, HEAD, OPTIONS",
+  "access-control-allow-methods": "GET, HEAD, POST, OPTIONS",
   "access-control-allow-headers": "range, content-type",
   "access-control-expose-headers": "content-length, content-range, accept-ranges, content-type",
 };
@@ -103,8 +103,99 @@ function rewritePlaylist(text: string, base: string, self: URL): string {
 // Hosts like Render pass the port to listen on in $PORT.
 const port = Number(Deno.env.get("PORT") ?? 8000);
 
+// ---------- Watch Hub account (Google sign-in + sync through Firebase) ----------
+//
+// Set on the host (Render › Environment). Only the public values are ever sent to devices;
+// GOOGLE_TV_CLIENT_SECRET stays on this server.
+//   FIREBASE_API_KEY, FIREBASE_PROJECT_ID, FIREBASE_APP_ID (web app), FIREBASE_ANDROID_APP_ID,
+//   GOOGLE_WEB_CLIENT_ID, GOOGLE_TV_CLIENT_ID, GOOGLE_TV_CLIENT_SECRET
+const env = (k: string) => (Deno.env.get(k) ?? "").trim();
+
+function json(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { ...CORS, "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
+  });
+}
+
+/** Public settings every device (phone, TV, browser) reads to sign in and sync. */
+function config(): Response {
+  const projectId = env("FIREBASE_PROJECT_ID");
+  const apiKey = env("FIREBASE_API_KEY");
+  if (!projectId || !apiKey) return json({ enabled: false });
+  return json({
+    enabled: true,
+    firebase: {
+      apiKey,
+      projectId,
+      appId: env("FIREBASE_APP_ID"),
+      androidAppId: env("FIREBASE_ANDROID_APP_ID") || env("FIREBASE_APP_ID"),
+      authDomain: `${projectId}.firebaseapp.com`,
+    },
+    googleWebClientId: env("GOOGLE_WEB_CLIENT_ID"),
+    deviceLogin: Boolean(env("GOOGLE_TV_CLIENT_ID") && env("GOOGLE_TV_CLIENT_SECRET")),
+  });
+}
+
+/**
+ * Sign-in with a code, for TVs (and any device): Google's "limited input device" flow.
+ * start → the device shows user_code and google.com/device; poll → once approved, an ID token.
+ */
+async function deviceStart(): Promise<Response> {
+  const clientId = env("GOOGLE_TV_CLIENT_ID");
+  if (!clientId) return json({ error: "not_configured" }, 501);
+  const res = await fetch("https://oauth2.googleapis.com/device/code", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ client_id: clientId, scope: "openid email profile" }),
+  });
+  const data = await res.json();
+  if (!res.ok) return json({ error: data.error || "google_error" }, 502);
+  return json({
+    deviceCode: data.device_code,
+    userCode: data.user_code,
+    verificationUrl: data.verification_url,
+    expiresIn: data.expires_in,
+    interval: data.interval,
+  });
+}
+
+async function devicePoll(req: Request): Promise<Response> {
+  const clientId = env("GOOGLE_TV_CLIENT_ID");
+  const secret = env("GOOGLE_TV_CLIENT_SECRET");
+  if (!clientId || !secret) return json({ error: "not_configured" }, 501);
+  let deviceCode = "";
+  try {
+    deviceCode = String((await req.json()).deviceCode || "");
+  } catch { /* bad body */ }
+  if (!deviceCode) return json({ status: "error" }, 400);
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: secret,
+      device_code: deviceCode,
+      grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+    }),
+  });
+  const data = await res.json();
+  if (res.ok && data.id_token) return json({ status: "ok", idToken: data.id_token });
+  const map: Record<string, string> = {
+    authorization_pending: "pending",
+    slow_down: "slow_down",
+    access_denied: "denied",
+    expired_token: "expired",
+  };
+  return json({ status: map[data.error] || "error" });
+}
+
 Deno.serve({ port }, (req) => {
   const url = new URL(req.url);
   if (url.pathname === "/proxy") return proxy(req, url);
+  if (req.method === "OPTIONS" && url.pathname.startsWith("/auth/")) return new Response(null, { status: 204, headers: CORS });
+  if (url.pathname === "/config.json") return config();
+  if (url.pathname === "/auth/device/start" && req.method === "POST") return deviceStart();
+  if (url.pathname === "/auth/device/poll" && req.method === "POST") return devicePoll(req);
   return serveDir(req, { fsRoot: PUBLIC_DIR, quiet: true });
 });
