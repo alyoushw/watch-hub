@@ -1,5 +1,7 @@
 package com.alyoushw.watchhub.ui
 
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.draw.clip
@@ -149,6 +151,10 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}) {
                     color = if (it.startsWith("✓")) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
                 )
             }
+
+            HorizontalDivider()
+
+            AppearanceSection()
 
             HorizontalDivider()
 
@@ -555,5 +561,48 @@ private fun XtreamAccountForm(initial: XtreamAccount, onDone: () -> Unit) {
             },
             dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = { confirmDelete = false }) { Text("إلغاء") } },
         )
+    }
+}
+
+
+/** Light or dark look, and the accent colour. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AppearanceSection() {
+    val container = appContainer()
+    val mode by container.settings.themeMode.collectAsStateWithLifecycle()
+    val accent by container.settings.accent.collectAsStateWithLifecycle()
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SectionTitle("المظهر")
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("dark" to "🌙 داكن", "light" to "☀️ نهاري", "system" to "حسب الجهاز").forEach { (key, label) ->
+                FilterChip(
+                    modifier = Modifier.focusFrame(),
+                    selected = mode == key,
+                    onClick = { container.settings.setThemeMode(key) },
+                    label = { Text(label) },
+                )
+            }
+        }
+        Text("اللون", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Accents.forEach { (key, label, color) ->
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Box(
+                        Modifier
+                            .size(40.dp)
+                            .focusFrame(CircleShape)
+                            .clip(CircleShape)
+                            .background(color)
+                            .border(if (accent == key) 3.dp else 0.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
+                            .clickable { container.settings.setAccent(key) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (accent == key) Text("✓", color = androidx.compose.ui.graphics.Color.White, fontWeight = FontWeight.Bold)
+                    }
+                    Text(label, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
     }
 }

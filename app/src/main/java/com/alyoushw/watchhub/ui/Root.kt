@@ -53,10 +53,13 @@ private enum class Tab(val route: String, val label: String, val icon: ImageVect
 
 fun NavHostController.openDetail(type: MediaType, id: Int) = navigate("detail/${type.path}/$id")
 
+/**
+ * A tab always opens at its own first page: tapping «الرئيسية» while on a title page goes back to
+ * Home itself, not to the page left open there before. (Nothing is saved or restored per tab.)
+ */
 private fun NavHostController.switchTab(route: String) = navigate(route) {
-    popUpTo(graph.findStartDestination().id) { saveState = true }
+    popUpTo(graph.findStartDestination().id)
     launchSingleTop = true
-    restoreState = true
 }
 
 @Composable
@@ -139,6 +142,7 @@ fun WatchHubRoot() {
                 SearchScreen(
                     onOpen = { type, id -> nav.openDetail(type, id) },
                     onOpenSettings = { nav.switchTab(Tab.SETTINGS.route) },
+                    onOpenXtreamSeries = { sid -> nav.navigate("xtream/series/${Uri.encode(sid)}") },
                 )
             }
             composable(Tab.WATCHLIST.route) {

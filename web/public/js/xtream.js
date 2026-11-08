@@ -271,8 +271,11 @@ export function urlsFor(e) {
 }
 
 /** Searches every account's channels, films and series by name (for the search page). */
+/** The words to look for in names: [normalizeTitle] without "مسلسل", "فيلم", … in front. */
+export const searchWords = (q) => normalizeTitle(q).replace(/^(?:(?:ابي|ابغى|ابغي|اشوف|شغل|مسلسل|فيلم|فلم|انمي|قناه|قناة|the)\s+)+/u, "").trim();
+
 export async function searchAll(q) {
-  const wanted = normalizeTitle(q);
+  const wanted = searchWords(q);
   if (wanted.length < 2) return [];
   const out = [];
   await Promise.all(accounts.all().flatMap((acc) => ["movie", "series", "live"].map(async (kind) => {

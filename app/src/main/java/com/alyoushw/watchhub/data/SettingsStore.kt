@@ -154,7 +154,29 @@ class SettingsStore(context: Context) {
         _region.value = value
     }
 
+    private val _themeMode = MutableStateFlow(prefs.getString(KEY_THEME, "dark") ?: "dark")
+
+    /** "dark", "light" or "system". */
+    val themeMode: StateFlow<String> = _themeMode.asStateFlow()
+
+    fun setThemeMode(value: String) {
+        prefs.edit().putString(KEY_THEME, value).apply()
+        _themeMode.value = value
+    }
+
+    private val _accent = MutableStateFlow(prefs.getString(KEY_ACCENT, "gold") ?: "gold")
+
+    /** Accent colour key (see ui/Theme.kt Accents). */
+    val accent: StateFlow<String> = _accent.asStateFlow()
+
+    fun setAccent(value: String) {
+        prefs.edit().putString(KEY_ACCENT, value).apply()
+        _accent.value = value
+    }
+
     private companion object {
+        const val KEY_THEME = "theme_mode"
+        const val KEY_ACCENT = "accent"
         const val KEY_TMDB = "tmdb_key"
         const val KEY_REGION = "region"
         const val KEY_APPS = "custom_apps"

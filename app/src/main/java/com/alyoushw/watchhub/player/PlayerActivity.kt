@@ -103,7 +103,7 @@ class PlayerActivity : ComponentActivity() {
         if (resumeAt > 0) Toast.makeText(this, "نكمل من حيث وقفت", Toast.LENGTH_SHORT).show()
 
         setContent {
-            WatchHubTheme {
+            WatchHubTheme(forceDark = true) {
                 PlayerScreen(
                     player = player,
                     title = e?.title.orEmpty(),
