@@ -2,7 +2,7 @@
 import * as tmdb from "./tmdb.js";
 import * as xt from "./xtream.js";
 import { play, fmt } from "./player.js";
-import { settings, watchlist, favorites, recent, xtreamReady, history, isFinished, progressOf } from "./store.js";
+import { settings, watchlist, favorites, recent, xtreamReady, history, isFinished, progressOf, accounts } from "./store.js";
 
 const view = document.getElementById("view");
 
@@ -189,25 +189,37 @@ async function searchPage(id, q = "") {
       results.innerHTML = "";
       return;
     }
-    if (!settings.tmdbKey) {
-      results.innerHTML = message("أضف مفتاح TMDB من الإعدادات أول", goSettings);
-      return;
-    }
     results.innerHTML = loading();
-    try {
-      const list = (await tmdb.search(text)).filter((r) => r.poster_path);
-      if (mine !== seq) return;
-      results.innerHTML = list.length
-        ? `<h2 class="section-title">النتائج <small>${list.length}</small></h2><div class="grid">${list.map((r) => card(r)).join("")}</div>`
-        : message("ما لقينا شي بهذا الاسم");
-    } catch (e) {
-      if (mine === seq) results.innerHTML = message(e.message);
-    }
+    // TMDB (where it streams) and the user's own Xtream accounts, side by side.
+    const [tm, mine2] = await Promise.all([
+      settings.tmdbKey ? tmdb.search(text).then((l) => l.filter((r) => r.poster_path)).catch((e) => e) : Promise.resolve([]),
+      xtreamReady() ? xt.searchAll(text).catch(() => []) : Promise.resolve([]),
+    ]);
+    if (mine !== seq) return;
+    const kindName = { movie: "فيلم", series: "مسلسل", live: "قناة" };
+    const many = accounts.all().length > 1;
+    const xHtml = mine2.length ? `<h2 class="section-title">في حساباتك <small>${mine2.length}</small></h2>
+      <div class="grid">${mine2.map((x, i) => `<button class="card" style="background:none;border:0;text-align:right;padding:0" data-xi="${i}">
+        <div class="poster" ${x.kind === "live" ? 'style="aspect-ratio:16/10"' : ""}>${x.image ? `<img loading="lazy" src="${esc(xt.img(x.image))}" alt="" style="${x.kind === "live" ? "object-fit:contain;padding:12px" : ""}" onerror="this.remove()">` : ""}
+          <span class="badge">${kindName[x.kind]}</span></div>
+        <div class="name" dir="auto">${esc(x.name)}</div>${many ? `<small style="color:var(--gold);font-size:12px">${esc(accounts.label(accounts.get(x.accountId)))}</small>` : ""}</button>`).join("")}</div>` : "";
+    const tmHtml = tm instanceof Error ? `<p class="muted">${esc(tm.message)}</p>`
+      : tm.length ? `<h2 class="section-title">كل الأعمال <small>${tm.length}</small></h2><div class="grid">${tm.map((r) => card(r)).join("")}</div>` : "";
+    results.innerHTML = xHtml + tmHtml || (settings.tmdbKey || xtreamReady() ? message("ما لقينا شي بهذا الاسم") : message("أضف مفتاح TMDB أو حساب Xtream من الإعدادات أول", goSettings));
+    results.querySelectorAll("[data-xi]").forEach((b) => b.addEventListener("click", () => {
+      const x = mine2[Number(b.dataset.xi)];
+      if (x.kind === "series") {
+        accounts.setActive(x.accountId);
+        location.hash = `#/xseries/${encodeURIComponent(x.id)}`;
+      } else {
+        play(xt.playUrls(x), x.kind === "live" ? xt.entryLive(x) : xt.entryMovie(x));
+      }
+    }));
   };
   input.addEventListener("input", () => {
     clearTimeout(timer);
     timer = setTimeout(() => {
-      history.replaceState(null, "", `#/search?q=${encodeURIComponent(input.value)}`);
+      window.history.replaceState(null, "", `#/search?q=${encodeURIComponent(input.value)}`);
       run(input.value);
     }, 400);
   });
@@ -278,24 +290,38 @@ async function titlePage(id, type, tmdbId) {
   if (xtreamReady()) xtreamWatchButton($("#xwatch"), type, tmdbId, [title, enTitle, d.original_title || d.original_name], year);
 }
 
+/** "مشاهدة" by the poster: one button for each Xtream account that has this title. */
 async function xtreamWatchButton(slot, type, tmdbId, titles, year) {
-  slot.innerHTML = `<button class="btn" disabled>نبحث في حسابك…</button>`;
-  let match = null;
-  try {
-    match = await xt.findMatch(type === "tv" ? "series" : "movie", tmdbId, titles, year);
-  } catch {
-    match = null;
-  }
+  const list = accounts.all();
+  const many = list.length > 1;
+  slot.innerHTML = `<button class="btn" disabled>${many ? "نبحث في حساباتك…" : "نبحث في حسابك…"}</button>`;
+  const kind = type === "tv" ? "series" : "movie";
+  const found = (await Promise.all(list.map(async (acc) => {
+    try {
+      const m = await xt.findMatch(kind, tmdbId, titles, year, acc);
+      return m ? { acc, m } : null;
+    } catch {
+      return null;
+    }
+  }))).filter(Boolean);
   if (!slot.isConnected) return;
-  if (!match) {
-    slot.innerHTML = `<button class="btn" disabled>مو موجود في حسابك</button>`;
+  if (!found.length) {
+    slot.innerHTML = `<button class="btn" disabled>${many ? "مو موجود في حساباتك" : "مو موجود في حسابك"}</button>`;
     return;
   }
-  slot.innerHTML = `<button class="btn">▶ مشاهدة</button>`;
-  slot.firstElementChild.addEventListener("click", () => {
-    if (match.kind === "series") location.hash = `#/xseries/${encodeURIComponent(match.id)}`;
-    else play(xt.playUrls(match), xt.entryMovie(match));
-  });
+  slot.style.display = "flex";
+  slot.style.gap = "8px";
+  slot.style.flexWrap = "wrap";
+  slot.innerHTML = found.map(({ acc }, i) => `<button class="btn" data-i="${i}">▶ مشاهدة${many ? ` · ${esc(accounts.label(acc))}` : ""}</button>`).join("");
+  slot.querySelectorAll("[data-i]").forEach((b) => b.addEventListener("click", () => {
+    const { acc, m } = found[Number(b.dataset.i)];
+    if (m.kind === "series") {
+      accounts.setActive(acc.id);
+      location.hash = `#/xseries/${encodeURIComponent(m.id)}`;
+    } else {
+      play(xt.playUrls(m), xt.entryMovie(m, Number(tmdbId)));
+    }
+  }));
 }
 
 // ---------- my list ----------
@@ -337,6 +363,22 @@ const RECENT = "__recent";
 const ALL = "__all";
 const FAV = "__fav";
 
+/** Chips to pick which Xtream account the page shows (only with 2+ accounts). */
+function accountChips() {
+  const list = accounts.all();
+  if (list.length < 2) return "";
+  const active = accounts.active();
+  return `<div class="chips scroll" style="margin:6px 0 4px">${list.map((a) =>
+    `<button class="chip ${a.id === active?.id ? "on" : ""}" data-acc="${esc(a.id)}">${esc(accounts.label(a))}</button>`).join("")}</div>`;
+}
+
+function bindAccountChips() {
+  view.querySelectorAll("[data-acc]").forEach((b) => b.addEventListener("click", () => {
+    accounts.setActive(b.dataset.acc);
+    route();
+  }));
+}
+
 async function live(id) {
   if (!xtreamReady()) {
     view.innerHTML = message("أضف حساب Xtream Codes من الإعدادات عشان تطلع لك القنوات المباشرة هنا", goSettings);
@@ -358,6 +400,7 @@ async function live(id) {
   let epgSeq = 0;
 
   view.innerHTML = `<div class="live">
+      ${accountChips()}
       <label class="pill">${SEARCH_ICON}<input id="chq" type="search" placeholder="البحث في القنوات" autocomplete="off"></label>
       <div class="live-panes">
         <section class="pane preview-pane"><div id="preview" class="preview" style="display:grid;align-content:start;height:100%;overflow-y:auto"></div></section>
@@ -369,6 +412,7 @@ async function live(id) {
       </div>
     </div>`;
 
+  bindAccountChips();
   const catsEl = $("#cats");
   const listEl = $("#channels");
   const previewEl = $("#preview");
@@ -545,7 +589,7 @@ async function xtreamPage(id, kind = "movie") {
   let items = [];
   let filter = "";
 
-  view.innerHTML = `<div class="typetabs">
+  view.innerHTML = `${accountChips()}<div class="typetabs">
       <button data-k="live">مباشر</button>
       <button data-k="movie" class="${kind === "movie" ? "on" : ""}">الأفلام</button>
       <button data-k="series" class="${kind === "series" ? "on" : ""}">المسلسلات</button>
@@ -558,6 +602,7 @@ async function xtreamPage(id, kind = "movie") {
   view.querySelectorAll("[data-k]").forEach((b) => b.addEventListener("click", () => {
     location.hash = b.dataset.k === "live" ? "#/live" : `#/xtream/${b.dataset.k}`;
   }));
+  bindAccountChips();
 
   const grid = $("#xgrid");
   const renderGrid = () => {
@@ -608,18 +653,19 @@ async function xtreamPage(id, kind = "movie") {
 }
 
 async function xseriesPage(id, seriesId) {
-  const s = await xt.series(seriesId);
+  const acc = accounts.active();
+  const s = await xt.series(seriesId, acc);
   if (stale(id)) return;
   const seasons = [...new Set(s.episodes.map((e) => e.season))];
   // Where the user is in this series: the last episode played, or the next one if it was finished.
   const resumeEp = () => {
-    const last = history.list().find((h) => h.kind === "episode" && h.seriesId === seriesId);
+    const last = history.list().find((h) => h.kind === "episode" && h.seriesId === seriesId && h.accountId === acc.id);
     const i = s.episodes.findIndex((e) => e.id === last?.itemId);
     if (i < 0) return null;
     return isFinished(last) ? s.episodes[i + 1] || null : s.episodes[i];
   };
   let season = resumeEp()?.season ?? seasons[0];
-  const playEp = (e) => play(xt.episodeUrls(e), xt.entryEpisode(seriesId, s.name, s.cover, e));
+  const playEp = (e) => play(xt.episodeUrls(e, acc), xt.entryEpisode(acc, seriesId, s.name, s.cover, e));
   const render = () => {
     const resume = resumeEp();
     view.innerHTML = `<section class="title-head"><div class="inner">
@@ -630,12 +676,16 @@ async function xseriesPage(id, seriesId) {
       ${seasons.length > 1 ? `<div class="chips scroll" style="margin:18px 0">${seasons.map((n) =>
         `<button class="chip ${n === season ? "on" : ""}" data-s="${n}">الموسم ${n}</button>`).join("")}</div>` : `<div style="height:18px"></div>`}
       ${s.episodes.length ? `<div class="episodes">${s.episodes.filter((e) => e.season === season).map((e) => {
-        const h = history.get(`episode:${e.id}`);
-        const note = !h ? "" : isFinished(h) ? "✓ شاهدتها" : h.durationMs ? `وصلت ${fmt(h.positionMs / 1000)} من ${fmt(h.durationMs / 1000)}` : "بدأتها";
-        return `<button class="episode" data-e="${esc(e.id)}">
-          <span class="thumb" style="position:relative">${e.image ? `<img loading="lazy" src="${esc(xt.img(e.image))}" alt="" onerror="this.remove()">` : "▶"}
-            ${h && h.durationMs ? `<span class="progress"><i style="width:${progressOf(h) * 100}%"></i></span>` : ""}</span>
-          <span><b style="color:var(--gold);font-size:13px">الحلقة ${e.number}</b><br>${esc(e.title)}${note ? `<br><small class="muted">${note}</small>` : ""}</span>
+        const h = history.get(xt.episodeKey(acc, e));
+        const done = h && isFinished(h);
+        const current = !done && (e.id === resume?.id || (h && h.durationMs > 0));
+        const tag = done ? `<span class="ep-tag done">✓ خلصتها</span>` : current ? `<span class="ep-tag now">▶ تشاهدها</span>` : "";
+        const note = h && !done && h.durationMs ? `وصلت ${fmt(h.positionMs / 1000)} من ${fmt(h.durationMs / 1000)}` : "";
+        return `<button class="episode ${done ? "done" : ""} ${current ? "now" : ""}" data-e="${esc(e.id)}">
+          <span class="thumb" style="position:relative">${e.image ? `<img loading="lazy" src="${esc(xt.img(e.image))}" alt="" onerror="this.remove()">` : ""}
+            <span class="ep-icon">${done ? "✓" : "▶"}</span>
+            ${h && h.durationMs && !done ? `<span class="progress"><i style="width:${progressOf(h) * 100}%"></i></span>` : ""}</span>
+          <span><b style="color:var(--gold);font-size:13px">الحلقة ${e.number}</b> ${tag}<br>${esc(e.title)}${note ? `<br><small class="muted">${note}</small>` : ""}</span>
         </button>`;
       }).join("")}</div>` : message("ما فيه حلقات لهذا المسلسل")}`;
     view.querySelectorAll("[data-s]").forEach((b) => b.addEventListener("click", () => {
@@ -662,6 +712,7 @@ function continueRow() {
   if (!xtreamReady()) return "";
   const list = history.continueList().slice(0, 20);
   if (!list.length) return "";
+  const many = accounts.all().length > 1;
   return `<section id="continue"><h2 class="section-title">تابع المشاهدة</h2>
     <div class="cw">${list.map((e) => {
       const live = e.kind === "live";
@@ -670,29 +721,96 @@ function continueRow() {
         <div class="cw-thumb">${e.image ? `<img class="${live ? "logo" : ""}" loading="lazy" src="${esc(xt.img(e.image))}" alt="" onerror="this.remove()">` : ""}
           <span class="cw-play">▶</span>${live ? `<span class="cw-tag">● مباشر</span>` : ""}
           ${!live && e.durationMs ? `<span class="progress"><i style="width:${progressOf(e) * 100}%"></i></span>` : ""}
-          <button class="cw-x" data-x="${esc(e.key)}" title="شيله من القائمة">✕</button></div>
-        <b>${esc(e.title)}</b>${sub ? `<small>${esc(sub)}</small>` : ""}</div>`;
+          <button class="cw-more" data-m="${esc(e.key)}" title="خيارات" aria-label="خيارات">⋯</button></div>
+        <b>${esc(e.title)}</b>${sub ? `<small>${esc(sub)}</small>` : ""}
+        ${many ? `<small style="color:var(--gold)">${esc(accounts.label(accounts.get(e.accountId)))}</small>` : ""}</div>`;
     }).join("")}</div></section>`;
+}
+
+/** Opens a title's own page from the history: the series, the film's TMDB page, or the channels. */
+async function openEntryPage(e) {
+  if (e.kind === "episode") {
+    accounts.setActive(e.accountId);
+    location.hash = `#/xseries/${encodeURIComponent(e.seriesId)}`;
+  } else if (e.kind === "live") {
+    accounts.setActive(e.accountId);
+    location.hash = "#/live";
+  } else if (e.tmdbId) {
+    location.hash = `#/title/movie/${e.tmdbId}`;
+  } else {
+    // Not matched yet: look the film up on TMDB by its name.
+    try {
+      const hit = (await tmdb.search(xt.normalizeTitle(e.title))).find((r) => r.media_type === "movie");
+      if (hit) location.hash = `#/title/movie/${hit.id}`;
+      else toast("ما لقينا صفحة لهذا الفيلم");
+    } catch {
+      toast("ما لقينا صفحة لهذا الفيلم");
+    }
+  }
+}
+
+/** Long press / right click / ⋯ on a card: open its page, or remove it from the row. */
+function entryMenu(e, card) {
+  document.querySelector(".sheet-wrap")?.remove();
+  const label = e.kind === "episode" ? "افتح صفحة المسلسل" : e.kind === "movie" ? "افتح صفحة الفيلم" : "افتح القنوات المباشرة";
+  const wrap = document.createElement("div");
+  wrap.className = "sheet-wrap";
+  wrap.innerHTML = `<div class="sheet" role="dialog" aria-modal="true">
+      <b class="sheet-title"></b>
+      <button class="btn ghost" data-a="open"></button>
+      <button class="btn ghost danger" data-a="del">احذف من تابع المشاهدة</button>
+      <button class="btn ghost" data-a="x">إلغاء</button>
+    </div>`;
+  wrap.querySelector(".sheet-title").textContent = e.title;
+  wrap.querySelector('[data-a="open"]').textContent = label;
+  wrap.addEventListener("click", (ev) => {
+    const a = ev.target.closest("[data-a]")?.dataset.a;
+    if (ev.target === wrap || a === "x") return wrap.remove();
+    if (a === "open") {
+      wrap.remove();
+      openEntryPage(e);
+    } else if (a === "del") {
+      wrap.remove();
+      history.remove(e.key);
+      const root = card.closest("#continue");
+      card.remove();
+      if (root && !root.querySelector(".cw-card")) root.remove();
+      toast("انحذف من «تابع المشاهدة»");
+    }
+  });
+  document.body.appendChild(wrap);
+  wrap.querySelector('[data-a="open"]').focus();
 }
 
 function bindContinue() {
   const root = $("#continue");
   if (!root) return;
+  const entryOf = (el) => history.get(el.closest("[data-k]")?.dataset.k);
   root.addEventListener("click", (ev) => {
-    const x = ev.target.closest("[data-x]");
-    if (x) {
+    const more = ev.target.closest("[data-m]");
+    if (more) {
       ev.stopPropagation();
-      history.remove(x.dataset.x);
-      x.closest(".cw-card").remove();
-      if (!root.querySelector(".cw-card")) root.remove();
+      const e = entryOf(more);
+      if (e) entryMenu(e, more.closest(".cw-card"));
       return;
     }
     const card = ev.target.closest("[data-k]");
-    if (!card) return;
-    const e = history.get(card.dataset.k);
+    const e = card && entryOf(card);
     if (!e) return;
-    if (e.kind === "episode" && isFinished(e) && e.seriesId) location.hash = `#/xseries/${encodeURIComponent(e.seriesId)}`;
+    if (e.kind === "episode" && isFinished(e) && e.seriesId) openEntryPage(e);
     else play(xt.urlsFor(e), e);
+  });
+  root.addEventListener("contextmenu", (ev) => {
+    const card = ev.target.closest("[data-k]");
+    const e = card && entryOf(card);
+    if (!e) return;
+    ev.preventDefault();
+    entryMenu(e, card);
+  });
+  onLongPress(root, (ev) => {
+    const card = ev.target.closest("[data-k]");
+    const e = card && entryOf(card);
+    if (e) entryMenu(e, card);
   });
   root.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter" && ev.target.matches("[data-k]")) ev.target.click();
@@ -717,6 +835,79 @@ window.addEventListener("watchhub:history", () => {
 
 const REGIONS = [["SA", "السعودية"], ["AE", "الإمارات"], ["KW", "الكويت"], ["QA", "قطر"], ["BH", "البحرين"], ["OM", "عُمان"], ["EG", "مصر"], ["US", "أمريكا"]];
 
+function renderAccounts(editingId) {
+  const listEl = $("#acc-list");
+  const formEl = $("#acc-form");
+  if (!listEl) return;
+  const list = accounts.all();
+  const active = accounts.active();
+  listEl.innerHTML = list.map((a) => `<div class="acc-row">
+      <div><b>${esc(accounts.label(a))}</b><small dir="ltr">${esc(a.host.replace(/^https?:\/\//, ""))}${list.length > 1 && a.id === active?.id ? " · المعروض الحين" : ""}</small></div>
+      <button class="btn ghost small" data-edit="${esc(a.id)}">تعديل</button>
+    </div>`).join("");
+  listEl.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => renderAccounts(b.dataset.edit)));
+
+  if (editingId === undefined) {
+    formEl.innerHTML = `<button class="btn ghost" id="acc-add">${list.length ? "+ أضف حساب ثاني" : "+ أضف حساب"}</button>`;
+    $("#acc-add").addEventListener("click", () => renderAccounts(""));
+    return;
+  }
+  const acc = accounts.get(editingId) || { id: "", name: "", host: "", user: "", pass: "" };
+  const isNew = !acc.id;
+  formEl.innerHTML = `<div class="acc-form">
+      <b>${isNew ? "حساب جديد" : `تعديل «${esc(accounts.label(acc))}»`}</b>
+      <div class="field"><label>اسم الحساب (مثلاً: البيت، الرياضة)</label><input class="input" id="xn" value="${esc(acc.name)}" autocomplete="off"></div>
+      <div class="field"><label>الهوست (الرابط)</label><input class="input" id="xh" placeholder="http://example.com:8080" value="${esc(acc.host)}" dir="ltr" autocomplete="off"></div>
+      <div class="field"><label>اسم المستخدم</label><input class="input" id="xu" value="${esc(acc.user)}" dir="ltr" autocomplete="off"></div>
+      <div class="field"><label>كلمة المرور</label><input class="input" id="xp" type="password" value="${esc(acc.pass)}" dir="ltr" autocomplete="off"></div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn" id="x-save">احفظ وجرّب</button>
+        <button class="btn ghost" id="x-close">إغلاق</button>
+        ${isNew ? "" : `<button class="btn ghost danger" id="x-del" style="margin-inline-start:auto">احذف</button>`}
+      </div>
+      <pre class="msg" id="x-msg"></pre>
+    </div>`;
+  $("#x-close").addEventListener("click", () => renderAccounts());
+  $("#x-del")?.addEventListener("click", () => {
+    if (!confirm(`تحذف «${accounts.label(acc)}»؟`)) return;
+    accounts.remove(acc.id);
+    xt.clearCache();
+    renderAccounts();
+  });
+  $("#x-save").addEventListener("click", async () => {
+    const host = xt.normalizeHost($("#xh").value);
+    const user = $("#xu").value.trim();
+    const pass = $("#xp").value;
+    const msg = $("#x-msg");
+    if (!host || !user || !pass) {
+      msg.className = "msg err";
+      msg.textContent = "عبّ الهوست واسم المستخدم وكلمة المرور";
+      return;
+    }
+    const name = $("#xn").value.trim() || `حساب ${accounts.all().length + (isNew ? 1 : 0)}`;
+    const saved = accounts.save({ ...acc, name, host, user, pass });
+    xt.clearCache();
+    msg.className = "msg muted";
+    msg.textContent = "جاري التحقق…";
+    try {
+      const info = await xt.check(saved);
+      msg.className = "msg ok";
+      msg.textContent = ["✓ تم الحفظ والحساب شغّال",
+        info.status && `الحالة: ${info.status}`,
+        info.expires && `ينتهي: ${fmtDate(info.expires)}`,
+        info.max && `الاتصالات: ${info.active || 0} من ${info.max}`].filter(Boolean).join("\n");
+    } catch (e) {
+      msg.className = "msg err";
+      msg.textContent = `تم الحفظ، بس: ${e.message}`;
+    }
+    // Refresh the list above; the form comes back with the same message.
+    const [cls, text] = [msg.className, msg.textContent];
+    renderAccounts(saved.id);
+    $("#x-msg").className = cls;
+    $("#x-msg").textContent = text;
+  });
+}
+
 async function settingsPage() {
   view.innerHTML = `<div class="settings">
     <h2 class="section-title" style="margin-bottom:0">الإعدادات</h2>
@@ -736,16 +927,10 @@ async function settingsPage() {
     </section>
 
     <section class="card-box">
-      <h3>Xtream Codes</h3>
-      <p class="muted" style="margin:0;line-height:1.8">الهوست واسم المستخدم وكلمة المرور من مزوّدك. البيانات محفوظة في هذا المتصفح بس.</p>
-      <div class="field"><label>الهوست (الرابط)</label><input class="input" id="xh" placeholder="http://example.com:8080" value="${esc(settings.xHost || "")}" dir="ltr" autocomplete="off"></div>
-      <div class="field"><label>اسم المستخدم</label><input class="input" id="xu" value="${esc(settings.xUser || "")}" dir="ltr" autocomplete="off"></div>
-      <div class="field"><label>كلمة المرور</label><input class="input" id="xp" type="password" value="${esc(settings.xPass || "")}" dir="ltr" autocomplete="off"></div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <button class="btn" id="x-save">احفظ وجرّب</button>
-        ${xtreamReady() ? `<button class="btn ghost" id="x-clear">احذف الحساب</button>` : ""}
-      </div>
-      <pre class="msg" id="x-msg"></pre>
+      <h3>حسابات Xtream Codes</h3>
+      <p class="muted" style="margin:0;line-height:1.8">أضف حساب أو أكثر من مزوّدين رسميين، وسمّ كل واحد باسم تعرفه. زر «مشاهدة» في صفحة أي عمل يبحث في كل حساباتك. البيانات محفوظة في هذا المتصفح بس.</p>
+      <div id="acc-list" style="display:grid;gap:8px"></div>
+      <div id="acc-form"></div>
     </section>
 
     <section class="card-box">
@@ -796,39 +981,7 @@ async function settingsPage() {
     view.querySelectorAll("[data-r]").forEach((x) => x.classList.toggle("on", x === b));
   }));
 
-  $("#x-save").addEventListener("click", async () => {
-    const host = xt.normalizeHost($("#xh").value);
-    const user = $("#xu").value.trim();
-    const pass = $("#xp").value;
-    const msg = $("#x-msg");
-    if (!host || !user || !pass) {
-      msg.className = "msg err";
-      msg.textContent = "عبّ الهوست واسم المستخدم وكلمة المرور";
-      return;
-    }
-    Object.assign(settings, { xHost: host, xUser: user, xPass: pass });
-    $("#xh").value = host;
-    xt.clearCache();
-    msg.className = "msg muted";
-    msg.textContent = "جاري التحقق…";
-    try {
-      const info = await xt.check();
-      msg.className = "msg ok";
-      msg.textContent = ["✓ تم الحفظ والحساب شغّال",
-        info.status && `الحالة: ${info.status}`,
-        info.expires && `ينتهي: ${fmtDate(info.expires)}`,
-        info.max && `الاتصالات: ${info.active || 0} من ${info.max}`].filter(Boolean).join("\n");
-    } catch (e) {
-      msg.className = "msg err";
-      msg.textContent = e.message;
-    }
-  });
-
-  $("#x-clear")?.addEventListener("click", () => {
-    Object.assign(settings, { xHost: "", xUser: "", xPass: "" });
-    xt.clearCache();
-    route();
-  });
+  renderAccounts();
 
   $("#vlc").addEventListener("change", (e) => {
     settings.vlcOnIos = e.target.checked;
@@ -847,3 +1000,8 @@ async function settingsPage() {
 }
 
 route();
+
+// Open instantly from the device's copy, even while the free server wakes up.
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}

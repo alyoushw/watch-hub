@@ -1,5 +1,5 @@
 // The user's Xtream Codes account, reached through the site's proxy (most servers are plain http).
-import { settings } from "./store.js";
+import { settings, accounts } from "./store.js";
 
 export class XtreamError extends Error {}
 
@@ -29,10 +29,28 @@ export function via(url) {
 /** Logos and posters: https ones load directly, http ones through the proxy. */
 export const img = (url) => (!url ? null : url.startsWith("https://") ? url : url.startsWith("http://") ? via(url) : null);
 
-function account(override) {
-  const a = override || { host: settings.xHost, user: settings.xUser, pass: settings.xPass };
-  if (!a.host || !a.user || !a.pass) throw new XtreamError("أضف حساب Xtream Codes من الإعدادات أول");
-  return { host: normalizeHost(a.host), user: a.user.trim(), pass: a.pass };
+/** [acc] (an account object), or the account the pages are showing. */
+function account(acc) {
+  const a = acc || accounts.active();
+  if (!a || !a.host || !a.user || !a.pass) throw new XtreamError("أضف حساب Xtream Codes من الإعدادات أول");
+  return { id: a.id, host: normalizeHost(a.host), user: a.user.trim(), pass: a.pass };
+}
+
+/** The account an item or history entry belongs to. */
+const accountOf = (x) => accounts.get(x && x.accountId) || accounts.active();
+
+/**
+ * The free server sleeps when unused; while it wakes up, the host answers with its own
+ * loading page instead of ours. Wait and retry (about a minute at most) until the proxy answers.
+ */
+async function fetchWaking(href) {
+  for (let i = 0; ; i++) {
+    const res = await fetch(href);
+    const type = res.headers.get("content-type") || "";
+    const ours = res.headers.has("access-control-allow-origin");
+    if (ours || !type.includes("text/html") || !settings.proxy || i >= 20) return res;
+    await new Promise((r) => setTimeout(r, 3000));
+  }
 }
 
 async function call(action, params = {}, override) {
@@ -45,7 +63,7 @@ async function call(action, params = {}, override) {
 
   let res;
   try {
-    res = await fetch(via(url.href));
+    res = await fetchWaking(via(url.href));
   } catch {
     throw new XtreamError(settings.proxy
       ? "ما قدرنا نوصل للبروكسي، تأكد من رابطه في الإعدادات"
@@ -81,15 +99,15 @@ export async function check(override) {
   };
 }
 
-export async function categories(kind) {
-  const list = await call(KINDS[kind].categories);
+export async function categories(kind, acc) {
+  const list = await call(KINDS[kind].categories, {}, acc);
   const seen = new Set();
   return (Array.isArray(list) ? list : [])
     .map((c) => ({ id: text(c.category_id), name: text(c.category_name) || text(c.category_id) }))
     .filter((c) => c.id && !seen.has(c.id) && seen.add(c.id));
 }
 
-function toItem(kind, o) {
+function toItem(kind, o, accountId) {
   const id = text(kind === "series" ? o.series_id : o.stream_id);
   if (!id) return null;
   const image = text(kind === "series" ? o.cover : o.stream_icon);
@@ -103,18 +121,20 @@ function toItem(kind, o) {
     num: Number(o.num) || null,
     tmdb: text(o.tmdb) || text(o.tmdb_id),
     year: (text(o.year) || text(o.releaseDate) || text(o.release_date) || "").slice(0, 4) || null,
+    accountId,
   };
 }
 
 const cache = new Map();
 
 /** Every item of a kind, loaded once per login. */
-export async function all(kind) {
-  const key = `${settings.xHost}|${settings.xUser}|${kind}`;
+export async function all(kind, acc) {
+  const a = account(acc);
+  const key = `${a.host}|${a.user}|${kind}`;
   if (!cache.has(key)) {
-    const p = call(KINDS[kind].list).then((list) => {
+    const p = call(KINDS[kind].list, {}, a).then((list) => {
       const seen = new Set();
-      return (Array.isArray(list) ? list : []).map((o) => toItem(kind, o)).filter((x) => x && !seen.has(x.id) && seen.add(x.id));
+      return (Array.isArray(list) ? list : []).map((o) => toItem(kind, o, a.id)).filter((x) => x && !seen.has(x.id) && seen.add(x.id));
     });
     cache.set(key, p);
     p.catch(() => cache.delete(key));
@@ -134,8 +154,8 @@ function decode64(s) {
   }
 }
 
-export async function shortEpg(streamId) {
-  const root = await call("get_short_epg", { stream_id: streamId, limit: "2" });
+export async function shortEpg(streamId, acc) {
+  const root = await call("get_short_epg", { stream_id: streamId, limit: "2" }, acc);
   return ((root && root.epg_listings) || []).map((p) => ({
     title: decode64(p.title || ""),
     start: p.start_timestamp ? new Date(p.start_timestamp * 1000) : null,
@@ -143,8 +163,8 @@ export async function shortEpg(streamId) {
   }));
 }
 
-export async function series(id) {
-  const root = await call("get_series_info", { series_id: id });
+export async function series(id, acc) {
+  const root = await call("get_series_info", { series_id: id }, acc);
   const info = (root && root.info) || {};
   const groups = root && root.episodes;
   const raw = Array.isArray(groups) ? groups.flat() : Object.values(groups || {}).flat();
@@ -163,27 +183,29 @@ export async function series(id) {
   return { name: text(info.name) || "", plot: text(info.plot), cover: text(info.cover), episodes };
 }
 
-function streamUrl(type, file) {
-  const a = account();
+function streamUrl(acc, type, file) {
+  const a = account(acc);
   return `${a.host}/${type}/${encodeURIComponent(a.user)}/${encodeURIComponent(a.pass)}/${file}`;
 }
 
 /** Links to try in order. Live: HLS (works everywhere, iPhone too), then MPEG-TS for computers. */
 export function playUrls(item) {
-  if (item.kind === "live") return [streamUrl("live", `${item.id}.m3u8`), streamUrl("live", `${item.id}.ts`)];
-  if (item.kind === "movie") return vodUrls("movie", item.id, item.ext);
+  const acc = accountOf(item);
+  if (item.kind === "live") return [streamUrl(acc, "live", `${item.id}.m3u8`), streamUrl(acc, "live", `${item.id}.ts`)];
+  if (item.kind === "movie") return vodUrls(acc, "movie", item.id, item.ext);
   return [];
 }
 
-export const episodeUrls = (ep) => vodUrls("series", ep.id, ep.ext);
+/** [acc] is the account the series was opened from. */
+export const episodeUrls = (ep, acc) => vodUrls(acc || accountOf(ep), "series", ep.id, ep.ext);
 
 /**
  * The file as the provider stores it, plus the same title as HLS (many panels serve that too).
  * Safari cannot open MKV or AVI at all, so there the HLS link goes first.
  */
-function vodUrls(type, id, ext) {
-  const file = streamUrl(type, `${id}.${ext || "mp4"}`);
-  const hls = streamUrl(type, `${id}.m3u8`);
+function vodUrls(acc, type, id, ext) {
+  const file = streamUrl(acc, type, `${id}.${ext || "mp4"}`);
+  const hls = streamUrl(acc, type, `${id}.m3u8`);
   const playable = /^(mp4|m4v|mov)$/i.test(ext || "mp4");
   const safari = document.createElement("video").canPlayType("application/vnd.apple.mpegurl") !== "";
   return !playable && safari ? [hls, file] : [file, hls];
@@ -204,8 +226,8 @@ export function normalizeTitle(raw) {
 }
 
 /** Finds a title page's film or series in the account: TMDB id first, then name and year. */
-export async function findMatch(kind, tmdbId, titles, year) {
-  const list = await all(kind);
+export async function findMatch(kind, tmdbId, titles, year, acc) {
+  const list = await all(kind, acc);
   const byId = list.find((x) => x.tmdb === String(tmdbId));
   if (byId) return byId;
   const wanted = new Set(titles.filter(Boolean).map(normalizeTitle).filter((t) => t.length >= 2));
@@ -216,14 +238,19 @@ export async function findMatch(kind, tmdbId, titles, year) {
 
 // ---------- watch history entries (same shape as the Android app) ----------
 
-const key = (kind, id) => `${kind}:${id}`;
+const key = (accountId, kind, id) => `${accountId}:${kind}:${id}`;
 
-export const entryLive = (c) => ({ key: key("live", c.id), kind: "live", itemId: c.id, title: c.name, image: c.image });
+export const entryLive = (c) => ({
+  key: key(c.accountId, "live", c.id), kind: "live", itemId: c.id, title: c.name, image: c.image, accountId: c.accountId,
+});
 
-export const entryMovie = (m) => ({ key: key("movie", m.id), kind: "movie", itemId: m.id, title: m.name, image: m.image, ext: m.ext });
+export const entryMovie = (m, tmdbId) => ({
+  key: key(m.accountId, "movie", m.id), kind: "movie", itemId: m.id, title: m.name, image: m.image, ext: m.ext,
+  accountId: m.accountId, tmdbId: tmdbId || Number(m.tmdb) || null,
+});
 
-export const entryEpisode = (seriesId, seriesName, cover, ep) => ({
-  key: key("episode", ep.id),
+export const entryEpisode = (acc, seriesId, seriesName, cover, ep) => ({
+  key: key(acc.id, "episode", ep.id),
   kind: "episode",
   itemId: ep.id,
   title: seriesName,
@@ -231,11 +258,29 @@ export const entryEpisode = (seriesId, seriesName, cover, ep) => ({
   image: ep.image || cover,
   ext: ep.ext,
   seriesId,
+  accountId: acc.id,
 });
 
-/** Links for a history entry (same order as for the item itself). */
+export const episodeKey = (acc, ep) => key(acc.id, "episode", ep.id);
+
+/** Links for a history entry, from the account it was watched on. */
 export function urlsFor(e) {
-  if (e.kind === "live") return playUrls({ kind: "live", id: e.itemId });
-  if (e.kind === "movie") return playUrls({ kind: "movie", id: e.itemId, ext: e.ext });
-  return episodeUrls({ id: e.itemId, ext: e.ext });
+  if (e.kind === "live") return playUrls({ kind: "live", id: e.itemId, accountId: e.accountId });
+  if (e.kind === "movie") return playUrls({ kind: "movie", id: e.itemId, ext: e.ext, accountId: e.accountId });
+  return episodeUrls({ id: e.itemId, ext: e.ext, accountId: e.accountId });
+}
+
+/** Searches every account's channels, films and series by name (for the search page). */
+export async function searchAll(q) {
+  const wanted = normalizeTitle(q);
+  if (wanted.length < 2) return [];
+  const out = [];
+  await Promise.all(accounts.all().flatMap((acc) => ["movie", "series", "live"].map(async (kind) => {
+    try {
+      const list = await all(kind, acc);
+      for (const x of list) if (normalizeTitle(x.name).includes(wanted)) out.push(x);
+    } catch { /* that account is unreachable right now */ }
+  })));
+  const rank = (x) => (normalizeTitle(x.name) === wanted ? 0 : normalizeTitle(x.name).startsWith(wanted) ? 1 : 2);
+  return out.sort((a, b) => rank(a) - rank(b)).slice(0, 60);
 }
