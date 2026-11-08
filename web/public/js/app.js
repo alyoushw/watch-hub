@@ -76,6 +76,27 @@ function onLongPress(el, fn) {
   }, true);
 }
 
+// ---------- look: dark / light, accent colour (same choices as the Android app) ----------
+
+const ACCENTS = [["gold", "ذهبي", "#e8a33d"], ["red", "أحمر", "#e5484d"], ["blue", "أزرق", "#3b8beb"],
+  ["green", "أخضر", "#2fb36b"], ["purple", "بنفسجي", "#9b6bef"], ["pink", "وردي", "#e5578f"]];
+
+function applyTheme() {
+  const mode = settings.themeMode || "dark";
+  const dark = mode === "dark" || (mode === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+  const root = document.documentElement;
+  root.dataset.theme = dark ? "dark" : "light";
+  const hex = (ACCENTS.find((a) => a[0] === settings.accent) || ACCENTS[0])[2];
+  let [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  // A deeper accent on the light look so it reads on white (as the Android app does).
+  if (!dark) [r, g, b] = [r, g, b].map((v) => Math.round(v * 0.82));
+  root.style.setProperty("--gold", `rgb(${r}, ${g}, ${b})`);
+  root.style.setProperty("--gold-rgb", `${r}, ${g}, ${b}`);
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#0e0d0b" : "#faf8f5");
+}
+applyTheme();
+matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", applyTheme);
+
 // ---------- router ----------
 
 const routes = [
@@ -1258,6 +1279,14 @@ async function settingsPage() {
     </section>
 
     <section class="card-box">
+      <h3>المظهر</h3>
+      <div class="chips">${[["dark", "🌙 داكن"], ["light", "☀️ نهاري"], ["system", "حسب الجهاز"]].map(([k, l]) =>
+        `<button class="chip ${(settings.themeMode || "dark") === k ? "on" : ""}" data-mode="${k}">${l}</button>`).join("")}</div>
+      <span class="muted" style="font-size:14px">اللون</span>
+      <div class="swatches">${ACCENTS.map(([k, l, c]) => `<button class="swatch ${(settings.accent || "gold") === k ? "on" : ""}" data-accent="${k}" style="--c:${c}" title="${l}"><i></i><small>${l}</small></button>`).join("")}</div>
+    </section>
+
+    <section class="card-box">
       <h3>منطقتك</h3>
       <div class="chips">${REGIONS.map(([c, l]) => `<button class="chip ${settings.region === c ? "on" : ""}" data-r="${c}">${l}</button>`).join("")}</div>
     </section>
@@ -1311,6 +1340,17 @@ async function settingsPage() {
       msg.textContent = e.message;
     }
   });
+
+  view.querySelectorAll("[data-mode]").forEach((b) => b.addEventListener("click", () => {
+    settings.themeMode = b.dataset.mode;
+    applyTheme();
+    view.querySelectorAll("[data-mode]").forEach((x) => x.classList.toggle("on", x === b));
+  }));
+  view.querySelectorAll("[data-accent]").forEach((b) => b.addEventListener("click", () => {
+    settings.accent = b.dataset.accent;
+    applyTheme();
+    view.querySelectorAll("[data-accent]").forEach((x) => x.classList.toggle("on", x === b));
+  }));
 
   view.querySelectorAll("[data-r]").forEach((b) => b.addEventListener("click", () => {
     settings.region = b.dataset.r;
