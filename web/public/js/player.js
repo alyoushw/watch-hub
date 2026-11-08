@@ -177,9 +177,9 @@ function openInVlc(urls, title) {
 }
 
 export function play(urls, title) {
-  const vod = urls.some((u) => /\/(movie|series)\//.test(new URL(u).pathname));
-  // On iPhone and iPad, films and episodes go straight to VLC (Safari cannot play MKV and many others).
-  if (vod && isIOS() && settings.vlcOnIos !== false) return openInVlc(urls, title);
+  // On iPhone and iPad everything (live, films, episodes) goes straight to VLC: Safari cannot
+  // play MKV and many live streams. Live channels hand VLC the MPEG-TS link.
+  if (isIOS() && settings.vlcOnIos !== false) return openInVlc(urls, title);
   return playInBrowser(urls, title);
 }
 
