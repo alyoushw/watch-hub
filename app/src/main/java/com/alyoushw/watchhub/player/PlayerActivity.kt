@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
+import android.view.KeyEvent
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -26,6 +27,7 @@ import androidx.media3.ui.PlayerView
 @OptIn(UnstableApi::class)
 class PlayerActivity : ComponentActivity() {
     private var player: ExoPlayer? = null
+    private var playerView: PlayerView? = null
     private var urls: List<String> = emptyList()
     private var index = 0
     private var title: String = ""
@@ -46,8 +48,15 @@ class PlayerActivity : ComponentActivity() {
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
 
-        val view = PlayerView(this).apply { setBackgroundColor(Color.BLACK) }
+        val view = PlayerView(this).apply {
+            setBackgroundColor(Color.BLACK)
+            // TV remotes: the view must hold focus to show the controls and take D-pad presses.
+            isFocusable = true
+            isFocusableInTouchMode = true
+        }
         setContentView(view)
+        view.requestFocus()
+        playerView = view
 
         // Providers often redirect a stream to another server, sometimes from https to http.
         val http = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
@@ -67,6 +76,21 @@ class PlayerActivity : ComponentActivity() {
         view.player = p
         player = p
         play(p)
+    }
+
+    /** Sends remote keys (OK, arrows, play/pause) to the player; Back still leaves. */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val view = playerView
+        if (view != null && event.keyCode != KeyEvent.KEYCODE_BACK) {
+            if (!view.isControllerFullyVisible && event.action == KeyEvent.ACTION_DOWN &&
+                event.keyCode in listOf(KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN)
+            ) {
+                view.showController()
+                return true
+            }
+            if (view.dispatchKeyEvent(event)) return true
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     private fun play(p: ExoPlayer) {
