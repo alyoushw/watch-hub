@@ -179,6 +179,7 @@ fun WatchHubRoot() {
                         onBack = { nav.popBackStack() },
                         onOpen = { t, i -> nav.openDetail(t, i) },
                         onOpenPerson = { personId -> nav.navigate("person/$personId") },
+                        onOpenXtreamSeries = { sid -> nav.navigate("xtream/series/${Uri.encode(sid)}") },
                     )
                 }
             }

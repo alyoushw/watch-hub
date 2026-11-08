@@ -83,6 +83,32 @@ class SettingsStore(context: Context) {
 
     fun clearXtream() = setXtream(XtreamAccount("", "", ""))
 
+    private val _xtreamFavorites = MutableStateFlow(
+        prefs.getString(KEY_XTREAM_FAV, "").orEmpty().split(',').filter { it.isNotBlank() }.toSet(),
+    )
+
+    /** Stream ids of the live channels the user starred. */
+    val xtreamFavorites: StateFlow<Set<String>> = _xtreamFavorites.asStateFlow()
+
+    fun toggleXtreamFavorite(id: String) {
+        val now = _xtreamFavorites.value.let { if (id in it) it - id else it + id }
+        prefs.edit().putString(KEY_XTREAM_FAV, now.joinToString(",")).apply()
+        _xtreamFavorites.value = now
+    }
+
+    private val _xtreamRecent = MutableStateFlow(
+        prefs.getString(KEY_XTREAM_RECENT, "").orEmpty().split(',').filter { it.isNotBlank() },
+    )
+
+    /** Live channels watched lately, newest first. */
+    val xtreamRecent: StateFlow<List<String>> = _xtreamRecent.asStateFlow()
+
+    fun addXtreamRecent(id: String) {
+        val now = (listOf(id) + _xtreamRecent.value.filter { it != id }).take(30)
+        prefs.edit().putString(KEY_XTREAM_RECENT, now.joinToString(",")).apply()
+        _xtreamRecent.value = now
+    }
+
     fun setApiKey(value: String) {
         val v = value.trim()
         prefs.edit().putString(KEY_TMDB, v).apply()
@@ -104,5 +130,7 @@ class SettingsStore(context: Context) {
         const val KEY_XTREAM_HOST = "xtream_host"
         const val KEY_XTREAM_USER = "xtream_user"
         const val KEY_XTREAM_PASS = "xtream_pass"
+        const val KEY_XTREAM_FAV = "xtream_favorites"
+        const val KEY_XTREAM_RECENT = "xtream_recent"
     }
 }

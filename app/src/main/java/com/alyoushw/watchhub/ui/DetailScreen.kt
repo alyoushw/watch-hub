@@ -402,6 +402,7 @@ fun DetailScreen(
     onBack: () -> Unit,
     onOpen: (MediaType, Int) -> Unit,
     onOpenPerson: (Int) -> Unit = {},
+    onOpenXtreamSeries: (String) -> Unit = {},
 ) {
     val container = appContainer()
     val vm: DetailViewModel = viewModel { DetailViewModel(container, type, id) }
@@ -424,7 +425,7 @@ fun DetailScreen(
             when (val s = vm.state) {
                 DetailState.Loading -> CenteredLoading()
                 is DetailState.Failed -> MessageBox(s.message, actionLabel = "حاول مرة ثانية", onAction = vm::load)
-                is DetailState.Loaded -> DetailContent(s.info, vm.links, vm.similar, onAdd = { vm.addToWatchlist(s.info) }, onOpen = onOpen, onOpenPerson = onOpenPerson)
+                is DetailState.Loaded -> DetailContent(s.info, vm.links, vm.similar, onAdd = { vm.addToWatchlist(s.info) }, onOpen = onOpen, onOpenPerson = onOpenPerson, onOpenXtreamSeries = onOpenXtreamSeries)
             }
         }
     }
@@ -439,6 +440,7 @@ private fun DetailContent(
     onAdd: () -> Unit,
     onOpen: (MediaType, Int) -> Unit,
     onOpenPerson: (Int) -> Unit,
+    onOpenXtreamSeries: (String) -> Unit,
 ) {
     val container = appContainer()
     val context = LocalContext.current
@@ -452,7 +454,17 @@ private fun DetailContent(
         contentPadding = PaddingValues(bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        item { Header(info) }
+        item {
+            Header(info) {
+                XtreamWatchButton(
+                    isSeries = info.type == MediaType.TV,
+                    tmdbId = info.id,
+                    titles = listOf(info.title, info.searchTitle),
+                    year = info.year,
+                    onOpenSeries = onOpenXtreamSeries,
+                )
+            }
+        }
 
         item { WatchButtons(info, links, subscribedKeys, onWatch) }
 
@@ -557,7 +569,7 @@ private fun DetailContent(
 }
 
 @Composable
-private fun Header(info: DetailInfo) {
+private fun Header(info: DetailInfo, extra: @Composable () -> Unit = {}) {
     Box(Modifier.fillMaxWidth()) {
         // The wide image stays as a faint background; the poster is the face of the page.
         if (info.backdropPath != null) {
@@ -599,6 +611,7 @@ private fun Header(info: DetailInfo) {
                     }
                     if (info.type == MediaType.TV) StatusBadge(info.id)
                     BadgeRow(info.availableServices)
+                    extra()
                 }
             }
             info.tagline?.let {

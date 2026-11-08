@@ -1,6 +1,8 @@
 package com.alyoushw.watchhub.data
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -48,7 +50,16 @@ data class XtreamItem(
     val image: String?,
     val extension: String?,
     val rating: String?,
+    val categoryId: String? = null,
+    /** Channel number from the provider. */
+    val num: Int? = null,
+    /** TMDB id when the provider has it, used to match a title page to the account. */
+    val tmdb: String? = null,
+    val year: String? = null,
 )
+
+/** One programme from the channel guide. */
+data class XtreamProgram(val title: String, val start: Date?, val end: Date?)
 
 data class XtreamEpisode(
     val id: String,
@@ -114,9 +125,55 @@ class XtreamApi(private val settings: SettingsStore) {
                     image = (if (kind == XtreamKind.SERIES) o.text("cover") else o.text("stream_icon"))?.takeIf { it.startsWith("http") },
                     extension = o.text("container_extension"),
                     rating = o.text("rating")?.takeIf { it != "0" && it != "0.0" },
+                    categoryId = o.text("category_id"),
+                    num = o.text("num")?.toIntOrNull(),
+                    tmdb = (o.text("tmdb") ?: o.text("tmdb_id"))?.takeIf { it != "0" },
+                    year = o.text("year")?.take(4)
+                        ?: (o.text("releaseDate") ?: o.text("release_date"))?.take(4)?.takeIf { it.length == 4 },
                 )
             }
             .distinctBy { it.id }
+    }
+
+    private val cache = mutableMapOf<String, List<XtreamItem>>()
+    private val cacheLock = Mutex()
+
+    /** Every item of [kind] in the account, loaded once per login and kept in memory. */
+    suspend fun all(kind: XtreamKind): List<XtreamItem> {
+        val key = "${account.host}|${account.username}|$kind"
+        cacheLock.withLock {
+            cache[key]?.let { return it }
+            val list = items(kind, null)
+            cache[key] = list
+            return list
+        }
+    }
+
+    /** Now and next on a channel (titles come base64-encoded). */
+    suspend fun shortEpg(streamId: String): List<XtreamProgram> {
+        val root = call(account, "get_short_epg", mapOf("stream_id" to streamId, "limit" to "2")) as? JsonObject
+            ?: return emptyList()
+        return (root["epg_listings"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }.mapNotNull { p ->
+            val raw = p.text("title") ?: return@mapNotNull null
+            XtreamProgram(
+                title = decodeBase64(raw),
+                start = p.text("start_timestamp")?.toLongOrNull()?.let { Date(it * 1000) },
+                end = (p.text("stop_timestamp") ?: p.text("end_timestamp"))?.toLongOrNull()?.let { Date(it * 1000) },
+            )
+        }
+    }
+
+    /**
+     * Finds a film or series from a title page in the account: by TMDB id when the provider
+     * lists it, otherwise by name (Arabic or English), preferring the same year.
+     */
+    suspend fun findMatch(kind: XtreamKind, tmdbId: Int, titles: List<String>, year: String?): XtreamItem? {
+        val list = all(kind)
+        list.firstOrNull { it.tmdb == tmdbId.toString() }?.let { return it }
+        val wanted = titles.map { normalizeTitle(it) }.filter { it.length >= 2 }.toSet()
+        if (wanted.isEmpty()) return null
+        val hits = list.filter { normalizeTitle(it.name) in wanted }
+        return hits.firstOrNull { year != null && (it.year == year || it.name.contains(year)) } ?: hits.firstOrNull()
     }
 
     suspend fun series(seriesId: String): XtreamSeries {
@@ -220,5 +277,32 @@ class XtreamApi(private val settings: SettingsStore) {
         }
 
         fun formatDate(date: Date): String = SimpleDateFormat("yyyy/MM/dd", Locale.US).format(date)
+
+        fun formatTime(date: Date): String = SimpleDateFormat("HH:mm", Locale.US).format(date)
+
+        private val tagPrefix = Regex("""^\s*(\[[^\]]*\]|\|[^|]{1,6}\||[A-Z]{2,3}\s*[|:]\s*|[A-Z]{2,3}\s+-\s+)""")
+        private val bracketed = Regex("""[(\[{][^)\]}]*[)\]}]""")
+        private val qualityWords = Regex("""\b(4k|uhd|fhd|hd|sd|hevc|multi[- ]?sub|vip)\b""")
+        private val yearWord = Regex("""\b(19|20)\d{2}\b""")
+        private val nonWord = Regex("""[^\p{L}\p{Nd}]+""")
+
+        /** "AR| The Batman (2022) 4K" → "the batman"; also folds Arabic letter variants. */
+        fun normalizeTitle(raw: String): String {
+            var t = raw
+            repeat(2) { t = t.replace(tagPrefix, "") }
+            t = t.lowercase(Locale.ROOT)
+                .replace(bracketed, " ")
+                .replace(qualityWords, " ")
+                .replace(yearWord, " ")
+                .replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا')
+                .replace('ة', 'ه').replace('ى', 'ي')
+                .replace(nonWord, " ")
+                .trim()
+            return t.replace(Regex("""\s+"""), " ")
+        }
+
+        private fun decodeBase64(value: String): String =
+            runCatching { String(android.util.Base64.decode(value, android.util.Base64.DEFAULT), Charsets.UTF_8) }
+                .getOrNull()?.takeIf { it.isNotBlank() } ?: value
     }
 }

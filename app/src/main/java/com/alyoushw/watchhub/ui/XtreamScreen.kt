@@ -1,6 +1,14 @@
 package com.alyoushw.watchhub.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -108,6 +116,11 @@ class XtreamViewModel(private val api: XtreamApi, start: XtreamKind = XtreamKind
                 categories = emptyList()
                 selected = null
             }
+            // Live channels have their own screen (LiveChannels).
+            if (k == XtreamKind.LIVE) {
+                loading = false
+                return@launch
+            }
             try {
                 if (reloadCategories) categories = api.categories(k)
                 val id = categoryId ?: categories.firstOrNull()?.id
@@ -150,7 +163,7 @@ fun XtreamScreen(onOpenSeries: (String) -> Unit, onOpenSettings: () -> Unit) {
 fun XtreamLiveChannels(onOpenSettings: () -> Unit) {
     val account by appContainer().settings.xtream.collectAsStateWithLifecycle()
     if (account.isComplete) {
-        XtreamContent(onOpenSeries = {}, kinds = listOf(XtreamKind.LIVE))
+        LiveChannels()
     } else {
         MessageBox(
             title = "أضف حساب Xtream Codes من الإعدادات عشان تطلع لك القنوات المباشرة هنا",
@@ -185,58 +198,62 @@ private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind
                 }
             }
         }
-        if (vm.categories.isNotEmpty()) {
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(vm.categories, key = { it.id }) { c ->
-                    FilterChip(
-                        modifier = Modifier.focusFrame(),
-                        selected = vm.selected == c.id,
-                        onClick = { vm.selectCategory(c.id) },
-                        label = { Text(c.name, maxLines = 1) },
-                    )
-                }
-            }
-        }
-        if (vm.items.isNotEmpty()) {
-            OutlinedTextField(
-                value = filter,
-                onValueChange = { filter = it },
-                placeholder = { Text("ابحث في هذا القسم") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-            )
-        }
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            val shown = remember(vm.items, filter) {
-                val q = filter.trim()
-                if (q.isEmpty()) vm.items else vm.items.filter { it.name.contains(q, ignoreCase = true) }
-            }
-            when {
-                vm.loading -> CenteredLoading()
-                vm.error != null -> MessageBox(vm.error.orEmpty(), actionLabel = "حاول مرة ثانية", onAction = vm::retry)
-                vm.items.isEmpty() -> MessageBox("ما فيه شي في هذا القسم")
-                else -> LazyVerticalGrid(
-                    columns = GridCells.Adaptive(if (vm.kind == XtreamKind.LIVE) 120.dp else 112.dp),
-                    contentPadding = PaddingValues(12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
+        if (vm.kind == XtreamKind.LIVE) {
+            LiveChannels()
+        } else {
+            if (vm.categories.isNotEmpty()) {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        Text(
-                            "${shown.size} ${if (vm.kind == XtreamKind.LIVE) "قناة" else "عمل"}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    items(vm.categories, key = { it.id }) { c ->
+                        FilterChip(
+                            modifier = Modifier.focusFrame(),
+                            selected = vm.selected == c.id,
+                            onClick = { vm.selectCategory(c.id) },
+                            label = { Text(c.name, maxLines = 1) },
                         )
                     }
-                    items(shown, key = { "${it.kind}:${it.id}" }) { item ->
-                        XtreamCard(item) {
-                            if (item.kind == XtreamKind.SERIES) {
-                                onOpenSeries(item.id)
-                            } else {
-                                PlayerActivity.start(context, container.xtream.playUrls(item), item.name)
+                }
+            }
+            if (vm.items.isNotEmpty()) {
+                OutlinedTextField(
+                    value = filter,
+                    onValueChange = { filter = it },
+                    placeholder = { Text("ابحث في هذا القسم") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                )
+            }
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                val shown = remember(vm.items, filter) {
+                    val q = filter.trim()
+                    if (q.isEmpty()) vm.items else vm.items.filter { it.name.contains(q, ignoreCase = true) }
+                }
+                when {
+                    vm.loading -> CenteredLoading()
+                    vm.error != null -> MessageBox(vm.error.orEmpty(), actionLabel = "حاول مرة ثانية", onAction = vm::retry)
+                    vm.items.isEmpty() -> MessageBox("ما فيه شي في هذا القسم")
+                    else -> LazyVerticalGrid(
+                        columns = GridCells.Adaptive(if (vm.kind == XtreamKind.LIVE) 120.dp else 112.dp),
+                        contentPadding = PaddingValues(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            Text(
+                                "${shown.size} ${if (vm.kind == XtreamKind.LIVE) "قناة" else "عمل"}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        items(shown, key = { "${it.kind}:${it.id}" }) { item ->
+                            XtreamCard(item) {
+                                if (item.kind == XtreamKind.SERIES) {
+                                    onOpenSeries(item.id)
+                                } else {
+                                    PlayerActivity.start(context, container.xtream.playUrls(item), item.name)
+                                }
                             }
                         }
                     }
@@ -416,6 +433,64 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * "مشاهدة" next to the poster on a title page: plays the film (or opens the series) straight
+ * from the user's Xtream Codes account when it is there.
+ */
+@Composable
+fun XtreamWatchButton(
+    isSeries: Boolean,
+    tmdbId: Int,
+    titles: List<String>,
+    year: String?,
+    onOpenSeries: (String) -> Unit,
+) {
+    val container = appContainer()
+    val context = LocalContext.current
+    val account by container.settings.xtream.collectAsStateWithLifecycle()
+    if (!account.isComplete) return
+
+    var searching by remember(tmdbId, account) { mutableStateOf(true) }
+    var match by remember(tmdbId, account) { mutableStateOf<XtreamItem?>(null) }
+    LaunchedEffect(tmdbId, account) {
+        match = try {
+            container.xtream.findMatch(if (isSeries) XtreamKind.SERIES else XtreamKind.MOVIE, tmdbId, titles, year)
+        } catch (e: XtreamException) {
+            null
+        }
+        searching = false
+    }
+
+    val found = match
+    Button(
+        enabled = found != null,
+        onClick = {
+            if (found == null) return@Button
+            if (found.kind == XtreamKind.SERIES) {
+                onOpenSeries(found.id)
+            } else {
+                PlayerActivity.start(context, container.xtream.playUrls(found), found.name)
+            }
+        },
+        colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Color(0xFF1C1206)),
+        modifier = Modifier.height(44.dp).focusFrame(),
+    ) {
+        when {
+            searching -> {
+                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(8.dp))
+                Text("نبحث في حسابك…")
+            }
+            found == null -> Text("مو موجود في حسابك")
+            else -> {
+                Icon(Icons.Filled.PlayArrow, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text("مشاهدة", fontWeight = FontWeight.Bold)
             }
         }
     }
