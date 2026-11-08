@@ -20,6 +20,14 @@ const CORS: Record<string, string> = {
   "access-control-allow-headers": "range, content-type",
   "access-control-expose-headers": "content-length, content-range, accept-ranges, content-type",
 };
+const VIDEO_TYPES: Record<string, string> = {
+  mp4: "video/mp4",
+  m4v: "video/mp4",
+  mov: "video/quicktime",
+  mkv: "video/x-matroska",
+  ts: "video/mp2t",
+  avi: "video/x-msvideo",
+};
 const PASS_HEADERS = ["content-type", "content-length", "content-range", "accept-ranges", "last-modified", "etag"];
 
 function fail(status: number, message: string): Response {
@@ -61,6 +69,12 @@ async function proxy(req: Request, self: URL): Promise<Response> {
 
   const finalUrl = upstream.url || target.href;
   const type = upstream.headers.get("content-type") ?? "";
+  // Safari will not play an MP4 sent as "application/octet-stream", which many panels do.
+  if (!type || /octet-stream|text\/plain/i.test(type)) {
+    const ext = target.pathname.split(".").pop()?.toLowerCase() ?? "";
+    const named = VIDEO_TYPES[ext];
+    if (named) out.set("content-type", named);
+  }
   if (/mpegurl/i.test(type) || /\.m3u8?(\?|$)/i.test(new URL(finalUrl).pathname)) {
     const text = await upstream.text();
     out.delete("content-length");

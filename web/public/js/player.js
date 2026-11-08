@@ -113,7 +113,44 @@ export async function play(urls, title) {
     }
   }
   if (mine !== session) return;
-  errorEl.textContent = `ما قدرنا نشغّل «${title}». ممكن السيرفر مشغول أو الصيغة ما يدعمها هذا المتصفح.`;
+  showFailure(urls[0], title);
+}
+
+/** The browser could not play it: offer players that handle any format (MKV, AVI, …). */
+function showFailure(url, title) {
+  const link = new URL(via(url), location.href).href;
+  const ext = (new URL(url).pathname.split(".").pop() || "").toUpperCase();
+  const enc = encodeURIComponent(link);
+  errorEl.innerHTML = "";
+  const msg = document.createElement("p");
+  msg.style.margin = "0 0 12px";
+  msg.textContent = `المتصفح ما قدر يشغّل هذا الملف${ext ? ` (صيغة ${ext})` : ""}. شغّله في تطبيق VLC أو Infuse:`;
+  const row = document.createElement("div");
+  row.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;justify-content:center";
+  const button = (label, onClick, primary) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = primary ? "btn small" : "btn ghost small";
+    b.textContent = label;
+    b.addEventListener("click", onClick);
+    row.appendChild(b);
+  };
+  button("افتح في VLC", () => (location.href = `vlc-x-callback://x-callback-url/stream?url=${enc}`), true);
+  button("افتح في Infuse", () => (location.href = `infuse://x-callback-url/play?url=${enc}`));
+  button("انسخ الرابط", async () => {
+    try {
+      await navigator.clipboard.writeText(link);
+      msg.textContent = "✓ نسخنا الرابط. الصقه في أي مشغّل فيديو (في VLC: Network ← Network Stream).";
+    } catch {
+      prompt("انسخ الرابط:", link);
+    }
+  });
+  errorEl.append(msg, row);
+  const tip = document.createElement("p");
+  tip.className = "muted";
+  tip.style.cssText = "margin:10px 0 0;font-size:12px";
+  tip.textContent = `«${title}»`;
+  errorEl.appendChild(tip);
   errorEl.hidden = false;
 }
 

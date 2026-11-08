@@ -171,11 +171,23 @@ function streamUrl(type, file) {
 /** Links to try in order. Live: HLS (works everywhere, iPhone too), then MPEG-TS for computers. */
 export function playUrls(item) {
   if (item.kind === "live") return [streamUrl("live", `${item.id}.m3u8`), streamUrl("live", `${item.id}.ts`)];
-  if (item.kind === "movie") return [streamUrl("movie", `${item.id}.${item.ext || "mp4"}`)];
+  if (item.kind === "movie") return vodUrls("movie", item.id, item.ext);
   return [];
 }
 
-export const episodeUrls = (ep) => [streamUrl("series", `${ep.id}.${ep.ext || "mp4"}`)];
+export const episodeUrls = (ep) => vodUrls("series", ep.id, ep.ext);
+
+/**
+ * The file as the provider stores it, plus the same title as HLS (many panels serve that too).
+ * Safari cannot open MKV or AVI at all, so there the HLS link goes first.
+ */
+function vodUrls(type, id, ext) {
+  const file = streamUrl(type, `${id}.${ext || "mp4"}`);
+  const hls = streamUrl(type, `${id}.m3u8`);
+  const playable = /^(mp4|m4v|mov)$/i.test(ext || "mp4");
+  const safari = document.createElement("video").canPlayType("application/vnd.apple.mpegurl") !== "";
+  return !playable && safari ? [hls, file] : [file, hls];
+}
 
 /** "AR| The Batman (2022) 4K" → "the batman"; folds Arabic letter variants. Same rules as the Android app. */
 export function normalizeTitle(raw) {
