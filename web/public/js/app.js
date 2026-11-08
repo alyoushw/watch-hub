@@ -669,6 +669,16 @@ async function settingsPage() {
     </section>
 
     <section class="card-box">
+      <h3>الآيفون والآيباد</h3>
+      <label style="display:flex;gap:10px;align-items:center;cursor:pointer">
+        <input type="checkbox" id="vlc" ${settings.vlcOnIos !== false ? "checked" : ""} style="width:20px;height:20px;accent-color:var(--gold)">
+        <span>افتح الأفلام والحلقات في تطبيق VLC على طول</span>
+      </label>
+      <p class="muted" style="margin:0;line-height:1.8;font-size:13px">Safari ما يشغّل صيغ كثيرة (مثل MKV)، وVLC يشغّل كل شي.
+        إذا مو مثبت نعرض لك رابط تثبيته. القنوات المباشرة تشتغل هنا في المتصفح.</p>
+    </section>
+
+    <section class="card-box">
       <h3>البروكسي</h3>
       <p class="muted" style="margin:0;line-height:1.8">المتصفح ما يقدر يوصل لسيرفرات Xtream مباشرة، فنمرّر الطلبات عن طريق البروكسي اللي مع الموقع.
         خلّه <code dir="ltr">/proxy</code> إذا الموقع شغال على سيرفر Watch Hub، أو حط رابط بروكسي ثاني.</p>
@@ -738,6 +748,11 @@ async function settingsPage() {
     Object.assign(settings, { xHost: "", xUser: "", xPass: "" });
     xt.clearCache();
     route();
+  });
+
+  $("#vlc").addEventListener("change", (e) => {
+    settings.vlcOnIos = e.target.checked;
+    toast(e.target.checked ? "الأفلام والحلقات بتفتح في VLC" : "الأفلام والحلقات بتشتغل هنا");
   });
 
   $("#p-save").addEventListener("click", () => {

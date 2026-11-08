@@ -1,6 +1,7 @@
 // Full-screen player. Safari (iPhone, iPad, Mac) plays HLS itself; other browsers use hls.js,
 // and MPEG-TS live streams use mpegts.js. Each link is tried in turn until one plays.
 import { via } from "./xtream.js";
+import { settings } from "./store.js";
 
 const HLS_JS = "https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js";
 const MPEGTS_JS = "https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js";
@@ -98,12 +99,93 @@ async function tryOne(url) {
   await started;
 }
 
-export async function play(urls, title) {
-  const mine = ++session;
+const VLC_STORE = "https://apps.apple.com/app/vlc-media-player/id650377962";
+
+/** iPhone, iPad (iPadOS reports itself as a Mac with touch) and iPod. */
+export const isIOS = () =>
+  /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+/** The provider's own file: what outside players get (not the HLS guess, which many panels lack). */
+const fileUrl = (urls) => urls.find((u) => !/\.m3u8$/i.test(new URL(u).pathname)) || urls[0];
+
+const vlcLink = (url) => `vlc-x-callback://x-callback-url/stream?url=${encodeURIComponent(url)}`;
+
+function openOverlay(title) {
   box.hidden = false;
   errorEl.hidden = true;
   titleEl.textContent = title || "";
   document.body.style.overflow = "hidden";
+}
+
+function panel(text, buttons) {
+  errorEl.innerHTML = "";
+  const msg = document.createElement("p");
+  msg.style.margin = "0 0 12px";
+  msg.textContent = text;
+  const row = document.createElement("div");
+  row.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;justify-content:center";
+  for (const [label, onClick, primary] of buttons) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = primary ? "btn small" : "btn ghost small";
+    b.textContent = label;
+    b.addEventListener("click", onClick);
+    row.appendChild(b);
+  }
+  errorEl.append(msg, row);
+  errorEl.hidden = false;
+  return msg;
+}
+
+/**
+ * Hands the file to VLC. A page cannot ask whether an app is installed, so if Safari is
+ * still showing this page shortly after, VLC is taken to be missing and the App Store is offered.
+ */
+function openInVlc(urls, title) {
+  const mine = ++session;
+  reset();
+  openOverlay(title);
+  const link = fileUrl(urls);
+  let left = false;
+  const away = () => {
+    if (document.visibilityState === "hidden") left = true;
+  };
+  document.addEventListener("visibilitychange", away);
+  window.addEventListener("pagehide", away);
+  panel("نفتحها في VLC…", [
+    ["شغّل هنا في المتصفح", () => playInBrowser(urls, title)],
+  ]);
+  location.href = vlcLink(link);
+  setTimeout(() => {
+    document.removeEventListener("visibilitychange", away);
+    window.removeEventListener("pagehide", away);
+    if (mine !== session) return;
+    if (left) {
+      // VLC opened; leave a way back in case the user returns here.
+      panel("فتحناها في VLC ✓", [
+        ["افتح في VLC مرة ثانية", () => (location.href = vlcLink(link)), true],
+        ["إغلاق", close],
+      ]);
+      return;
+    }
+    panel("يبدو إن تطبيق VLC مو مثبت على جهازك. ثبّته (مجاني) وارجع اضغط «افتح في VLC».", [
+      ["ثبّت VLC من App Store", () => (location.href = VLC_STORE), true],
+      ["افتح في VLC", () => openInVlc(urls, title)],
+      ["شغّل هنا في المتصفح", () => playInBrowser(urls, title)],
+    ]);
+  }, 2500);
+}
+
+export function play(urls, title) {
+  const vod = urls.some((u) => /\/(movie|series)\//.test(new URL(u).pathname));
+  // On iPhone and iPad, films and episodes go straight to VLC (Safari cannot play MKV and many others).
+  if (vod && isIOS() && settings.vlcOnIos !== false) return openInVlc(urls, title);
+  return playInBrowser(urls, title);
+}
+
+async function playInBrowser(urls, title) {
+  const mine = ++session;
+  openOverlay(title);
   for (const url of urls) {
     try {
       await tryOne(url);
@@ -113,8 +195,7 @@ export async function play(urls, title) {
     }
   }
   if (mine !== session) return;
-  // Outside players get the provider's own file (not the HLS guess, which many panels lack).
-  showFailure(urls.find((u) => !/\.m3u8$/i.test(new URL(u).pathname)) || urls[0], title);
+  showFailure(fileUrl(urls), title);
 }
 
 /** The browser could not play it: offer players that handle any format (MKV, AVI, …). */
