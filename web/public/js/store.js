@@ -67,3 +67,45 @@ export const recent = {
     save();
   },
 };
+
+/**
+ * Watch history for the current Xtream login: what was played (live, film, episode) and how far,
+ * for "تابع المشاهدة" and resuming. Same shape as the Android app's history.
+ */
+data.history ??= {};
+const account = () => `${settings.xHost || ""}|${settings.xUser || ""}`;
+
+export const history = {
+  list: () => data.history[account()] || [],
+  get: (key) => history.list().find((e) => e.key === key),
+  save(entry) {
+    const old = history.get(entry.key);
+    const merged = {
+      ...entry,
+      positionMs: entry.positionMs > 0 || entry.durationMs > 0 ? entry.positionMs || 0 : old?.positionMs || 0,
+      durationMs: entry.durationMs > 0 ? entry.durationMs : old?.durationMs || 0,
+      updatedAt: Date.now(),
+    };
+    data.history[account()] = [merged, ...history.list().filter((e) => e.key !== entry.key)].slice(0, 80);
+    save();
+  },
+  remove(key) {
+    data.history[account()] = history.list().filter((e) => e.key !== key);
+    save();
+  },
+  /** One card per series (its latest episode); finished films left out. */
+  continueList() {
+    const series = new Set();
+    return history.list().filter((e) => {
+      if (e.kind === "episode" && e.seriesId) {
+        if (series.has(e.seriesId)) return false;
+        series.add(e.seriesId);
+        return true;
+      }
+      return e.kind !== "movie" || !isFinished(e);
+    });
+  },
+};
+
+export const isFinished = (e) => e.durationMs > 0 && e.positionMs >= e.durationMs * 0.95;
+export const progressOf = (e) => (e.durationMs > 0 ? Math.min(1, e.positionMs / e.durationMs) : 0);

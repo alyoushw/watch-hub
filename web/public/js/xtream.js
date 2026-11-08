@@ -213,3 +213,29 @@ export async function findMatch(kind, tmdbId, titles, year) {
   const hits = list.filter((x) => wanted.has(normalizeTitle(x.name)));
   return hits.find((x) => year && (x.year === year || x.name.includes(year))) || hits[0] || null;
 }
+
+// ---------- watch history entries (same shape as the Android app) ----------
+
+const key = (kind, id) => `${kind}:${id}`;
+
+export const entryLive = (c) => ({ key: key("live", c.id), kind: "live", itemId: c.id, title: c.name, image: c.image });
+
+export const entryMovie = (m) => ({ key: key("movie", m.id), kind: "movie", itemId: m.id, title: m.name, image: m.image, ext: m.ext });
+
+export const entryEpisode = (seriesId, seriesName, cover, ep) => ({
+  key: key("episode", ep.id),
+  kind: "episode",
+  itemId: ep.id,
+  title: seriesName,
+  subtitle: `الموسم ${ep.season} · الحلقة ${ep.number}` + (ep.title && !ep.title.startsWith("الحلقة") ? ` · ${ep.title}` : ""),
+  image: ep.image || cover,
+  ext: ep.ext,
+  seriesId,
+});
+
+/** Links for a history entry (same order as for the item itself). */
+export function urlsFor(e) {
+  if (e.kind === "live") return playUrls({ kind: "live", id: e.itemId });
+  if (e.kind === "movie") return playUrls({ kind: "movie", id: e.itemId, ext: e.ext });
+  return episodeUrls({ id: e.itemId, ext: e.ext });
+}

@@ -29,12 +29,37 @@
   </header>
   <main id="view"></main>
   <div id="player" class="player" hidden>
-    <video id="video" controls playsinline autoplay></video>
-    <div class="player-bar">
-      <span id="player-title"></span>
-      <button id="player-close" class="btn ghost" type="button">✕ إغلاق</button>
+    <div class="pl-stage"><video id="video" playsinline preload="auto"></video></div>
+    <div class="pl-gest" id="pl-gest"></div>
+    <div class="pl-spin spinner" id="pl-spin" hidden></div>
+    <div class="pl-ind" id="pl-ind" hidden><b id="pl-ind-text"></b><span class="pl-level" id="pl-ind-level"><i></i></span></div>
+    <div class="pl-ui" id="pl-ui" dir="ltr">
+      <div class="pl-top">
+        <button class="pl-btn" id="pl-back" title="رجوع (Esc)">←</button>
+        <div class="pl-titles" dir="rtl"><b id="player-title"></b><span id="player-sub"></span></div>
+        <button class="pl-btn" id="pl-subs" title="الترجمة">CC</button>
+        <button class="pl-btn" id="pl-audio" title="الصوت المعلّق">♫</button>
+        <button class="pl-btn" id="pl-aspect" title="حجم الصورة">⛶</button>
+        <button class="pl-btn" id="pl-speed" title="السرعة">1×</button>
+        <button class="pl-btn" id="pl-pip" title="صورة داخل صورة">⧉</button>
+        <button class="pl-btn" id="pl-full" title="ملء الشاشة (F)">⤢</button>
+      </div>
+      <div class="pl-mid">
+        <button class="pl-round" id="pl-back10" title="رجوع 10 ثواني (←)">↺<small>10</small></button>
+        <button class="pl-round big" id="pl-play" title="تشغيل / إيقاف (مسافة)">▶</button>
+        <button class="pl-round" id="pl-fwd10" title="تقديم 10 ثواني (→)">↻<small>10</small></button>
+      </div>
+      <div class="pl-bottom">
+        <span class="pl-live" id="pl-live" hidden>● مباشر</span>
+        <span class="pl-time" id="pl-cur">00:00</span>
+        <div class="pl-bar" id="pl-bar"><div class="pl-buf" id="pl-buf"></div><div class="pl-fill" id="pl-fill"></div><div class="pl-thumb" id="pl-thumb"></div><div class="pl-tip" id="pl-tip" hidden></div></div>
+        <span class="pl-time" id="pl-dur">--:--</span>
+        <button class="pl-btn" id="pl-mute" title="كتم (M)">🔊</button>
+        <input class="pl-vol" id="pl-vol" type="range" min="0" max="1" step="0.05" value="1" aria-label="الصوت">
+      </div>
     </div>
-    <div id="player-error" class="player-error" hidden></div>
+    <div class="pl-menu" id="pl-menu" dir="rtl" hidden></div>
+    <div id="player-error" class="player-error" dir="rtl" hidden></div>
   </div>
   <div id="toast" class="toast" hidden></div>
   <script type="module" src="js/app.js"></script>

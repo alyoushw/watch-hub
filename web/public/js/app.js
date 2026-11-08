@@ -1,8 +1,8 @@
 // Watch Hub on the web: the same hub as the Android app, for iPhone, iPad and computers.
 import * as tmdb from "./tmdb.js";
 import * as xt from "./xtream.js";
-import { play } from "./player.js";
-import { settings, watchlist, favorites, recent, xtreamReady } from "./store.js";
+import { play, fmt } from "./player.js";
+import { settings, watchlist, favorites, recent, xtreamReady, history, isFinished, progressOf } from "./store.js";
 
 const view = document.getElementById("view");
 
@@ -121,8 +121,9 @@ async function home(id) {
     </div>`;
 
   if (!settings.tmdbKey) {
-    view.innerHTML = tabs + message("خطوة وحدة قبل نبدأ: حط مفتاح TMDB المجاني في الإعدادات عشان نعرض لك أفضل الأعمال في كل منصة.", goSettings);
+    view.innerHTML = tabs + continueRow() + message("خطوة وحدة قبل نبدأ: حط مفتاح TMDB المجاني في الإعدادات عشان نعرض لك أفضل الأعمال في كل منصة.", goSettings);
     bindTypeTabs();
+    bindContinue();
     return;
   }
 
@@ -132,6 +133,7 @@ async function home(id) {
   const word = type === "tv" ? "المسلسلات" : "الأفلام";
 
   view.innerHTML = `${tabs}
+    ${continueRow()}
     ${hero ? `<section class="hero">
       ${hero.backdrop_path ? `<img class="bg" src="${tmdb.image(hero.backdrop_path, "w1280")}" alt="">` : ""}
       <div class="info">
@@ -144,6 +146,7 @@ async function home(id) {
     ${rowSection(`${word} الرائجة`, trend.slice(1))}
     <div id="rows">${loading()}</div>`;
   bindTypeTabs();
+  bindContinue();
 
   const services = tmdb.SERVICES
     .map((s) => ({ ...s, all: [...new Set([...s.ids, ...(ids[s.key] || [])])] }))
@@ -291,7 +294,7 @@ async function xtreamWatchButton(slot, type, tmdbId, titles, year) {
   slot.innerHTML = `<button class="btn">▶ مشاهدة</button>`;
   slot.firstElementChild.addEventListener("click", () => {
     if (match.kind === "series") location.hash = `#/xseries/${encodeURIComponent(match.id)}`;
-    else play(xt.playUrls(match), match.name);
+    else play(xt.playUrls(match), xt.entryMovie(match));
   });
 }
 
@@ -468,7 +471,7 @@ async function live(id) {
   function start(c) {
     recent.add(c.id);
     renderCats();
-    play(xt.playUrls(c), c.name);
+    play(xt.playUrls(c), xt.entryLive(c));
   }
 
   catsEl.addEventListener("click", (e) => {
@@ -599,7 +602,7 @@ async function xtreamPage(id, kind = "movie") {
     if (!b) return;
     const x = items.byId.get(b.dataset.x);
     if (kind === "series") location.hash = `#/xseries/${encodeURIComponent(x.id)}`;
-    else play(xt.playUrls(x), x.name);
+    else play(xt.playUrls(x), xt.entryMovie(x));
   });
   await load();
 }
@@ -608,30 +611,107 @@ async function xseriesPage(id, seriesId) {
   const s = await xt.series(seriesId);
   if (stale(id)) return;
   const seasons = [...new Set(s.episodes.map((e) => e.season))];
-  let season = seasons[0];
+  // Where the user is in this series: the last episode played, or the next one if it was finished.
+  const resumeEp = () => {
+    const last = history.list().find((h) => h.kind === "episode" && h.seriesId === seriesId);
+    const i = s.episodes.findIndex((e) => e.id === last?.itemId);
+    if (i < 0) return null;
+    return isFinished(last) ? s.episodes[i + 1] || null : s.episodes[i];
+  };
+  let season = resumeEp()?.season ?? seasons[0];
+  const playEp = (e) => play(xt.episodeUrls(e), xt.entryEpisode(seriesId, s.name, s.cover, e));
   const render = () => {
+    const resume = resumeEp();
     view.innerHTML = `<section class="title-head"><div class="inner">
         <div class="poster" style="width:170px">${s.cover ? `<img src="${esc(xt.img(s.cover))}" alt="" onerror="this.remove()">` : ""}</div>
-        <div class="meta"><h1>${esc(s.name)}</h1>${s.plot ? `<p class="overview">${esc(s.plot)}</p>` : ""}</div>
+        <div class="meta"><h1>${esc(s.name)}</h1>${s.plot ? `<p class="overview">${esc(s.plot)}</p>` : ""}
+          ${resume ? `<div><button class="btn" id="resume">▶ كمّل: الموسم ${resume.season} · الحلقة ${resume.number}</button></div>` : ""}</div>
       </div></section>
       ${seasons.length > 1 ? `<div class="chips scroll" style="margin:18px 0">${seasons.map((n) =>
         `<button class="chip ${n === season ? "on" : ""}" data-s="${n}">الموسم ${n}</button>`).join("")}</div>` : `<div style="height:18px"></div>`}
-      ${s.episodes.length ? `<div class="episodes">${s.episodes.filter((e) => e.season === season).map((e) => `
-        <button class="episode" data-e="${esc(e.id)}">
-          <span class="thumb">${e.image ? `<img loading="lazy" src="${esc(xt.img(e.image))}" alt="" onerror="this.remove()">` : "▶"}</span>
-          <span><b style="color:var(--gold);font-size:13px">الحلقة ${e.number}</b><br>${esc(e.title)}</span>
-        </button>`).join("")}</div>` : message("ما فيه حلقات لهذا المسلسل")}`;
+      ${s.episodes.length ? `<div class="episodes">${s.episodes.filter((e) => e.season === season).map((e) => {
+        const h = history.get(`episode:${e.id}`);
+        const note = !h ? "" : isFinished(h) ? "✓ شاهدتها" : h.durationMs ? `وصلت ${fmt(h.positionMs / 1000)} من ${fmt(h.durationMs / 1000)}` : "بدأتها";
+        return `<button class="episode" data-e="${esc(e.id)}">
+          <span class="thumb" style="position:relative">${e.image ? `<img loading="lazy" src="${esc(xt.img(e.image))}" alt="" onerror="this.remove()">` : "▶"}
+            ${h && h.durationMs ? `<span class="progress"><i style="width:${progressOf(h) * 100}%"></i></span>` : ""}</span>
+          <span><b style="color:var(--gold);font-size:13px">الحلقة ${e.number}</b><br>${esc(e.title)}${note ? `<br><small class="muted">${note}</small>` : ""}</span>
+        </button>`;
+      }).join("")}</div>` : message("ما فيه حلقات لهذا المسلسل")}`;
     view.querySelectorAll("[data-s]").forEach((b) => b.addEventListener("click", () => {
       season = Number(b.dataset.s);
       render();
     }));
     view.querySelectorAll("[data-e]").forEach((b) => b.addEventListener("click", () => {
-      const e = s.episodes.find((x) => x.id === b.dataset.e);
-      play(xt.episodeUrls(e), `${s.name} - ${e.title}`);
+      playEp(s.episodes.find((x) => x.id === b.dataset.e));
     }));
+    $("#resume")?.addEventListener("click", () => playEp(resume));
   };
   render();
+  // Refresh the bars after the player closes.
+  const onHistory = () => {
+    if (stale(id)) return window.removeEventListener("watchhub:history", onHistory);
+    render();
+  };
+  window.addEventListener("watchhub:history", onHistory);
 }
+
+// ---------- continue watching ----------
+
+function continueRow() {
+  if (!xtreamReady()) return "";
+  const list = history.continueList().slice(0, 20);
+  if (!list.length) return "";
+  return `<section id="continue"><h2 class="section-title">تابع المشاهدة</h2>
+    <div class="cw">${list.map((e) => {
+      const live = e.kind === "live";
+      const sub = e.subtitle || (live ? "قناة مباشرة" : e.durationMs ? `باقي ${fmt((e.durationMs - e.positionMs) / 1000)}` : "");
+      return `<div class="cw-card" role="button" tabindex="0" data-k="${esc(e.key)}">
+        <div class="cw-thumb">${e.image ? `<img class="${live ? "logo" : ""}" loading="lazy" src="${esc(xt.img(e.image))}" alt="" onerror="this.remove()">` : ""}
+          <span class="cw-play">▶</span>${live ? `<span class="cw-tag">● مباشر</span>` : ""}
+          ${!live && e.durationMs ? `<span class="progress"><i style="width:${progressOf(e) * 100}%"></i></span>` : ""}
+          <button class="cw-x" data-x="${esc(e.key)}" title="شيله من القائمة">✕</button></div>
+        <b>${esc(e.title)}</b>${sub ? `<small>${esc(sub)}</small>` : ""}</div>`;
+    }).join("")}</div></section>`;
+}
+
+function bindContinue() {
+  const root = $("#continue");
+  if (!root) return;
+  root.addEventListener("click", (ev) => {
+    const x = ev.target.closest("[data-x]");
+    if (x) {
+      ev.stopPropagation();
+      history.remove(x.dataset.x);
+      x.closest(".cw-card").remove();
+      if (!root.querySelector(".cw-card")) root.remove();
+      return;
+    }
+    const card = ev.target.closest("[data-k]");
+    if (!card) return;
+    const e = history.get(card.dataset.k);
+    if (!e) return;
+    if (e.kind === "episode" && isFinished(e) && e.seriesId) location.hash = `#/xseries/${encodeURIComponent(e.seriesId)}`;
+    else play(xt.urlsFor(e), e);
+  });
+  root.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && ev.target.matches("[data-k]")) ev.target.click();
+  });
+}
+
+// Refresh the row after watching something.
+window.addEventListener("watchhub:history", () => {
+  const root = $("#continue");
+  const html = continueRow();
+  if (root) {
+    if (html) {
+      root.outerHTML = html;
+      bindContinue();
+    } else root.remove();
+  } else if (html && (location.hash || "#/").match(/^#?\/?$/)) {
+    route();
+  }
+});
 
 // ---------- settings ----------
 
