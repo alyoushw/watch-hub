@@ -1,5 +1,11 @@
 package com.alyoushw.watchhub.ui
 
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.border
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -376,28 +382,94 @@ private fun ClaudeSection() {
     }
 }
 
-/** The user's Xtream Codes login from their official provider: host, username and password. */
+/** The user's Xtream Codes logins from their providers: a list, each with a name, and a form to add or edit one. */
 @Composable
 private fun XtreamSection(onOpen: () -> Unit) {
     val container = appContainer()
+    val accounts by container.settings.xtreamAccounts.collectAsStateWithLifecycle()
+    val active by container.settings.xtream.collectAsStateWithLifecycle()
+    // null: no form open; an account with a blank id: adding a new one.
+    var editing by remember { mutableStateOf<XtreamAccount?>(null) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionTitle("حسابات Xtream Codes")
+        Text(
+            "أضف حساب أو أكثر من مزوّدين رسميين، وسمّ كل واحد باسم تعرفه. القنوات والأفلام والمسلسلات تطلع في «قنواتي»، " +
+                "وزر «مشاهدة» في صفحة أي عمل يبحث في كل حساباتك. البيانات محفوظة على جهازك بس.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        accounts.forEach { acc ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(acc.label, fontWeight = FontWeight.Bold)
+                    Text(
+                        acc.host.substringAfter("://") + if (acc.id == active.id && accounts.size > 1) "  ·  المعروض الحين" else "",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
+                TextButton(modifier = Modifier.focusFrame(), onClick = { editing = acc }) { Text("تعديل") }
+            }
+        }
+        if (editing == null) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(modifier = Modifier.focusFrame(), onClick = { editing = XtreamAccount("", "", "") }) {
+                    Text(if (accounts.isEmpty()) "+ أضف حساب" else "+ أضف حساب ثاني")
+                }
+                if (accounts.isNotEmpty()) {
+                    OutlinedButton(modifier = Modifier.focusFrame(), onClick = onOpen) { Text("افتح «قنواتي»") }
+                }
+            }
+        }
+        editing?.let { acc ->
+            XtreamAccountForm(
+                initial = acc,
+                onDone = { editing = null },
+            )
+        }
+    }
+}
+
+@Composable
+private fun XtreamAccountForm(initial: XtreamAccount, onDone: () -> Unit) {
+    val container = appContainer()
     val scope = rememberCoroutineScope()
-    val saved by container.settings.xtream.collectAsStateWithLifecycle()
-    var host by remember(saved) { mutableStateOf(saved.host) }
-    var username by remember(saved) { mutableStateOf(saved.username) }
-    var password by remember(saved) { mutableStateOf(saved.password) }
+    val isNew = initial.id.isBlank()
+    var name by remember(initial) { mutableStateOf(initial.name) }
+    var host by remember(initial) { mutableStateOf(initial.host) }
+    var username by remember(initial) { mutableStateOf(initial.username) }
+    var password by remember(initial) { mutableStateOf(initial.password) }
     var show by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<String?>(null) }
-    val draft = XtreamAccount(host, username, password)
+    var confirmDelete by remember { mutableStateOf(false) }
+    val draft = initial.copy(name = name, host = host, username = username, password = password)
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        SectionTitle("Xtream Codes")
-        Text(
-            "إذا عندك اشتراك من مزوّد رسمي يستخدم Xtream Codes، حط الهوست واسم المستخدم وكلمة المرور " +
-                "اللي عطاك إياها المزوّد. بعدها يطلع لك تبويب «قنواتي» فيه القنوات والأفلام والمسلسلات. " +
-                "البيانات محفوظة على جهازك بس.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(14.dp))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(if (isNew) "حساب جديد" else "تعديل «${initial.label}»", fontWeight = FontWeight.Bold)
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it },
+            label = { Text("اسم الحساب (مثلاً: البيت، الرياضة)") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
             value = host,
@@ -437,13 +509,12 @@ private fun XtreamSection(onOpen: () -> Unit) {
                 modifier = Modifier.focusFrame(),
                 enabled = !testing && draft.isComplete,
                 onClick = {
-                    container.settings.setXtream(draft)
-                    container.history.reload()
                     testing = true
                     result = null
                     scope.launch {
+                        val saved = container.settings.saveXtreamAccount(draft.copy(name = name.ifBlank { "حساب ${container.settings.xtreamAccounts.value.size + if (isNew) 1 else 0}" }))
                         result = try {
-                            val info = container.xtream.check(container.settings.xtream.value)
+                            val info = container.xtream.check(saved)
                             buildString {
                                 append("✓ تم الحفظ والحساب شغّال")
                                 info.status?.let { append("\nالحالة: $it") }
@@ -451,28 +522,38 @@ private fun XtreamSection(onOpen: () -> Unit) {
                                 info.maxConnections?.let { append("\nالاتصالات: ${info.activeConnections ?: "0"} من $it") }
                             }
                         } catch (e: XtreamException) {
-                            e.message
+                            "تم الحفظ، بس: ${e.message}"
                         }
                         testing = false
                     }
                 },
             ) { Text(if (testing) "جاري التحقق…" else "احفظ وجرّب") }
-            if (saved.isComplete) {
-                TextButton(
-                    modifier = Modifier.focusFrame(),
-                    onClick = {
-                        container.settings.clearXtream()
-                        container.history.reload()
-                        result = null
-                    },
-                ) { Text("احذف الحساب", color = MaterialTheme.colorScheme.error) }
+            TextButton(modifier = Modifier.focusFrame(), onClick = onDone) { Text(if (result?.startsWith("✓") == true) "تم" else "إغلاق") }
+            if (!isNew) {
+                Spacer(Modifier.weight(1f))
+                TextButton(modifier = Modifier.focusFrame(), onClick = { confirmDelete = true }) {
+                    Text("احذف", color = MaterialTheme.colorScheme.error)
+                }
             }
         }
         result?.let {
             Text(it, color = if (it.startsWith("✓")) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error)
         }
-        if (saved.isComplete) {
-            OutlinedButton(modifier = Modifier.focusFrame(), onClick = onOpen) { Text("افتح محتوى الحساب") }
-        }
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("تحذف «${initial.label}»؟") },
+            text = { Text("بينشال الحساب من التطبيق. تقدر تضيفه مرة ثانية متى ما تبي.") },
+            confirmButton = {
+                TextButton(modifier = Modifier.focusFrame(), onClick = {
+                    container.settings.removeXtreamAccount(initial.id)
+                    confirmDelete = false
+                    onDone()
+                }) { Text("احذف", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = { confirmDelete = false }) { Text("إلغاء") } },
+        )
     }
 }

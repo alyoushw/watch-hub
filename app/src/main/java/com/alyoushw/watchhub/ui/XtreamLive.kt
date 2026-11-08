@@ -138,7 +138,7 @@ class LiveViewModel(private val api: XtreamApi) : ViewModel() {
 /** Live channels in three panes: categories, channels, and a preview of the chosen channel. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun LiveChannels() {
+fun LiveChannels(showAccounts: Boolean = true) {
     val container = appContainer()
     val context = LocalContext.current
     val account by container.settings.xtream.collectAsStateWithLifecycle()
@@ -149,7 +149,7 @@ fun LiveChannels() {
 
     val play: (XtreamItem) -> Unit = { ch ->
         container.settings.addXtreamRecent(ch.id)
-        PlayerActivity.start(context, container.xtream.playUrls(ch), com.alyoushw.watchhub.data.WatchEntry.live(ch))
+        PlayerActivity.start(context, container.xtream.playUrls(ch, account), com.alyoushw.watchhub.data.WatchEntry.live(ch, account))
     }
 
     when {
@@ -179,6 +179,7 @@ fun LiveChannels() {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 720.dp
         Column(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (showAccounts) AccountSwitcher()
             PillSearch(query, { query = it }, "البحث في القنوات", Modifier.fillMaxWidth().padding(top = 4.dp))
 
             // Right to left: preview, then channels, then categories on the far side.

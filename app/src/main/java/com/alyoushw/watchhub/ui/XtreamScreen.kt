@@ -1,5 +1,16 @@
 package com.alyoushw.watchhub.ui
 
+import com.alyoushw.watchhub.data.MediaType
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.AlertDialog
+import com.alyoushw.watchhub.data.XtreamAccount
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.async
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.border
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.combinedClickable
@@ -192,6 +203,7 @@ private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind
     var filter by remember(vm.kind, vm.selected) { mutableStateOf("") }
 
     Column(Modifier.fillMaxSize()) {
+        AccountSwitcher(Modifier.padding(vertical = 6.dp))
         if (kinds.size > 1) {
             PrimaryTabRow(selectedTabIndex = kinds.indexOf(vm.kind).coerceAtLeast(0)) {
                 kinds.forEach { k ->
@@ -205,7 +217,7 @@ private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind
             }
         }
         if (vm.kind == XtreamKind.LIVE) {
-            LiveChannels()
+            LiveChannels(showAccounts = false)
         } else {
             if (vm.categories.isNotEmpty()) {
                 LazyRow(
@@ -258,7 +270,7 @@ private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind
                                 if (item.kind == XtreamKind.SERIES) {
                                     onOpenSeries(item.id)
                                 } else {
-                                    PlayerActivity.start(context, container.xtream.playUrls(item), WatchEntry.movie(item))
+                                    PlayerActivity.start(context, container.xtream.playUrls(item, account), WatchEntry.movie(item, account))
                                 }
                             }
                         }
@@ -342,8 +354,9 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
     }
     val series = vm.series
     val history by container.history.entries.collectAsStateWithLifecycle()
+    val account by container.settings.xtream.collectAsStateWithLifecycle()
     val playEpisode: (XtreamEpisode) -> Unit = { ep ->
-        series?.let { PlayerActivity.start(context, container.xtream.playUrls(ep), WatchEntry.episode(seriesId, it.name, it.cover, ep)) }
+        series?.let { PlayerActivity.start(context, container.xtream.playUrls(ep, account), WatchEntry.episode(account, seriesId, it.name, it.cover, ep)) }
     }
 
     Scaffold(
@@ -368,7 +381,7 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
                     val seasons = remember(series) { series.episodes.map { it.season }.distinct() }
                     // Where the user is in this series: the last episode played, or the next one if it was finished.
                     val resume = remember(series, history) {
-                        val last = history.firstOrNull { it.kind == WatchEntry.EPISODE && it.seriesId == seriesId }
+                        val last = history.firstOrNull { it.kind == WatchEntry.EPISODE && it.seriesId == seriesId && it.accountId == account.id }
                         val i = series.episodes.indexOfFirst { it.id == last?.itemId }
                         when {
                             i < 0 -> null
@@ -429,47 +442,8 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
                             }
                         }
                         items(series.episodes.filter { it.season == season }, key = { it.id }) { ep ->
-                            val watched = history.firstOrNull { it.key == WatchEntry.keyOf(WatchEntry.EPISODE, ep.id) }
-                            Row(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .focusHighlight()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .clickable { playEpisode(ep) }
-                                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                                    .padding(10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                Box(
-                                    Modifier.size(width = 96.dp, height = 54.dp).clip(RoundedCornerShape(6.dp))
-                                        .background(MaterialTheme.colorScheme.surface),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    if (ep.image != null) {
-                                        AsyncImage(
-                                            model = ep.image,
-                                            contentDescription = null,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize(),
-                                        )
-                                    } else {
-                                        Text("▶")
-                                    }
-                                    if (watched != null) ProgressStrip(watched, Modifier.align(Alignment.BottomCenter))
-                                }
-                                Column(Modifier.weight(1f)) {
-                                    Text("الحلقة ${ep.number}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
-                                    Text(ep.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                    watched?.let { w ->
-                                        Text(
-                                            if (w.finished) "✓ شاهدتها" else if (w.durationMs > 0) "وصلت ${com.alyoushw.watchhub.player.formatTime(w.positionMs)} من ${com.alyoushw.watchhub.player.formatTime(w.durationMs)}" else "بدأتها",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                }
-                            }
+                            val watched = history.firstOrNull { it.key == WatchEntry.keyOf(account, WatchEntry.EPISODE, ep.id) }
+                            EpisodeRow(ep, watched, current = ep.id == resume?.id && watched?.finished != true) { playEpisode(ep) }
                         }
                     }
                 }
@@ -480,7 +454,8 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
 
 /**
  * "مشاهدة" next to the poster on a title page: plays the film (or opens the series) straight
- * from the user's Xtream Codes account when it is there.
+ * from the user's Xtream Codes accounts. With several accounts there is one button for each
+ * account that has it ("مشاهدة · <name>").
  */
 @Composable
 fun XtreamWatchButton(
@@ -492,50 +467,143 @@ fun XtreamWatchButton(
 ) {
     val container = appContainer()
     val context = LocalContext.current
-    val account by container.settings.xtream.collectAsStateWithLifecycle()
-    if (!account.isComplete) return
+    val accounts by container.settings.xtreamAccounts.collectAsStateWithLifecycle()
+    val usable = accounts.filter { it.isComplete }
+    if (usable.isEmpty()) return
 
-    var searching by remember(tmdbId, account) { mutableStateOf(true) }
-    var match by remember(tmdbId, account) { mutableStateOf<XtreamItem?>(null) }
-    LaunchedEffect(tmdbId, account) {
-        match = try {
-            container.xtream.findMatch(if (isSeries) XtreamKind.SERIES else XtreamKind.MOVIE, tmdbId, titles, year)
-        } catch (e: XtreamException) {
-            null
+    var searching by remember(tmdbId, usable) { mutableStateOf(true) }
+    var matches by remember(tmdbId, usable) { mutableStateOf<List<Pair<XtreamAccount, XtreamItem>>>(emptyList()) }
+    LaunchedEffect(tmdbId, usable) {
+        matches = coroutineScope {
+            usable.map { acc ->
+                async {
+                    try {
+                        container.xtream.findMatch(if (isSeries) XtreamKind.SERIES else XtreamKind.MOVIE, tmdbId, titles, year, acc)?.let { acc to it }
+                    } catch (e: XtreamException) {
+                        null
+                    }
+                }
+            }.awaitAll().filterNotNull()
         }
         searching = false
     }
 
-    val found = match
-    Button(
-        enabled = found != null,
-        onClick = {
-            if (found == null) return@Button
-            if (found.kind == XtreamKind.SERIES) {
-                onOpenSeries(found.id)
-            } else {
-                PlayerActivity.start(context, container.xtream.playUrls(found), WatchEntry.movie(found))
-            }
-        },
-        colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Color(0xFF1C1206)),
-        modifier = Modifier.height(44.dp).focusFrame(),
-    ) {
-        when {
-            searching -> {
-                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.width(8.dp))
-                Text("نبحث في حسابك…")
-            }
-            found == null -> Text("مو موجود في حسابك")
-            else -> {
-                Icon(Icons.Filled.PlayArrow, contentDescription = null)
-                Spacer(Modifier.width(6.dp))
-                Text("مشاهدة", fontWeight = FontWeight.Bold)
+    val colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Color(0xFF1C1206))
+    when {
+        searching -> Button(onClick = {}, enabled = false, colors = colors, modifier = Modifier.height(44.dp)) {
+            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(8.dp))
+            Text(if (usable.size > 1) "نبحث في حساباتك…" else "نبحث في حسابك…")
+        }
+        matches.isEmpty() -> Button(onClick = {}, enabled = false, colors = colors, modifier = Modifier.height(44.dp)) {
+            Text(if (usable.size > 1) "مو موجود في حساباتك" else "مو موجود في حسابك")
+        }
+        else -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            matches.forEach { (acc, found) ->
+                Button(
+                    onClick = {
+                        if (found.kind == XtreamKind.SERIES) {
+                            // The series page shows the active account, so switch to the one that has it.
+                            container.settings.setActiveXtream(acc.id)
+                            onOpenSeries(found.id)
+                        } else {
+                            PlayerActivity.start(context, container.xtream.playUrls(found, acc), WatchEntry.movie(found, acc, tmdbId))
+                        }
+                    },
+                    colors = colors,
+                    modifier = Modifier.height(44.dp).focusFrame(),
+                ) {
+                    Icon(Icons.Filled.PlayArrow, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (usable.size > 1) "مشاهدة · ${acc.label}" else "مشاهدة", fontWeight = FontWeight.Bold)
+                }
             }
         }
     }
 }
 
+/** An episode in the list: gold frame and "تشاهدها" while in progress, faded with ✓ once finished. */
+@Composable
+private fun EpisodeRow(ep: XtreamEpisode, watched: WatchEntry?, current: Boolean, onClick: () -> Unit) {
+    val finished = watched?.finished == true
+    val shape = RoundedCornerShape(12.dp)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .focusHighlight(shape)
+            .clip(shape)
+            .background(if (current) Gold.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant)
+            .border(if (current) 2.dp else 0.dp, if (current) Gold else Color.Transparent, shape)
+            .clickable(onClick = onClick)
+            .graphicsLayer { alpha = if (finished) 0.55f else 1f }
+            .padding(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(
+            Modifier.size(width = 112.dp, height = 63.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surface),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (ep.image != null) {
+                AsyncImage(model = ep.image, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            }
+            Box(
+                Modifier.size(30.dp).clip(CircleShape).background(if (finished) Color(0xFF2E7D4F) else Color.Black.copy(alpha = 0.55f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (finished) Text("✓", color = Color.White, fontWeight = FontWeight.Bold) else Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(18.dp))
+            }
+            if (watched != null && !finished) ProgressStrip(watched, Modifier.align(Alignment.BottomCenter))
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("الحلقة ${ep.number}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
+                when {
+                    finished -> Tag("✓ خلصتها", Color(0xFF2E7D4F))
+                    current || (watched != null && watched.durationMs > 0) -> Tag("▶ تشاهدها", Gold, dark = true)
+                }
+            }
+            Text(ep.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (watched != null && !finished && watched.durationMs > 0) {
+                Text(
+                    "وصلت ${com.alyoushw.watchhub.player.formatTime(watched.positionMs)} من ${com.alyoushw.watchhub.player.formatTime(watched.durationMs)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun Tag(text: String, color: Color, dark: Boolean = false) {
+    Text(
+        text,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold,
+        color = if (dark) Color(0xFF1C1206) else Color.White,
+        modifier = Modifier.clip(RoundedCornerShape(5.dp)).background(color).padding(horizontal = 6.dp, vertical = 1.dp),
+    )
+}
+
+/** Chips to pick which Xtream account the channels / films / series screens show (only with 2+). */
+@Composable
+fun AccountSwitcher(modifier: Modifier = Modifier) {
+    val container = appContainer()
+    val accounts by container.settings.xtreamAccounts.collectAsStateWithLifecycle()
+    val active by container.settings.xtream.collectAsStateWithLifecycle()
+    if (accounts.size < 2) return
+    LazyRow(modifier, contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(accounts, key = { it.id }) { acc ->
+            FilterChip(
+                modifier = Modifier.focusFrame(),
+                selected = acc.id == active.id,
+                onClick = { container.settings.setActiveXtream(acc.id) },
+                label = { Text(acc.label, maxLines = 1) },
+            )
+        }
+    }
+}
 
 /** Thin gold bar along the bottom of a thumbnail: how much of it was watched. */
 @Composable
@@ -549,14 +617,86 @@ fun ProgressStrip(entry: WatchEntry, modifier: Modifier = Modifier) {
 /** "تابع المشاهدة": channels, films and episodes played lately, resuming where the user stopped. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ContinueWatchingRow(onOpenSeries: (String) -> Unit) {
+fun ContinueWatchingRow(
+    onOpenSeries: (String) -> Unit,
+    onOpenTitle: (MediaType, Int) -> Unit = { _, _ -> },
+    onOpenLive: () -> Unit = {},
+) {
     val container = appContainer()
     val context = LocalContext.current
-    val account by container.settings.xtream.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    val accounts by container.settings.xtreamAccounts.collectAsStateWithLifecycle()
     val entries by container.history.entries.collectAsStateWithLifecycle()
-    if (!account.isComplete) return
-    val list = remember(entries) { container.history.continueList().take(20) }
+    var menuFor by remember { mutableStateOf<WatchEntry?>(null) }
+    if (accounts.isEmpty()) return
+    val list = remember(entries, accounts) {
+        val ids = accounts.map { it.id }.toSet()
+        container.history.continueList().filter { it.accountId in ids }.take(20)
+    }
     if (list.isEmpty()) return
+
+    fun openSeries(e: WatchEntry) {
+        e.accountId?.let { container.settings.setActiveXtream(it) }
+        e.seriesId?.let(onOpenSeries)
+    }
+
+    // Long press: open the title's own page, or drop it from the row.
+    menuFor?.let { e ->
+        val openLabel = when (e.kind) {
+            WatchEntry.EPISODE -> "افتح صفحة المسلسل"
+            WatchEntry.MOVIE -> "افتح صفحة الفيلم"
+            else -> "افتح القنوات المباشرة"
+        }
+        AlertDialog(
+            onDismissRequest = { menuFor = null },
+            title = { Text(e.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        modifier = Modifier.fillMaxWidth().focusFrame(),
+                        onClick = {
+                            menuFor = null
+                            when (e.kind) {
+                                WatchEntry.EPISODE -> openSeries(e)
+                                WatchEntry.LIVE -> {
+                                    e.accountId?.let { container.settings.setActiveXtream(it) }
+                                    onOpenLive()
+                                }
+                                else -> {
+                                    val known = e.tmdbId
+                                    if (known != null) {
+                                        onOpenTitle(MediaType.MOVIE, known)
+                                    } else {
+                                        // Not matched yet: look the film up on TMDB by its name.
+                                        scope.launch {
+                                            val hit = runCatching {
+                                                container.api.search(XtreamApi.normalizeTitle(e.title)).firstOrNull { it.type == MediaType.MOVIE }
+                                            }.getOrNull()
+                                            if (hit != null) {
+                                                onOpenTitle(MediaType.MOVIE, hit.id)
+                                            } else {
+                                                android.widget.Toast.makeText(context, "ما لقينا صفحة لهذا الفيلم", android.widget.Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                    ) { Text(openLabel) }
+                    OutlinedButton(
+                        modifier = Modifier.fillMaxWidth().focusFrame(),
+                        onClick = {
+                            container.history.remove(e.key)
+                            menuFor = null
+                            android.widget.Toast.makeText(context, "انحذف من «تابع المشاهدة»", android.widget.Toast.LENGTH_SHORT).show()
+                        },
+                    ) { Text("احذف من تابع المشاهدة", color = MaterialTheme.colorScheme.error) }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = { menuFor = null }) { Text("إلغاء") } },
+        )
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SectionTitle("تابع المشاهدة", Modifier.padding(horizontal = 16.dp))
@@ -571,15 +711,12 @@ fun ContinueWatchingRow(onOpenSeries: (String) -> Unit) {
                         .combinedClickable(
                             onClick = {
                                 if (e.kind == WatchEntry.EPISODE && e.finished && e.seriesId != null) {
-                                    onOpenSeries(e.seriesId)
+                                    openSeries(e)
                                 } else {
                                     PlayerActivity.start(context, container.xtream.playUrls(e), e)
                                 }
                             },
-                            onLongClick = {
-                                container.history.remove(e.key)
-                                android.widget.Toast.makeText(context, "انشال من «تابع المشاهدة»", android.widget.Toast.LENGTH_SHORT).show()
-                            },
+                            onLongClick = { menuFor = e },
                         ),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
@@ -617,6 +754,11 @@ fun ContinueWatchingRow(onOpenSeries: (String) -> Unit) {
                         else -> null
                     }
                     sub?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    if (accounts.size > 1) {
+                        accounts.firstOrNull { it.id == e.accountId }?.let {
+                            Text(it.label, style = MaterialTheme.typography.labelSmall, color = Gold, maxLines = 1)
+                        }
+                    }
                 }
             }
         }

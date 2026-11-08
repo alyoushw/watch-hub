@@ -20,9 +20,19 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
-/** The user's own Xtream Codes login from their provider. */
-data class XtreamAccount(val host: String, val username: String, val password: String) {
+/** One of the user's Xtream Codes logins from their providers, with the name they gave it. */
+@kotlinx.serialization.Serializable
+data class XtreamAccount(
+    val host: String,
+    val username: String,
+    val password: String,
+    val id: String = "",
+    val name: String = "",
+) {
     val isComplete: Boolean get() = host.isNotBlank() && username.isNotBlank() && password.isNotBlank()
+
+    /** What to call it on buttons: the user's name for it, else the server's host. */
+    val label: String get() = name.ifBlank { host.substringAfter("://").substringBefore("/") }
 }
 
 /** What the provider says about the account (from player_api.php's user_info). */
@@ -87,7 +97,8 @@ class XtreamApi(private val settings: SettingsStore) {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    private val account: XtreamAccount get() = settings.xtream.value
+    /** The account shown on the channels / films / series screens. */
+    private val active: XtreamAccount get() = settings.xtream.value
 
     /** Logs in with [account] and returns the account details, or throws [XtreamException]. */
     suspend fun check(account: XtreamAccount): XtreamAccountInfo {
@@ -102,7 +113,7 @@ class XtreamApi(private val settings: SettingsStore) {
         )
     }
 
-    suspend fun categories(kind: XtreamKind): List<XtreamCategory> =
+    suspend fun categories(kind: XtreamKind, account: XtreamAccount = active): List<XtreamCategory> =
         (call(account, kind.categoriesAction) as? JsonArray).orEmpty()
             .mapNotNull { it as? JsonObject }
             .mapNotNull { c ->
@@ -111,7 +122,7 @@ class XtreamApi(private val settings: SettingsStore) {
             }
             .distinctBy { it.id }
 
-    suspend fun items(kind: XtreamKind, categoryId: String?): List<XtreamItem> {
+    suspend fun items(kind: XtreamKind, categoryId: String?, account: XtreamAccount = active): List<XtreamItem> {
         val params = categoryId?.let { mapOf("category_id" to it) }.orEmpty()
         return (call(account, kind.listAction, params) as? JsonArray).orEmpty()
             .mapNotNull { it as? JsonObject }
@@ -139,18 +150,18 @@ class XtreamApi(private val settings: SettingsStore) {
     private val cacheLock = Mutex()
 
     /** Every item of [kind] in the account, loaded once per login and kept in memory. */
-    suspend fun all(kind: XtreamKind): List<XtreamItem> {
+    suspend fun all(kind: XtreamKind, account: XtreamAccount = active): List<XtreamItem> {
         val key = "${account.host}|${account.username}|$kind"
         cacheLock.withLock {
             cache[key]?.let { return it }
-            val list = items(kind, null)
+            val list = items(kind, null, account)
             cache[key] = list
             return list
         }
     }
 
     /** Now and next on a channel (titles come base64-encoded). */
-    suspend fun shortEpg(streamId: String): List<XtreamProgram> {
+    suspend fun shortEpg(streamId: String, account: XtreamAccount = active): List<XtreamProgram> {
         val root = call(account, "get_short_epg", mapOf("stream_id" to streamId, "limit" to "2")) as? JsonObject
             ?: return emptyList()
         return (root["epg_listings"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }.mapNotNull { p ->
@@ -167,8 +178,14 @@ class XtreamApi(private val settings: SettingsStore) {
      * Finds a film or series from a title page in the account: by TMDB id when the provider
      * lists it, otherwise by name (Arabic or English), preferring the same year.
      */
-    suspend fun findMatch(kind: XtreamKind, tmdbId: Int, titles: List<String>, year: String?): XtreamItem? {
-        val list = all(kind)
+    suspend fun findMatch(
+        kind: XtreamKind,
+        tmdbId: Int,
+        titles: List<String>,
+        year: String?,
+        account: XtreamAccount = active,
+    ): XtreamItem? {
+        val list = all(kind, account)
         list.firstOrNull { it.tmdb == tmdbId.toString() }?.let { return it }
         val wanted = titles.map { normalizeTitle(it) }.filter { it.length >= 2 }.toSet()
         if (wanted.isEmpty()) return null
@@ -176,7 +193,7 @@ class XtreamApi(private val settings: SettingsStore) {
         return hits.firstOrNull { year != null && (it.year == year || it.name.contains(year)) } ?: hits.firstOrNull()
     }
 
-    suspend fun series(seriesId: String): XtreamSeries {
+    suspend fun series(seriesId: String, account: XtreamAccount = active): XtreamSeries {
         val root = call(account, "get_series_info", mapOf("series_id" to seriesId)) as? JsonObject ?: throw notXtream()
         val info = root["info"] as? JsonObject
         // Episodes come as {"1": [...], "2": [...]} on most servers, a plain list on some.
@@ -206,24 +223,26 @@ class XtreamApi(private val settings: SettingsStore) {
     }
 
     /** Links to try in order for a channel or a film (live: HLS first, then MPEG-TS). */
-    fun playUrls(item: XtreamItem): List<String> = when (item.kind) {
-        XtreamKind.LIVE -> listOf(streamUrl("live", "${item.id}.m3u8"), streamUrl("live", "${item.id}.ts"))
-        XtreamKind.MOVIE -> listOf(streamUrl("movie", "${item.id}.${item.extension ?: "mp4"}"))
+    fun playUrls(item: XtreamItem, account: XtreamAccount = active): List<String> = when (item.kind) {
+        XtreamKind.LIVE -> listOf(streamUrl(account, "live", "${item.id}.m3u8"), streamUrl(account, "live", "${item.id}.ts"))
+        XtreamKind.MOVIE -> listOf(streamUrl(account, "movie", "${item.id}.${item.extension ?: "mp4"}"))
         XtreamKind.SERIES -> emptyList()
     }
 
-    /** Links for something from the watch history (same order as for the item itself). */
-    fun playUrls(entry: WatchEntry): List<String> = when (entry.kind) {
-        WatchEntry.LIVE -> listOf(streamUrl("live", "${entry.itemId}.m3u8"), streamUrl("live", "${entry.itemId}.ts"))
-        WatchEntry.MOVIE -> listOf(streamUrl("movie", "${entry.itemId}.${entry.ext ?: "mp4"}"))
-        else -> listOf(streamUrl("series", "${entry.itemId}.${entry.ext ?: "mp4"}"))
+    /** Links for something from the watch history, from the account it was watched on. */
+    fun playUrls(entry: WatchEntry): List<String> {
+        val a = settings.xtreamAccount(entry.accountId) ?: active
+        return when (entry.kind) {
+            WatchEntry.LIVE -> listOf(streamUrl(a, "live", "${entry.itemId}.m3u8"), streamUrl(a, "live", "${entry.itemId}.ts"))
+            WatchEntry.MOVIE -> listOf(streamUrl(a, "movie", "${entry.itemId}.${entry.ext ?: "mp4"}"))
+            else -> listOf(streamUrl(a, "series", "${entry.itemId}.${entry.ext ?: "mp4"}"))
+        }
     }
 
-    fun playUrls(episode: XtreamEpisode): List<String> =
-        listOf(streamUrl("series", "${episode.id}.${episode.extension ?: "mp4"}"))
+    fun playUrls(episode: XtreamEpisode, account: XtreamAccount = active): List<String> =
+        listOf(streamUrl(account, "series", "${episode.id}.${episode.extension ?: "mp4"}"))
 
-    private fun streamUrl(type: String, file: String): String {
-        val a = account
+    private fun streamUrl(a: XtreamAccount, type: String, file: String): String {
         return baseUrl(a).newBuilder()
             .addPathSegment(type)
             .addPathSegment(a.username)

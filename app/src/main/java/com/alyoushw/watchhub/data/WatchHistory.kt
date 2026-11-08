@@ -14,7 +14,7 @@ import kotlinx.serialization.json.Json
  */
 @Serializable
 data class WatchEntry(
-    /** "live:123", "movie:900" or "episode:5001". */
+    /** "<account>:live:123", "<account>:movie:900" or "<account>:episode:5001". */
     val key: String,
     val kind: String,
     val itemId: String,
@@ -26,6 +26,10 @@ data class WatchEntry(
     val positionMs: Long = 0,
     val durationMs: Long = 0,
     val updatedAt: Long = 0,
+    /** Which Xtream account it was watched on (see SettingsStore.xtreamAccounts). */
+    val accountId: String? = null,
+    /** The TMDB title, when known, for "افتح صفحة الفيلم". */
+    val tmdbId: Int? = null,
 ) {
     val isLive: Boolean get() = kind == LIVE
 
@@ -40,15 +44,18 @@ data class WatchEntry(
         const val MOVIE = "movie"
         const val EPISODE = "episode"
 
-        fun keyOf(kind: String, id: String) = "$kind:$id"
+        fun keyOf(account: XtreamAccount, kind: String, id: String) = "${account.id}:$kind:$id"
 
-        fun live(item: XtreamItem) = WatchEntry(keyOf(LIVE, item.id), LIVE, item.id, item.name, image = item.image)
+        fun live(item: XtreamItem, account: XtreamAccount) =
+            WatchEntry(keyOf(account, LIVE, item.id), LIVE, item.id, item.name, image = item.image, accountId = account.id)
 
-        fun movie(item: XtreamItem) =
-            WatchEntry(keyOf(MOVIE, item.id), MOVIE, item.id, item.name, image = item.image, ext = item.extension)
+        fun movie(item: XtreamItem, account: XtreamAccount, tmdbId: Int? = null) = WatchEntry(
+            keyOf(account, MOVIE, item.id), MOVIE, item.id, item.name, image = item.image, ext = item.extension,
+            accountId = account.id, tmdbId = tmdbId ?: item.tmdb?.toIntOrNull(),
+        )
 
-        fun episode(seriesId: String, seriesName: String, cover: String?, ep: XtreamEpisode) = WatchEntry(
-            key = keyOf(EPISODE, ep.id),
+        fun episode(account: XtreamAccount, seriesId: String, seriesName: String, cover: String?, ep: XtreamEpisode) = WatchEntry(
+            key = keyOf(account, EPISODE, ep.id),
             kind = EPISODE,
             itemId = ep.id,
             title = seriesName,
@@ -56,17 +63,18 @@ data class WatchEntry(
             image = ep.image ?: cover,
             ext = ep.extension,
             seriesId = seriesId,
+            accountId = account.id,
         )
     }
 }
 
-/** Watch history on the device, newest first; one list per Xtream login. */
-class WatchHistory(context: Context, private val settings: SettingsStore) {
+/** Watch history on the device, newest first, across all Xtream accounts. */
+class WatchHistory(context: Context) {
     private val prefs = context.getSharedPreferences("history", Context.MODE_PRIVATE)
     private val json = Json { ignoreUnknownKeys = true }
     private val serializer = ListSerializer(WatchEntry.serializer())
 
-    private fun prefKey(): String = settings.xtream.value.let { "items|${it.host}|${it.username}" }
+    private fun prefKey(): String = "items_v2"
 
     private fun load(): List<WatchEntry> =
         runCatching { json.decodeFromString(serializer, prefs.getString(prefKey(), "[]") ?: "[]") }.getOrDefault(emptyList())
@@ -106,7 +114,7 @@ class WatchHistory(context: Context, private val settings: SettingsStore) {
         val seenSeries = mutableSetOf<String>()
         return _entries.value.filter { e ->
             when {
-                e.kind == WatchEntry.EPISODE && e.seriesId != null -> seenSeries.add(e.seriesId)
+                e.kind == WatchEntry.EPISODE && e.seriesId != null -> seenSeries.add("${e.accountId}:${e.seriesId}")
                 e.kind == WatchEntry.MOVIE -> !e.finished
                 else -> true
             }

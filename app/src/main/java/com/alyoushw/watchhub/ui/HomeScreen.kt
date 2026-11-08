@@ -458,7 +458,7 @@ fun HomeScreen(
                             onOpen = { item -> item.type?.let { onOpen(it, item.id) } },
                         )
                     }
-                    item(key = "continue") { ContinueWatchingRow(onOpenXtreamSeries) }
+                    item(key = "continue") { ContinueWatchingRow(onOpenXtreamSeries, onOpenTitle = onOpen, onOpenLive = { live = true }) }
                     items(vm.sections.filter { !(it.wide && it.id == hero?.id) }, key = { it.id }) { section ->
                         TitleRow(
                             title = section.title,

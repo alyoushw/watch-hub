@@ -56,32 +56,66 @@ class SettingsStore(context: Context) {
         _titleHintSeconds.value = value
     }
 
-    private val _xtream = MutableStateFlow(
-        XtreamAccount(
+    private val accountsJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+    private val accountsSerializer = kotlinx.serialization.builtins.ListSerializer(XtreamAccount.serializer())
+
+    private fun loadAccounts(): List<XtreamAccount> {
+        prefs.getString(KEY_XTREAM_ACCOUNTS, null)?.let { raw ->
+            return runCatching { accountsJson.decodeFromString(accountsSerializer, raw) }.getOrDefault(emptyList())
+        }
+        // The single account of earlier versions becomes the first one in the list.
+        val old = XtreamAccount(
             host = prefs.getString(KEY_XTREAM_HOST, "").orEmpty(),
             username = prefs.getString(KEY_XTREAM_USER, "").orEmpty(),
             password = prefs.getString(KEY_XTREAM_PASS, "").orEmpty(),
-        ),
-    )
-
-    /** The user's Xtream Codes login (host, username, password) from their official provider. */
-    val xtream: StateFlow<XtreamAccount> = _xtream.asStateFlow()
-
-    fun setXtream(account: XtreamAccount) {
-        val clean = XtreamAccount(
-            host = account.host.trim().takeIf { it.isNotEmpty() }?.let { XtreamApi.normalizeHost(it) }.orEmpty(),
-            username = account.username.trim(),
-            password = account.password,
+            id = "a1",
+            name = "حسابي",
         )
-        prefs.edit()
-            .putString(KEY_XTREAM_HOST, clean.host)
-            .putString(KEY_XTREAM_USER, clean.username)
-            .putString(KEY_XTREAM_PASS, clean.password)
-            .apply()
-        _xtream.value = clean
+        return if (old.isComplete) listOf(old) else emptyList()
     }
 
-    fun clearXtream() = setXtream(XtreamAccount("", "", ""))
+    private val _xtreamAccounts = MutableStateFlow(loadAccounts())
+
+    /** Every Xtream Codes login the user added, in the order added. */
+    val xtreamAccounts: StateFlow<List<XtreamAccount>> = _xtreamAccounts.asStateFlow()
+
+    private fun pickActive(id: String?): XtreamAccount =
+        _xtreamAccounts.value.firstOrNull { it.id == id } ?: _xtreamAccounts.value.firstOrNull() ?: XtreamAccount("", "", "")
+
+    private val _xtream = MutableStateFlow(pickActive(prefs.getString(KEY_XTREAM_ACTIVE, null)))
+
+    /** The account the channels, films and series screens are showing. */
+    val xtream: StateFlow<XtreamAccount> = _xtream.asStateFlow()
+
+    fun xtreamAccount(id: String?): XtreamAccount? = _xtreamAccounts.value.firstOrNull { it.id == id }
+
+    private fun storeAccounts(list: List<XtreamAccount>) {
+        _xtreamAccounts.value = list
+        prefs.edit().putString(KEY_XTREAM_ACCOUNTS, accountsJson.encodeToString(accountsSerializer, list)).apply()
+        _xtream.value = pickActive(_xtream.value.id)
+    }
+
+    /** Adds [account], or replaces the one with the same id. Returns the saved copy. */
+    fun saveXtreamAccount(account: XtreamAccount): XtreamAccount {
+        val id = account.id.ifBlank { "a" + System.currentTimeMillis().toString(36) }
+        val clean = account.copy(
+            id = id,
+            name = account.name.trim(),
+            host = account.host.trim().takeIf { it.isNotEmpty() }?.let { XtreamApi.normalizeHost(it) }.orEmpty(),
+            username = account.username.trim(),
+        )
+        val list = _xtreamAccounts.value
+        storeAccounts(if (list.any { it.id == id }) list.map { if (it.id == id) clean else it } else list + clean)
+        if (list.isEmpty()) setActiveXtream(id)
+        return clean
+    }
+
+    fun removeXtreamAccount(id: String) = storeAccounts(_xtreamAccounts.value.filter { it.id != id })
+
+    fun setActiveXtream(id: String) {
+        prefs.edit().putString(KEY_XTREAM_ACTIVE, id).apply()
+        _xtream.value = pickActive(id)
+    }
 
     private val _xtreamFavorites = MutableStateFlow(
         prefs.getString(KEY_XTREAM_FAV, "").orEmpty().split(',').filter { it.isNotBlank() }.toSet(),
@@ -130,6 +164,8 @@ class SettingsStore(context: Context) {
         const val KEY_XTREAM_HOST = "xtream_host"
         const val KEY_XTREAM_USER = "xtream_user"
         const val KEY_XTREAM_PASS = "xtream_pass"
+        const val KEY_XTREAM_ACCOUNTS = "xtream_accounts"
+        const val KEY_XTREAM_ACTIVE = "xtream_active"
         const val KEY_XTREAM_FAV = "xtream_favorites"
         const val KEY_XTREAM_RECENT = "xtream_recent"
     }

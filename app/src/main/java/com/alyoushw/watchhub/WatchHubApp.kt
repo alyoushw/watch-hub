@@ -26,7 +26,7 @@ class AppContainer(context: Context) {
     val jikan = JikanApi()
     val assistant = ClaudeAssistant(settings)
     val xtream = XtreamApi(settings)
-    val history = WatchHistory(context, settings)
+    val history = WatchHistory(context)
     val statusCache = StatusCache(context, api)
 
     private val navPrefs = context.getSharedPreferences("navigation", Context.MODE_PRIVATE)
