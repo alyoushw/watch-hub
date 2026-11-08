@@ -438,6 +438,7 @@ private fun XtreamSection(onOpen: () -> Unit) {
                 enabled = !testing && draft.isComplete,
                 onClick = {
                     container.settings.setXtream(draft)
+                    container.history.reload()
                     testing = true
                     result = null
                     scope.launch {
@@ -461,6 +462,7 @@ private fun XtreamSection(onOpen: () -> Unit) {
                     modifier = Modifier.focusFrame(),
                     onClick = {
                         container.settings.clearXtream()
+                        container.history.reload()
                         result = null
                     },
                 ) { Text("احذف الحساب", color = MaterialTheme.colorScheme.error) }

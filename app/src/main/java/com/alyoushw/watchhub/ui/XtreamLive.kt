@@ -149,7 +149,7 @@ fun LiveChannels() {
 
     val play: (XtreamItem) -> Unit = { ch ->
         container.settings.addXtreamRecent(ch.id)
-        PlayerActivity.start(context, container.xtream.playUrls(ch), ch.name)
+        PlayerActivity.start(context, container.xtream.playUrls(ch), com.alyoushw.watchhub.data.WatchEntry.live(ch))
     }
 
     when {

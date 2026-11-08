@@ -1,5 +1,9 @@
 package com.alyoushw.watchhub.ui
 
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material.icons.filled.PlayArrow
@@ -68,6 +72,8 @@ import com.alyoushw.watchhub.data.XtreamException
 import com.alyoushw.watchhub.data.XtreamItem
 import com.alyoushw.watchhub.data.XtreamKind
 import com.alyoushw.watchhub.data.XtreamSeries
+import com.alyoushw.watchhub.data.XtreamEpisode
+import com.alyoushw.watchhub.data.WatchEntry
 import com.alyoushw.watchhub.player.PlayerActivity
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -252,7 +258,7 @@ private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind
                                 if (item.kind == XtreamKind.SERIES) {
                                     onOpenSeries(item.id)
                                 } else {
-                                    PlayerActivity.start(context, container.xtream.playUrls(item), item.name)
+                                    PlayerActivity.start(context, container.xtream.playUrls(item), WatchEntry.movie(item))
                                 }
                             }
                         }
@@ -335,6 +341,10 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
         XtreamSeriesViewModel(container.xtream, seriesId)
     }
     val series = vm.series
+    val history by container.history.entries.collectAsStateWithLifecycle()
+    val playEpisode: (XtreamEpisode) -> Unit = { ep ->
+        series?.let { PlayerActivity.start(context, container.xtream.playUrls(ep), WatchEntry.episode(seriesId, it.name, it.cover, ep)) }
+    }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
@@ -356,11 +366,34 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
                 series.episodes.isEmpty() -> MessageBox("ما فيه حلقات لهذا المسلسل")
                 else -> {
                     val seasons = remember(series) { series.episodes.map { it.season }.distinct() }
-                    var season by remember(series) { mutableStateOf(seasons.first()) }
+                    // Where the user is in this series: the last episode played, or the next one if it was finished.
+                    val resume = remember(series, history) {
+                        val last = history.firstOrNull { it.kind == WatchEntry.EPISODE && it.seriesId == seriesId }
+                        val i = series.episodes.indexOfFirst { it.id == last?.itemId }
+                        when {
+                            i < 0 -> null
+                            last?.finished == true -> series.episodes.getOrNull(i + 1)
+                            else -> series.episodes[i]
+                        }
+                    }
+                    var season by remember(series) { mutableStateOf(resume?.season ?: seasons.first()) }
                     LazyColumn(
                         contentPadding = PaddingValues(12.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
+                        resume?.let { ep ->
+                            item(key = "resume") {
+                                Button(
+                                    onClick = { playEpisode(ep) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Color(0xFF1C1206)),
+                                    modifier = Modifier.fillMaxWidth().height(50.dp).focusFrame(),
+                                ) {
+                                    Icon(Icons.Filled.PlayArrow, contentDescription = null)
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("كمّل: الموسم ${ep.season} · الحلقة ${ep.number}", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
                         item {
                             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 if (series.cover != null) {
@@ -396,14 +429,13 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
                             }
                         }
                         items(series.episodes.filter { it.season == season }, key = { it.id }) { ep ->
+                            val watched = history.firstOrNull { it.key == WatchEntry.keyOf(WatchEntry.EPISODE, ep.id) }
                             Row(
                                 Modifier
                                     .fillMaxWidth()
                                     .focusHighlight()
                                     .clip(RoundedCornerShape(10.dp))
-                                    .clickable {
-                                        PlayerActivity.start(context, container.xtream.playUrls(ep), "${series.name} - ${ep.title}")
-                                    }
+                                    .clickable { playEpisode(ep) }
                                     .background(MaterialTheme.colorScheme.surfaceVariant)
                                     .padding(10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -424,10 +456,18 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
                                     } else {
                                         Text("▶")
                                     }
+                                    if (watched != null) ProgressStrip(watched, Modifier.align(Alignment.BottomCenter))
                                 }
                                 Column(Modifier.weight(1f)) {
                                     Text("الحلقة ${ep.number}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
                                     Text(ep.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    watched?.let { w ->
+                                        Text(
+                                            if (w.finished) "✓ شاهدتها" else if (w.durationMs > 0) "وصلت ${com.alyoushw.watchhub.player.formatTime(w.positionMs)} من ${com.alyoushw.watchhub.player.formatTime(w.durationMs)}" else "بدأتها",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -474,7 +514,7 @@ fun XtreamWatchButton(
             if (found.kind == XtreamKind.SERIES) {
                 onOpenSeries(found.id)
             } else {
-                PlayerActivity.start(context, container.xtream.playUrls(found), found.name)
+                PlayerActivity.start(context, container.xtream.playUrls(found), WatchEntry.movie(found))
             }
         },
         colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Color(0xFF1C1206)),
@@ -491,6 +531,93 @@ fun XtreamWatchButton(
                 Icon(Icons.Filled.PlayArrow, contentDescription = null)
                 Spacer(Modifier.width(6.dp))
                 Text("مشاهدة", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+
+/** Thin gold bar along the bottom of a thumbnail: how much of it was watched. */
+@Composable
+fun ProgressStrip(entry: WatchEntry, modifier: Modifier = Modifier) {
+    if (entry.isLive || entry.durationMs <= 0) return
+    Box(modifier.fillMaxWidth().height(4.dp).background(Color.Black.copy(alpha = 0.55f))) {
+        Box(Modifier.fillMaxWidth(entry.progress).height(4.dp).background(Gold))
+    }
+}
+
+/** "تابع المشاهدة": channels, films and episodes played lately, resuming where the user stopped. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun ContinueWatchingRow(onOpenSeries: (String) -> Unit) {
+    val container = appContainer()
+    val context = LocalContext.current
+    val account by container.settings.xtream.collectAsStateWithLifecycle()
+    val entries by container.history.entries.collectAsStateWithLifecycle()
+    if (!account.isComplete) return
+    val list = remember(entries) { container.history.continueList().take(20) }
+    if (list.isEmpty()) return
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SectionTitle("تابع المشاهدة", Modifier.padding(horizontal = 16.dp))
+        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(list, key = { it.key }) { e ->
+                val shape = RoundedCornerShape(12.dp)
+                Column(
+                    Modifier
+                        .width(220.dp)
+                        .focusHighlight(shape)
+                        .clip(shape)
+                        .combinedClickable(
+                            onClick = {
+                                if (e.kind == WatchEntry.EPISODE && e.finished && e.seriesId != null) {
+                                    onOpenSeries(e.seriesId)
+                                } else {
+                                    PlayerActivity.start(context, container.xtream.playUrls(e), e)
+                                }
+                            },
+                            onLongClick = {
+                                container.history.remove(e.key)
+                                android.widget.Toast.makeText(context, "انشال من «تابع المشاهدة»", android.widget.Toast.LENGTH_SHORT).show()
+                            },
+                        ),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Box(
+                        Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(shape).background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (e.image != null) {
+                            AsyncImage(
+                                model = e.image,
+                                contentDescription = null,
+                                contentScale = if (e.isLive) ContentScale.Fit else ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize().padding(if (e.isLive) 18.dp else 0.dp),
+                            )
+                        }
+                        Box(Modifier.size(42.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.55f)), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = Color.White)
+                        }
+                        if (e.isLive) {
+                            Text(
+                                "● مباشر",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.align(Alignment.TopStart).padding(8.dp).clip(RoundedCornerShape(5.dp))
+                                    .background(Color(0xFFE5484D)).padding(horizontal = 6.dp, vertical = 2.dp),
+                            )
+                        }
+                        ProgressStrip(e, Modifier.align(Alignment.BottomCenter))
+                    }
+                    Text(e.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                    val sub = e.subtitle ?: when {
+                        e.isLive -> "قناة مباشرة"
+                        e.durationMs > 0 -> "باقي ${com.alyoushw.watchhub.player.formatTime(e.durationMs - e.positionMs)}"
+                        else -> null
+                    }
+                    sub?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                }
             }
         }
     }

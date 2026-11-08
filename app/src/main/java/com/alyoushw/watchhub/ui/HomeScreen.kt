@@ -387,7 +387,12 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, onSeeAll: (HomeSection) -> Unit) {
+fun HomeScreen(
+    onOpen: (MediaType, Int) -> Unit,
+    onOpenSettings: () -> Unit,
+    onSeeAll: (HomeSection) -> Unit,
+    onOpenXtreamSeries: (String) -> Unit = {},
+) {
     val container = appContainer()
     val vm: HomeViewModel = viewModel { HomeViewModel(container) }
     val apiKey by container.settings.apiKey.collectAsStateWithLifecycle()
@@ -453,6 +458,7 @@ fun HomeScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, onS
                             onOpen = { item -> item.type?.let { onOpen(it, item.id) } },
                         )
                     }
+                    item(key = "continue") { ContinueWatchingRow(onOpenXtreamSeries) }
                     items(vm.sections.filter { !(it.wide && it.id == hero?.id) }, key = { it.id }) { section ->
                         TitleRow(
                             title = section.title,

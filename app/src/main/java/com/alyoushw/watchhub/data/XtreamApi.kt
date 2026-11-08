@@ -212,6 +212,13 @@ class XtreamApi(private val settings: SettingsStore) {
         XtreamKind.SERIES -> emptyList()
     }
 
+    /** Links for something from the watch history (same order as for the item itself). */
+    fun playUrls(entry: WatchEntry): List<String> = when (entry.kind) {
+        WatchEntry.LIVE -> listOf(streamUrl("live", "${entry.itemId}.m3u8"), streamUrl("live", "${entry.itemId}.ts"))
+        WatchEntry.MOVIE -> listOf(streamUrl("movie", "${entry.itemId}.${entry.ext ?: "mp4"}"))
+        else -> listOf(streamUrl("series", "${entry.itemId}.${entry.ext ?: "mp4"}"))
+    }
+
     fun playUrls(episode: XtreamEpisode): List<String> =
         listOf(streamUrl("series", "${episode.id}.${episode.extension ?: "mp4"}"))
 

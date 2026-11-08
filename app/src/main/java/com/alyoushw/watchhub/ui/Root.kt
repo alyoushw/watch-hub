@@ -112,6 +112,7 @@ fun WatchHubRoot() {
                 HomeScreen(
                     onOpen = { type, id -> nav.openDetail(type, id) },
                     onOpenSettings = { nav.switchTab(Tab.SETTINGS.route) },
+                    onOpenXtreamSeries = { sid -> nav.navigate("xtream/series/${Uri.encode(sid)}") },
                     onSeeAll = { section ->
                         val source = section.source
                         if (source != null) {
