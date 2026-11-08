@@ -2,7 +2,7 @@
 //
 // Browsers on an https page cannot reach most Xtream servers (plain http, no CORS), so the
 // page sends those requests through /proxy?url=… . HLS playlists are rewritten so every
-// segment also goes through the proxy. Runs on Deno and Deno Deploy (any target port works).
+// segment also goes through the proxy. Runs on Deno anywhere (Render, Docker, your own machine).
 //
 // Optional environment variables:
 //   PROXY_KEY    a password the page must send (set it in the app's settings too)
@@ -86,7 +86,7 @@ function rewritePlaylist(text: string, base: string, self: URL): string {
   }).join("\n");
 }
 
-// Hosts like Render and Railway pass the port in $PORT; Deno Deploy ignores it.
+// Hosts like Render pass the port to listen on in $PORT.
 const port = Number(Deno.env.get("PORT") ?? 8000);
 
 Deno.serve({ port }, (req) => {

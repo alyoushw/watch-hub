@@ -1,0 +1,15 @@
+# Render Blueprint for the Watch Hub web app (site + Xtream proxy) on the free plan.
+# Render: New → Blueprint → pick this repository and branch.
+services:
+  - type: web
+    name: watch-hub
+    runtime: docker
+    plan: free
+    rootDir: web
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    envVars:
+      # A password for the proxy; Render asks for it once. Put the same value in the
+      # site's settings under "مفتاح البروكسي" so nobody else can use your proxy.
+      - key: PROXY_KEY
+        sync: false
