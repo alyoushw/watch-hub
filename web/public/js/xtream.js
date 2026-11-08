@@ -271,19 +271,3 @@ export function urlsFor(e) {
 }
 
 /** Searches every account's channels, films and series by name (for the search page). */
-/** The words to look for in names: [normalizeTitle] without "مسلسل", "فيلم", … in front. */
-export const searchWords = (q) => normalizeTitle(q).replace(/^(?:(?:ابي|ابغى|ابغي|اشوف|شغل|مسلسل|فيلم|فلم|انمي|قناه|قناة|the)\s+)+/u, "").trim();
-
-export async function searchAll(q) {
-  const wanted = searchWords(q);
-  if (wanted.length < 2) return [];
-  const out = [];
-  await Promise.all(accounts.all().flatMap((acc) => ["movie", "series", "live"].map(async (kind) => {
-    try {
-      const list = await all(kind, acc);
-      for (const x of list) if (normalizeTitle(x.name).includes(wanted)) out.push(x);
-    } catch { /* that account is unreachable right now */ }
-  })));
-  const rank = (x) => (normalizeTitle(x.name) === wanted ? 0 : normalizeTitle(x.name).startsWith(wanted) ? 1 : 2);
-  return out.sort((a, b) => rank(a) - rank(b)).slice(0, 60);
-}

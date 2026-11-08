@@ -232,7 +232,6 @@ async function searchPage(id, q = "") {
     </div>
     <div class="chips scroll" id="quick" style="margin-top:10px"></div>
     <div id="filters" hidden></div>
-    <div id="in-accounts"></div>
     <div id="understood"></div>
     <div id="results"></div>`;
   const input = $("#q");
@@ -240,19 +239,11 @@ async function searchPage(id, q = "") {
   const understoodEl = $("#understood");
   let seq = 0;
 
-  let accountsOnly = sessionStorage.getItem("accountsOnly") === "1";
   const renderQuick = () => {
     $("#quick").innerHTML = [
-      ...(xtreamReady() ? [`<button class="chip ${accountsOnly ? "on" : ""}" data-only="1">حساباتي فقط</button>`] : []),
       ...(watchlist.all().length ? [`<button class="chip" data-ask="رشّح لي من قائمتي">✨ من قائمتي</button>`] : []),
       ...presets.all().map((p, i) => `<button class="chip" data-preset="${i}">★ ${esc(p.name)}</button>`),
     ].join("");
-    $("#quick").querySelector("[data-only]")?.addEventListener("click", () => {
-      accountsOnly = !accountsOnly;
-      sessionStorage.setItem("accountsOnly", accountsOnly ? "1" : "");
-      renderQuick();
-      ask(input.value);
-    });
     $("#quick").querySelectorAll("[data-ask]").forEach((b) => b.addEventListener("click", () => ask(b.dataset.ask)));
     $("#quick").querySelectorAll("[data-preset]").forEach((b) => b.addEventListener("click", () => {
       const p = presets.all()[Number(b.dataset.preset)];
@@ -378,59 +369,21 @@ async function searchPage(id, q = "") {
     const mine = ++seq;
     understoodEl.innerHTML = "";
     if (!settings.tmdbKey) {
-      results.innerHTML = xtreamReady() ? "" : message("أضف مفتاح TMDB أو حساب Xtream من الإعدادات أول", goSettings);
+      results.innerHTML = message("أضف مفتاح TMDB من الإعدادات أول", goSettings);
       return;
     }
     results.innerHTML = loading();
     try {
       const tm = (await tmdb.search(text)).filter((r) => r.poster_path);
       if (mine !== seq) return;
-      results.innerHTML = grid(tm, xtreamReady() ? "من المنصات" : "النتائج") || message("ما لقينا شي بهذا الاسم");
+      results.innerHTML = grid(tm, "النتائج") || message("ما لقينا شي بهذا الاسم");
     } catch (e) {
       if (mine === seq) results.innerHTML = message(e.message);
     }
   }
 
-  /** "في حساباتك": the user's own channels, films and series matching [text], above everything else. */
-  let accSeq = 0;
-  async function accountHits(text) {
-    const mine = ++accSeq;
-    const box = $("#in-accounts");
-    if (!xtreamReady() || xt.searchWords(text).length < 2) {
-      box.innerHTML = accountsOnly && text.trim() ? message("اكتب اسم قناة أو فيلم أو مسلسل") : "";
-      return;
-    }
-    box.innerHTML = accountsOnly ? loading() : "";
-    const hits = await xt.searchAll(text).catch(() => []);
-    if (mine !== accSeq) return;
-    const kindName = { movie: "فيلم", series: "مسلسل", live: "قناة" };
-    const many = accounts.all().length > 1;
-    box.innerHTML = hits.length ? `<h2 class="section-title">في حساباتك <small>${hits.length}</small></h2>
-      <div class="grid">${hits.map((x, i) => `<button class="card" style="background:none;border:0;text-align:right;padding:0" data-xi="${i}">
-        <div class="poster" ${x.kind === "live" ? 'style="aspect-ratio:16/10"' : ""}>${x.image ? `<img loading="lazy" src="${esc(xt.img(x.image))}" alt="" style="${x.kind === "live" ? "object-fit:contain;padding:12px" : ""}" onerror="this.remove()">` : ""}
-          <span class="badge">${kindName[x.kind]}</span></div>
-        <div class="name" dir="auto">${esc(x.name)}</div>${many ? `<small style="color:var(--gold);font-size:12px">${esc(accounts.label(accounts.get(x.accountId)))}</small>` : ""}</button>`).join("")}</div>`
-      : accountsOnly ? message("ما لقينا شي بهذا الاسم في حساباتك") : "";
-    box.querySelectorAll("[data-xi]").forEach((b) => b.addEventListener("click", () => {
-      const x = hits[Number(b.dataset.xi)];
-      if (x.kind === "series") {
-        accounts.setActive(x.accountId);
-        location.hash = `#/xseries/${encodeURIComponent(x.id)}`;
-      } else {
-        play(xt.playUrls(x), x.kind === "live" ? xt.entryLive(x) : xt.entryMovie(x));
-      }
-    }));
-  }
-
   function ask(text) {
     window.history.replaceState(null, "", `#/search?q=${encodeURIComponent(text)}`);
-    accountHits(text);
-    if (accountsOnly) {
-      ++seq;
-      understoodEl.innerHTML = "";
-      results.innerHTML = "";
-      return;
-    }
     if (!text.trim()) return idle();
     const qq = smart.parse(text);
     if (!settings.tmdbKey && qq.kind !== "plain") {

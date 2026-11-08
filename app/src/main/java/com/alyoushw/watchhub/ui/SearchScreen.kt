@@ -359,8 +359,6 @@ fun SearchScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, o
     val apiKey by container.settings.apiKey.collectAsStateWithLifecycle()
     val data by container.store.data.collectAsStateWithLifecycle()
 
-    val accounts by container.settings.xtreamAccounts.collectAsStateWithLifecycle()
-    var accountsOnly by rememberSaveable { mutableStateOf(false) }
     var editing by remember { mutableStateOf<DiscoverFilter?>(null) }
     var savingFilter by remember { mutableStateOf<DiscoverFilter?>(null) }
 
@@ -427,16 +425,6 @@ fun SearchScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, o
                         leadingIcon = { Icon(painterResource(R.drawable.ic_tune), contentDescription = null, Modifier.size(18.dp)) },
                     )
                 }
-                if (accounts.isNotEmpty()) {
-                    item {
-                        FilterChip(
-                            modifier = Modifier.focusFrame(),
-                            selected = accountsOnly,
-                            onClick = { accountsOnly = !accountsOnly },
-                            label = { Text("حساباتي فقط") },
-                        )
-                    }
-                }
                 item {
                     AssistChip(modifier = Modifier.focusFrame(), onClick = vm::recommendFromWatchlist, label = { Text("✨ من قائمتي") })
                 }
@@ -445,13 +433,7 @@ fun SearchScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, o
                 }
             }
 
-            // Films, series and channels from the user's own Xtream accounts, above everything else.
-            XtreamSearchHits(vm.query, onOpenXtreamSeries)
-
             when {
-                accountsOnly -> if (vm.query.isBlank()) {
-                    MessageBox(title = "اكتب اسم قناة أو فيلم أو مسلسل", body = "ونطلع لك وش موجود منه في حساباتك.")
-                }
                 apiKey.isBlank() -> MessageBox(
                     title = "خطوة وحدة قبل نبدأ",
                     body = "التطبيق يجيب بيانات الأفلام والمسلسلات ووين متوفرة من TMDB. تحتاج مفتاح مجاني تحطه في الإعدادات.",
@@ -788,85 +770,6 @@ private fun SearchRow(item: SearchResult, onClick: () -> Unit) {
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-            }
-        }
-    }
-}
-
-
-/** "في حساباتك": matches for [query] in the user's Xtream accounts (search as you type, after a pause). */
-@Composable
-private fun XtreamSearchHits(query: String, onOpenSeries: (String) -> Unit) {
-    val container = appContainer()
-    val context = LocalContext.current
-    val accounts by container.settings.xtreamAccounts.collectAsStateWithLifecycle()
-    if (accounts.isEmpty()) return
-    var hits by remember { mutableStateOf<List<Pair<com.alyoushw.watchhub.data.XtreamAccount, com.alyoushw.watchhub.data.XtreamItem>>>(emptyList()) }
-    LaunchedEffect(query, accounts) {
-        if (com.alyoushw.watchhub.data.XtreamApi.searchWords(query).length < 2) {
-            hits = emptyList()
-            return@LaunchedEffect
-        }
-        kotlinx.coroutines.delay(500)
-        hits = container.xtream.searchAll(query)
-    }
-    if (hits.isEmpty()) return
-    val many = accounts.size > 1
-    Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        SectionTitle("في حساباتك (${hits.size})", Modifier.padding(horizontal = 16.dp))
-        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(hits, key = { (acc, x) -> "${acc.id}:${x.kind}:${x.id}" }) { (acc, x) ->
-                val live = x.kind == com.alyoushw.watchhub.data.XtreamKind.LIVE
-                Column(
-                    Modifier
-                        .width(112.dp)
-                        .focusHighlight()
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable {
-                            when (x.kind) {
-                                com.alyoushw.watchhub.data.XtreamKind.SERIES -> {
-                                    container.settings.setActiveXtream(acc.id)
-                                    onOpenSeries(x.id)
-                                }
-                                com.alyoushw.watchhub.data.XtreamKind.LIVE -> com.alyoushw.watchhub.player.PlayerActivity.start(
-                                    context, container.xtream.playUrls(x, acc), com.alyoushw.watchhub.data.WatchEntry.live(x, acc),
-                                )
-                                else -> com.alyoushw.watchhub.player.PlayerActivity.start(
-                                    context, container.xtream.playUrls(x, acc), com.alyoushw.watchhub.data.WatchEntry.movie(x, acc),
-                                )
-                            }
-                        },
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Box(
-                        Modifier.fillMaxWidth().height(if (live) 72.dp else 160.dp).clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (x.image != null) {
-                            coil.compose.AsyncImage(
-                                model = x.image,
-                                contentDescription = null,
-                                contentScale = if (live) androidx.compose.ui.layout.ContentScale.Fit else androidx.compose.ui.layout.ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize().padding(if (live) 10.dp else 0.dp),
-                            )
-                        }
-                        Text(
-                            when (x.kind) {
-                                com.alyoushw.watchhub.data.XtreamKind.LIVE -> "قناة"
-                                com.alyoushw.watchhub.data.XtreamKind.SERIES -> "مسلسل"
-                                else -> "فيلم"
-                            },
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Gold,
-                            modifier = Modifier.align(Alignment.TopStart).padding(4.dp).clip(RoundedCornerShape(5.dp))
-                                .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.7f)).padding(horizontal = 5.dp, vertical = 1.dp),
-                        )
-                    }
-                    Text(x.name, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    if (many) Text(acc.label, style = MaterialTheme.typography.labelSmall, color = Gold, maxLines = 1)
-                }
             }
         }
     }

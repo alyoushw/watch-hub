@@ -212,31 +212,6 @@ class XtreamApi(private val settings: SettingsStore) {
         return hits.firstOrNull { year != null && (it.year == year || it.name.contains(year)) } ?: hits.firstOrNull()
     }
 
-    /**
-     * Searches every account's films, series and channels by name, for the search page.
-     * Words like "مسلسل" or "فيلم" in front are ignored. Unreachable accounts are skipped.
-     */
-    suspend fun searchAll(query: String): List<Pair<XtreamAccount, XtreamItem>> {
-        val wanted = searchWords(query)
-        if (wanted.length < 2) return emptyList()
-        val accounts = settings.xtreamAccounts.value.filter { it.isComplete }
-        val hits = kotlinx.coroutines.coroutineScope {
-            accounts.flatMap { acc ->
-                listOf(XtreamKind.MOVIE, XtreamKind.SERIES, XtreamKind.LIVE).map { kind ->
-                    async {
-                        try {
-                            all(kind, acc).filter { normalizeTitle(it.name).contains(wanted) }.map { acc to it }
-                        } catch (e: XtreamException) {
-                            emptyList()
-                        }
-                    }
-                }
-            }.awaitAll().flatten()
-        }
-        fun rank(item: XtreamItem): Int = normalizeTitle(item.name).let { if (it == wanted) 0 else if (it.startsWith(wanted)) 1 else 2 }
-        return hits.sortedBy { rank(it.second) }.take(60)
-    }
-
     suspend fun series(seriesId: String, account: XtreamAccount = active): XtreamSeries {
         val root = call(account, "get_series_info", mapOf("series_id" to seriesId)) as? JsonObject ?: throw notXtream()
         val info = root["info"] as? JsonObject
@@ -347,11 +322,6 @@ class XtreamApi(private val settings: SettingsStore) {
         }
 
         fun formatDate(date: Date): String = SimpleDateFormat("yyyy/MM/dd", Locale.US).format(date)
-
-        private val searchNoise = Regex("""^(?:(?:ابي|ابغى|ابغي|اشوف|شغل|مسلسل|فيلم|فلم|انمي|قناه|قناة|the)\s+)+""")
-
-        /** The words to look for in channel / film / series names: [normalizeTitle] without "مسلسل", "فيلم", … */
-        fun searchWords(query: String): String = normalizeTitle(query).replace(searchNoise, "").trim()
 
         fun formatTime(date: Date): String = SimpleDateFormat("HH:mm", Locale.US).format(date)
 
