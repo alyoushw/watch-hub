@@ -113,12 +113,14 @@ export async function play(urls, title) {
     }
   }
   if (mine !== session) return;
-  showFailure(urls[0], title);
+  // Outside players get the provider's own file (not the HLS guess, which many panels lack).
+  showFailure(urls.find((u) => !/\.m3u8$/i.test(new URL(u).pathname)) || urls[0], title);
 }
 
 /** The browser could not play it: offer players that handle any format (MKV, AVI, …). */
 function showFailure(url, title) {
-  const link = new URL(via(url), location.href).href;
+  // Apps like VLC and Infuse reach the server directly, so they skip the proxy (faster, no limits).
+  const link = url;
   const ext = (new URL(url).pathname.split(".").pop() || "").toUpperCase();
   const enc = encodeURIComponent(link);
   errorEl.innerHTML = "";
