@@ -12,30 +12,34 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 
+/** Warm cinema palette: near-black background with a golden-amber accent. */
+val Gold = Color(0xFFE8A33D)
+
 private val Colors = darkColorScheme(
-    primary = Color(0xFFE5484D),
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFF4A1A1D),
-    onPrimaryContainer = Color(0xFFFFDAD9),
-    secondary = Color(0xFFF5A524),
-    onSecondary = Color(0xFF1A1200),
-    secondaryContainer = Color(0xFF3D2C0A),
-    onSecondaryContainer = Color(0xFFFFE3B0),
-    background = Color(0xFF101014),
-    onBackground = Color(0xFFECECF1),
-    surface = Color(0xFF101014),
-    onSurface = Color(0xFFECECF1),
-    surfaceVariant = Color(0xFF24242D),
-    onSurfaceVariant = Color(0xFFB4B4C0),
-    surfaceContainer = Color(0xFF1A1A21),
-    surfaceContainerHigh = Color(0xFF22222A),
-    surfaceContainerHighest = Color(0xFF2A2A33),
-    outline = Color(0xFF4A4A57),
-    outlineVariant = Color(0xFF32323C),
+    primary = Gold,
+    onPrimary = Color(0xFF1C1206),
+    primaryContainer = Color(0xFF3A2A12),
+    onPrimaryContainer = Color(0xFFFFDDB0),
+    secondary = Color(0xFFF2B861),
+    onSecondary = Color(0xFF1C1206),
+    secondaryContainer = Color(0xFF3A2A12),
+    onSecondaryContainer = Color(0xFFFFE3B8),
+    tertiary = Color(0xFFE5484D),
+    background = Color(0xFF0E0D0B),
+    onBackground = Color(0xFFF1EEE9),
+    surface = Color(0xFF0E0D0B),
+    onSurface = Color(0xFFF1EEE9),
+    surfaceVariant = Color(0xFF26231F),
+    onSurfaceVariant = Color(0xFFB9B2A8),
+    surfaceContainer = Color(0xFF181614),
+    surfaceContainerHigh = Color(0xFF201D1A),
+    surfaceContainerHighest = Color(0xFF2A2622),
+    outline = Color(0xFF4D4740),
+    outlineVariant = Color(0xFF332E29),
 )
 
 /** Bright yellow used to show where the TV remote is. */
-val FocusColor = Color(0xFFFFD60A)
+val FocusColor = Color(0xFFFFC94D)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

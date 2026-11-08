@@ -2,6 +2,7 @@ package com.alyoushw.watchhub.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -400,63 +401,51 @@ fun HomeScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, onS
         onPauseOrDispose { }
     }
 
-    Scaffold(
-        contentWindowInsets = WindowInsets(0),
-        topBar = {
-            TopAppBar(
-                title = { Text("Watch Hub") },
-                actions = {
-                    IconButton(modifier = Modifier.focusFrame(), onClick = vm::refresh) { Icon(Icons.Filled.Refresh, contentDescription = "تحديث") }
-                },
-            )
-        },
-    ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
-            Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    modifier = Modifier.focusFrame(),
-                    selected = vm.type == MediaType.TV,
-                    onClick = { vm.selectType(MediaType.TV) },
-                    label = { Text("مسلسلات") },
-                )
-                FilterChip(
-                    modifier = Modifier.focusFrame(),
-                    selected = vm.type == MediaType.MOVIE,
-                    onClick = { vm.selectType(MediaType.MOVIE) },
-                    label = { Text("أفلام") },
-                )
-                FilterChip(
-                    modifier = Modifier.focusFrame(),
-                    selected = vm.type == MediaType.ANIME,
-                    onClick = { vm.selectType(MediaType.ANIME) },
-                    label = { Text("أنمي") },
-                )
-            }
-
-            when {
-                apiKey.isBlank() -> MessageBox(
+    val header: @Composable () -> Unit = { HeroTabs(vm.type, vm::selectType, vm::refresh) }
+    Box(Modifier.fillMaxSize()) {
+        when {
+            apiKey.isBlank() -> Column {
+                header()
+                MessageBox(
                     title = "خطوة وحدة قبل نبدأ",
                     body = "حط مفتاح TMDB المجاني في الإعدادات عشان نعرض لك أفضل الأعمال في كل منصة.",
                     actionLabel = "افتح الإعدادات",
                     onAction = onOpenSettings,
                 )
+            }
 
-                vm.loading && vm.sections.isEmpty() -> CenteredLoading()
-                vm.error != null && vm.sections.isEmpty() ->
-                    MessageBox(vm.error.orEmpty(), actionLabel = "حاول مرة ثانية", onAction = vm::refresh)
+            vm.loading && vm.sections.isEmpty() -> Column {
+                header()
+                CenteredLoading()
+            }
 
-                else -> LazyColumn(
-                    contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(24.dp),
+            vm.error != null && vm.sections.isEmpty() -> Column {
+                header()
+                MessageBox(vm.error.orEmpty(), actionLabel = "حاول مرة ثانية", onAction = vm::refresh)
+            }
+
+            else -> {
+                // The trending row becomes the big banner; for anime the first row feeds it.
+                val hero = vm.sections.firstOrNull { it.wide } ?: vm.sections.firstOrNull()
+                LazyColumn(
+                    contentPadding = PaddingValues(bottom = 28.dp),
+                    verticalArrangement = Arrangement.spacedBy(26.dp),
                 ) {
-                    items(vm.sections, key = { it.id }) { section ->
+                    item(key = "hero") {
+                        HeroCarousel(
+                            items = hero?.items.orEmpty(),
+                            header = header,
+                            onOpen = { item -> item.type?.let { onOpen(it, item.id) } },
+                        )
+                    }
+                    items(vm.sections.filter { !(it.wide && it.id == hero?.id) }, key = { it.id }) { section ->
                         TitleRow(
                             title = section.title,
                             items = section.items,
                             subtitle = section.subtitle,
                             service = section.service,
                             ranked = section.ranked,
-                            wide = section.wide,
+                            wide = false,
                             onSeeAll = section.source?.let { { onSeeAll(section) } },
                             onOpen = { item -> item.type?.let { onOpen(it, item.id) } },
                         )

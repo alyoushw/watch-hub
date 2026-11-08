@@ -6,6 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.LaunchedEffect
@@ -389,6 +390,13 @@ fun Modifier.focusHighlight(shape: Shape = RoundedCornerShape(10.dp)): Modifier 
             scaleX = scale
             scaleY = scale
         }
-        .border(width = if (focused) 4.dp else 0.dp, color = if (focused) FocusColor else Color.Transparent, shape = shape)
+        // Warm glow behind the focused card, like a lit poster.
+        .shadow(
+            elevation = if (focused) 18.dp else 0.dp,
+            shape = shape,
+            ambientColor = Gold,
+            spotColor = Gold,
+        )
+        .border(width = if (focused) 3.dp else 0.dp, color = if (focused) FocusColor else Color.Transparent, shape = shape)
         .padding(if (focused) 2.dp else 0.dp)
 }
