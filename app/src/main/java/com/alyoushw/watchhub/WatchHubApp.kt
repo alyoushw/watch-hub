@@ -64,12 +64,25 @@ class AppContainer(context: Context) {
 @Serializable
 data class BrowseRequest(val title: String, val source: RowSource, val ranked: Boolean)
 
+const val CRASH_FILE = "last_crash.txt"
+
 class WatchHubApp : Application() {
     lateinit var container: AppContainer
         private set
 
     override fun onCreate() {
         super.onCreate()
+        // A crash leaves its reason in a file; the next start shows it (see CrashNotice).
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+            runCatching {
+                File(filesDir, CRASH_FILE).writeText(
+                    "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · Android ${android.os.Build.VERSION.RELEASE}\n" +
+                        error.stackTraceToString().take(6000),
+                )
+            }
+            previous?.uncaughtException(thread, error)
+        }
         container = AppContainer(this)
         container.cloud.start()
     }

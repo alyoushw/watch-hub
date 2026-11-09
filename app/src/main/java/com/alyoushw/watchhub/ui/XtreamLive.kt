@@ -98,6 +98,9 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.async
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import androidx.compose.material3.AlertDialog
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Job
@@ -107,6 +110,27 @@ import kotlinx.coroutines.launch
 private const val RECENT = "__recent"
 private const val ALL = "__all"
 private const val FAVORITES = "__fav"
+private const val FOLDER = "__folder:"
+
+/**
+ * Folder names the app suggests for a channel, from its name and category: a sports channel
+ * offers "رياضة", a news channel "أخبار", and so on.
+ */
+fun suggestFolders(channelName: String, categoryName: String?): List<String> {
+    val t = " ${channelName.lowercase()} ${categoryName.orEmpty().lowercase()} "
+    return FolderHints.filter { (_, words) -> words.any { it in t } }.map { it.first }
+}
+
+private val FolderHints = listOf(
+    "رياضة" to listOf("sport", "bein", "ssc", "dazn", "espn", "kass", "football", "كورة", "كوره", "رياض", "nba", "ufc", "wwe", " f1", "arryadia", "eurosport", "premier league", "laliga", "on time"),
+    "أخبار" to listOf("news", "اخبار", "أخبار", "jazeera", "الجزيرة", "العربية", "alarabiya", "cnn", "bbc", "france 24", "الحدث", "alhadath", "sky news", "اخباري"),
+    "أطفال" to listOf("kids", "cartoon", "spacetoon", "سبيستون", "mbc 3", "mbc3", "baraem", "براعم", "jeem", "جيم", "disney", "nick", "majid", "ماجد", "طيور", "toyor", "اطفال", "أطفال"),
+    "أفلام" to listOf("movie", "cinema", "film", "افلام", "أفلام", "سينما", "mbc 2", "mbc2", "mbc max", "rotana cinema", "action", "box office"),
+    "مسلسلات" to listOf("drama", "دراما", "series", "مسلسل", "mbc 4", "mbc4", "mbc drama", "rotana drama", "shahid", "شاهد"),
+    "دينية" to listOf("quran", "قرآن", "قران", "sunnah", "سنة", "iqraa", "اقرأ", "majd", "المجد", "makkah", "مكة", "madinah", "المدينة", "islam", "اسلام"),
+    "موسيقى" to listOf("music", "موسيقى", "اغاني", "أغاني", "clip", "كليب", "mazzika", "مزيكا", "mtv", "wanasah", "وناسة"),
+    "وثائقي" to listOf("documentary", "وثائقي", "nat geo", "national geographic", "discovery", "animal planet", "history", "وثائقية"),
+)
 
 /** A channel and the account it comes from (search runs over every account). */
 data class LiveHit(val channel: XtreamItem, val account: XtreamAccount) {
@@ -131,10 +155,61 @@ class LiveViewModel(private val api: XtreamApi) : ViewModel() {
     var guide by mutableStateOf<List<XtreamProgram>?>(null)
         private set
 
-    /** Every account's channels, loaded the first time the user searches. */
-    var everywhere by mutableStateOf<List<LiveHit>?>(null)
+    /** Search results (null while there is no search, or it is still running). */
+    var results by mutableStateOf<List<LiveHit>?>(null)
         private set
-    private var everywhereFor: List<String> = emptyList()
+
+    /** A channel ready to search: its lower-case name and its name without prefixes or quality words. */
+    private class Indexed(val hit: LiveHit, val name: String, val key: String)
+
+    private var pool: List<Indexed> = emptyList()
+    private var poolFor: List<String> = emptyList()
+    private var searchJob: Job? = null
+
+    /**
+     * Searches the channels of every account ([accounts]; the active one first). Runs off the
+     * main thread a moment after typing stops, so a TV with tens of thousands of channels stays smooth.
+     */
+    fun search(query: String, accounts: List<XtreamAccount>, active: XtreamAccount) {
+        searchJob?.cancel()
+        val q = query.trim()
+        results = null
+        if (q.isEmpty()) return
+        searchJob = viewModelScope.launch {
+            delay(300)
+            val all = indexFor(if (accounts.size > 1) accounts else listOf(active))
+            val lower = q.lowercase()
+            val key = channelKey(q)
+            results = withContext(Dispatchers.Default) {
+                all.asSequence()
+                    .filter { it.name.contains(lower) || (key.isNotEmpty() && it.key.contains(key)) }
+                    .map { it.hit }
+                    .distinctBy { it.key }
+                    .sortedBy { if (it.account.id == active.id) 0 else 1 }
+                    .take(500)
+                    .toList()
+            }
+        }
+    }
+
+    private suspend fun indexFor(accounts: List<XtreamAccount>): List<Indexed> {
+        val ids = accounts.map { it.id }
+        if (ids == poolFor && pool.isNotEmpty()) return pool
+        val hits = coroutineScope {
+            accounts.map { acc ->
+                async {
+                    try {
+                        api.all(XtreamKind.LIVE, acc).map { LiveHit(it, acc) }
+                    } catch (e: XtreamException) {
+                        emptyList()
+                    }
+                }
+            }.awaitAll().flatten()
+        }
+        pool = withContext(Dispatchers.Default) { hits.map { Indexed(it, it.channel.name.lowercase(), channelKey(it.channel.name)) } }
+        poolFor = ids
+        return pool
+    }
 
     private var guideJob: Job? = null
 
@@ -147,7 +222,7 @@ class LiveViewModel(private val api: XtreamApi) : ViewModel() {
             loading = true
             error = null
             try {
-                categories = api.categories(XtreamKind.LIVE)
+                categories = api.categories(XtreamKind.LIVE).distinctBy { it.id }
                 val all = api.all(XtreamKind.LIVE)
                 channels = all
                 counts = all.groupingBy { it.categoryId.orEmpty() }.eachCount()
@@ -155,25 +230,6 @@ class LiveViewModel(private val api: XtreamApi) : ViewModel() {
                 error = e.message
             }
             loading = false
-        }
-    }
-
-    fun loadEverywhere(accounts: List<XtreamAccount>) {
-        val ids = accounts.map { it.id }
-        if (ids == everywhereFor && everywhere != null) return
-        everywhereFor = ids
-        viewModelScope.launch {
-            everywhere = coroutineScope {
-                accounts.map { acc ->
-                    async {
-                        try {
-                            api.all(XtreamKind.LIVE, acc).map { LiveHit(it, acc) }
-                        } catch (e: XtreamException) {
-                            emptyList()
-                        }
-                    }
-                }.awaitAll().flatten()
-            }
         }
     }
 
@@ -207,7 +263,14 @@ fun LiveChannels(showAccounts: Boolean = true) {
     val account by container.settings.xtream.collectAsStateWithLifecycle()
     val accounts by container.settings.xtreamAccounts.collectAsStateWithLifecycle()
     val favorites by container.settings.xtreamFavorites.collectAsStateWithLifecycle()
-    val recent by container.settings.xtreamRecent.collectAsStateWithLifecycle()
+    val folders by container.settings.xtreamFolders.collectAsStateWithLifecycle()
+    val historyEntries by container.history.entries.collectAsStateWithLifecycle()
+    // "سجل المشاهدة": channels of this account played lately (synced with the account, newest first).
+    val recent = remember(historyEntries, account) {
+        historyEntries.filter { it.kind == WatchEntry.LIVE && it.accountId == account.id }
+            .sortedByDescending { it.updatedAt }.map { it.itemId }.distinct()
+    }
+    var folderFor by remember { mutableStateOf<LiveHit?>(null) }
     val vm: LiveViewModel = viewModel(key = "live:${account.host}:${account.username}") { LiveViewModel(container.xtream) }
     var query by remember { mutableStateOf("") }
     /** The channel playing in the small picture, if any. */
@@ -223,7 +286,7 @@ fun LiveChannels(showAccounts: Boolean = true) {
 
     val complete = remember(accounts) { accounts.filter { it.isComplete } }
     val searching = query.isNotBlank()
-    LaunchedEffect(searching, complete) { if (searching && complete.size > 1) vm.loadEverywhere(complete) }
+    LaunchedEffect(query, complete, account) { vm.search(query, complete, account) }
 
     when {
         vm.loading && vm.channels.isEmpty() -> {
@@ -237,17 +300,11 @@ fun LiveChannels(showAccounts: Boolean = true) {
     }
 
     val byId = remember(vm.channels) { vm.channels.associateBy { it.id } }
-    val shown: List<LiveHit> = remember(vm.channels, vm.category, favorites, recent, query, vm.everywhere, account) {
-        val q = query.trim()
+    val shown: List<LiveHit> = remember(vm.channels, vm.category, favorites, recent, folders, searching, vm.results, account) {
         fun mine(list: List<XtreamItem>) = list.map { LiveHit(it, account) }
         when {
-            q.isNotEmpty() -> {
-                // Search: every account's channels (the active account first).
-                val pool = vm.everywhere?.takeIf { complete.size > 1 } ?: mine(vm.channels)
-                val key = channelKey(q)
-                pool.filter { it.channel.name.contains(q, ignoreCase = true) || (key.isNotEmpty() && channelKey(it.channel.name).contains(key)) }
-                    .sortedBy { if (it.account.id == account.id) 0 else 1 }
-            }
+            searching -> vm.results.orEmpty()
+            vm.category.startsWith(FOLDER) -> mine(folders[vm.category.removePrefix(FOLDER)].orEmpty().mapNotNull { byId[it] })
             vm.category == ALL -> mine(vm.channels)
             vm.category == FAVORITES -> mine(vm.channels.filter { it.id in favorites })
             vm.category == RECENT -> mine(recent.mapNotNull { byId[it] })
@@ -282,19 +339,32 @@ fun LiveChannels(showAccounts: Boolean = true) {
         }
     }
 
+    folderFor?.let { hit ->
+        FolderDialog(
+            hit = hit,
+            categoryName = vm.categories.firstOrNull { it.id == hit.channel.categoryId }?.name,
+            favorite = hit.channel.id in favorites,
+            folders = folders,
+            onFavorite = { container.settings.toggleXtreamFavorite(hit.channel.id) },
+            onFolder = { name, inside -> container.settings.setInFolder(name, hit.channel.id, inside) },
+            onClose = { folderFor = null },
+        )
+    }
+
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 720.dp
         val channelList: @Composable (Modifier) -> Unit = { mod ->
             Pane(mod) {
                 when {
-                    searching && multi && vm.everywhere == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("ندوّر في كل حساباتك…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    searching && vm.results == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(if (multi) "ندوّر في كل حساباتك…" else "ندوّر…", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     shown.isEmpty() -> Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
                         Text(
                             when {
                                 searching -> "ما لقينا قناة بهالاسم"
-                                vm.category == FAVORITES -> "اضغط مطولاً على أي قناة عشان تضيفها للمفضلة"
+                                vm.category == FAVORITES || vm.category.startsWith(FOLDER) -> "اضغط مطولاً على أي قناة عشان تضيفها هنا"
+                                vm.category == RECENT -> "القنوات اللي تشوفها بتطلع هنا"
                                 else -> "ما فيه قنوات هنا"
                             },
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -308,14 +378,15 @@ fun LiveChannels(showAccounts: Boolean = true) {
                                 accountLabel = if (multi && searching) h.account.label else null,
                                 selected = vm.selected?.key == h.key,
                                 playing = previewing?.key == h.key,
-                                favorite = h.account.id == account.id && h.channel.id in favorites,
+                                favorite = h.account.id == account.id && (h.channel.id in favorites || folders.values.any { h.channel.id in it }),
                                 onFocus = { if (wide && previewing == null) vm.select(h) },
                                 onClick = { tap(h) },
                                 onLongClick = {
-                                    if (h.account.id != account.id) return@ChannelRow
-                                    container.settings.toggleXtreamFavorite(h.channel.id)
-                                    val added = h.channel.id !in favorites
-                                    Toast.makeText(context, if (added) "أُضيفت للمفضلة" else "انشالت من المفضلة", Toast.LENGTH_SHORT).show()
+                                    if (h.account.id != account.id) {
+                                        Toast.makeText(context, "بدّل لحساب «${h.account.label}» عشان تضيفها لمجلداته", Toast.LENGTH_SHORT).show()
+                                        return@ChannelRow
+                                    }
+                                    folderFor = h
                                 },
                             )
                         }
@@ -367,6 +438,7 @@ fun LiveChannels(showAccounts: Boolean = true) {
                     total = vm.channels.size,
                     favorites = favorites.count { it in byId },
                     recent = recent.count { it in byId },
+                    folders = folders.map { (name, ids) -> name to ids.count { it in byId } },
                     selected = if (query.isBlank()) vm.category else null,
                     onSelect = {
                         query = ""
@@ -414,6 +486,7 @@ fun LiveChannels(showAccounts: Boolean = true) {
                             categories = vm.categories,
                             favorites = favorites.count { it in byId },
                             recent = recent.count { it in byId },
+                            folders = folders.keys.toList(),
                             selected = vm.category,
                             onSelect = { vm.category = it },
                         )
@@ -425,14 +498,84 @@ fun LiveChannels(showAccounts: Boolean = true) {
     }
 }
 
+/**
+ * Long press on a channel: which lists it is in. "المفضلة", the user's folders, folders the app
+ * suggests from the channel ("رياضة" for beIN…), or a new one.
+ */
+@Composable
+private fun FolderDialog(
+    hit: LiveHit,
+    categoryName: String?,
+    favorite: Boolean,
+    folders: Map<String, List<String>>,
+    onFavorite: () -> Unit,
+    onFolder: (String, Boolean) -> Unit,
+    onClose: () -> Unit,
+) {
+    val id = hit.channel.id
+    val suggested = remember(hit.key, folders.keys) { suggestFolders(hit.channel.name, categoryName).filter { it !in folders } }
+    var newName by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text(hit.channel.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        text = {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                item { FolderRow("⭐ المفضلة", favorite, onFavorite) }
+                items(folders.keys.toList(), key = { it }) { name ->
+                    val inside = id in folders[name].orEmpty()
+                    FolderRow("📁 $name", inside) { onFolder(name, !inside) }
+                }
+                if (suggested.isNotEmpty()) {
+                    item { Text("مقترح لهالقناة", style = MaterialTheme.typography.labelMedium, color = Gold, modifier = Modifier.padding(top = 6.dp)) }
+                    items(suggested, key = { "s:$it" }) { name ->
+                        FolderRow("＋ مجلد «$name»", false) { onFolder(name, true) }
+                    }
+                }
+                item {
+                    Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        PillSearch(newName, { newName = it }, "اسم مجلد جديد", Modifier.weight(1f))
+                        TextButton(
+                            modifier = Modifier.focusFrame(),
+                            enabled = newName.isNotBlank(),
+                            onClick = {
+                                onFolder(newName.trim().take(30), true)
+                                newName = ""
+                            },
+                        ) { Text("أضف") }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(modifier = Modifier.focusFrame(), onClick = onClose) { Text("تم") } },
+    )
+}
+
+@Composable
+private fun FolderRow(text: String, checked: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .focusFrame(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (checked) Gold.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceContainerHighest)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text, modifier = Modifier.weight(1f), color = if (checked) Gold else MaterialTheme.colorScheme.onSurface, fontWeight = if (checked) FontWeight.Bold else FontWeight.Normal)
+        if (checked) Text("✓", color = Gold, fontWeight = FontWeight.Bold)
+    }
+}
+
 /** Categories as one scrolling row of chips (phones). */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CategoryChips(categories: List<XtreamCategory>, favorites: Int, recent: Int, selected: String, onSelect: (String) -> Unit) {
+private fun CategoryChips(categories: List<XtreamCategory>, favorites: Int, recent: Int, folders: List<String>, selected: String, onSelect: (String) -> Unit) {
     val fixed = buildList {
         add(ALL to "الكل")
-        if (favorites > 0) add(FAVORITES to "المفضلة")
-        if (recent > 0) add(RECENT to "شوهد مؤخراً")
+        add(RECENT to "🕘 سجل المشاهدة")
+        if (favorites > 0) add(FAVORITES to "⭐ المفضلة")
+        folders.forEach { add(FOLDER + it to "📁 $it") }
     }
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(fixed, key = { it.first }) { (id, name) ->
@@ -617,16 +760,17 @@ private fun CategoryPane(
     total: Int,
     favorites: Int,
     recent: Int,
+    folders: List<Pair<String, Int>>,
     selected: String?,
     onSelect: (String) -> Unit,
     modifier: Modifier,
 ) {
     var filter by remember { mutableStateOf("") }
     val fixed = listOf(
-        Triple(RECENT, "شوهد مؤخراً", recent),
+        Triple(RECENT, "🕘 سجل المشاهدة", recent),
         Triple(ALL, "الكل", total),
-        Triple(FAVORITES, "المفضلة", favorites),
-    )
+        Triple(FAVORITES, "⭐ المفضلة", favorites),
+    ) + folders.map { (name, count) -> Triple(FOLDER + name, "📁 $name", count) }
     val rest = remember(categories, filter) {
         val q = filter.trim()
         categories.filter { q.isEmpty() || it.name.contains(q, ignoreCase = true) }

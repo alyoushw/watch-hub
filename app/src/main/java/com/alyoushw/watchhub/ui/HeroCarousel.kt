@@ -36,6 +36,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -133,22 +137,30 @@ fun HeroCarousel(
         else -> (screenHeight * 0.58f).coerceAtMost(520.dp)
     }
 
-    // Advance by itself every 7 seconds.
-    LaunchedEffect(slides.size) {
-        if (slides.size < 2) return@LaunchedEffect
+    // Advance by itself every 7 seconds; not while the remote is on the banner (moving the page
+    // under the focused button made TVs stutter), nor while the user swipes.
+    var focused by remember { mutableStateOf(false) }
+    LaunchedEffect(slides.size, focused) {
+        if (slides.size < 2 || focused) return@LaunchedEffect
         while (true) {
             delay(7000)
-            pager.animateScrollToPage((pager.currentPage + 1) % slides.size)
+            if (!pager.isScrollInProgress) {
+                pager.animateScrollToPage(
+                    (pager.currentPage + 1) % slides.size,
+                    animationSpec = androidx.compose.animation.core.tween(durationMillis = 700),
+                )
+            }
         }
     }
 
-    Box(Modifier.fillMaxWidth().height(height)) {
+    Box(Modifier.fillMaxWidth().height(height).onFocusChanged { focused = it.hasFocus }) {
         if (slides.isNotEmpty()) {
-            HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
+            // The next and previous pictures load ahead, so a slide never waits on a download.
+            HorizontalPager(state = pager, beyondViewportPageCount = 1, modifier = Modifier.fillMaxSize()) { page ->
                 val item = slides[page]
                 Box(Modifier.fillMaxSize()) {
                     AsyncImage(
-                        model = TmdbApi.image(item.backdropPath ?: item.posterPath, "w1280"),
+                        model = TmdbApi.image(item.backdropPath ?: item.posterPath, if (tv || wideShort) "w1280" else "w780"),
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),

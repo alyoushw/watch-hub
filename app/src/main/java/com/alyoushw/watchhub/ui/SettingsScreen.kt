@@ -192,6 +192,7 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}) {
             HorizontalDivider()
 
             XtreamSection(onOpenXtream)
+            ChannelFoldersSection()
 
             HorizontalDivider()
 
@@ -1014,4 +1015,63 @@ fun PairApprovalDialog() {
             }) { Text(if (loaded && device != null && signedIn != null) "رفض" else "إغلاق") }
         },
     )
+}
+
+/** "مجلدات القنوات": make, rename and delete the folders channels are sorted into. */
+@Composable
+private fun ChannelFoldersSection() {
+    val settings = appContainer().settings
+    val accounts by settings.xtreamAccounts.collectAsStateWithLifecycle()
+    val folders by settings.xtreamFolders.collectAsStateWithLifecycle()
+    if (accounts.isEmpty()) return
+    var newName by remember { mutableStateOf("") }
+    var renaming by remember { mutableStateOf<String?>(null) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionTitle("مجلدات القنوات")
+        Text(
+            "رتّب القنوات المباشرة في مجلداتك (رياضة، أخبار…). في صفحة المباشر اضغط مطولاً على أي قناة واختر مجلدها، والتطبيق يقترح لك المجلد المناسب.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        folders.forEach { (name, ids) ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("📁 $name", modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
+                Text("${ids.size} قناة", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(modifier = Modifier.focusFrame(), onClick = { renaming = name }) { Text("تسمية") }
+                TextButton(modifier = Modifier.focusFrame(), onClick = { settings.deleteFolder(name) }) { Text("حذف", color = MaterialTheme.colorScheme.error) }
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = newName,
+                onValueChange = { newName = it.take(30) },
+                singleLine = true,
+                placeholder = { Text("اسم مجلد جديد") },
+                modifier = Modifier.weight(1f),
+            )
+            Button(
+                modifier = Modifier.focusFrame(),
+                enabled = newName.isNotBlank(),
+                onClick = {
+                    settings.createFolder(newName)
+                    newName = ""
+                },
+            ) { Text("أضف") }
+        }
+    }
+    renaming?.let { old ->
+        var text by remember(old) { mutableStateOf(old) }
+        AlertDialog(
+            onDismissRequest = { renaming = null },
+            title = { Text("اسم المجلد") },
+            text = { OutlinedTextField(value = text, onValueChange = { text = it.take(30) }, singleLine = true) },
+            confirmButton = {
+                TextButton(modifier = Modifier.focusFrame(), onClick = {
+                    settings.renameFolder(old, text)
+                    renaming = null
+                }) { Text("حفظ") }
+            },
+            dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = { renaming = null }) { Text("إلغاء") } },
+        )
+    }
 }

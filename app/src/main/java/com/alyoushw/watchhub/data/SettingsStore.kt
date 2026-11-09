@@ -181,10 +181,50 @@ class SettingsStore(context: Context) {
         _xtreamRecent.value = now
     }
 
+    // ---------- channel folders ("رياضة", "أخبار", …) ----------
+
+    private val foldersSerializer = kotlinx.serialization.serializer<Map<String, List<String>>>()
+
+    private fun loadFolders(): Map<String, List<String>> = prefs.getString(KEY_XTREAM_FOLDERS, null)
+        ?.let { raw -> runCatching { accountsJson.decodeFromString(foldersSerializer, raw) }.getOrNull() }
+        .orEmpty()
+
+    private val _xtreamFolders = MutableStateFlow(loadFolders())
+
+    /** The user's channel folders: name → stream ids, in the order they were made. */
+    val xtreamFolders: StateFlow<Map<String, List<String>>> = _xtreamFolders.asStateFlow()
+
+    private fun storeFolders(map: Map<String, List<String>>) {
+        prefs.edit().putString(KEY_XTREAM_FOLDERS, accountsJson.encodeToString(foldersSerializer, map)).apply()
+        _xtreamFolders.value = map
+    }
+
+    fun createFolder(name: String) {
+        val n = name.trim().take(30)
+        if (n.isEmpty() || n in _xtreamFolders.value) return
+        storeFolders(_xtreamFolders.value + (n to emptyList()))
+    }
+
+    fun deleteFolder(name: String) = storeFolders(_xtreamFolders.value - name)
+
+    fun renameFolder(from: String, to: String) {
+        val n = to.trim().take(30)
+        if (n.isEmpty() || n == from || n in _xtreamFolders.value) return
+        storeFolders(_xtreamFolders.value.entries.associate { (k, v) -> (if (k == from) n else k) to v })
+    }
+
+    /** Puts channel [id] in [folder] (made if new), or takes it out. */
+    fun setInFolder(folder: String, id: String, inside: Boolean) {
+        val map = _xtreamFolders.value.toMutableMap()
+        val ids = map[folder].orEmpty()
+        map[folder] = if (inside) (ids - id) + id else ids - id
+        storeFolders(map)
+    }
+
     // ---------- profiles (guest / signed-in account) ----------
 
     /** The settings that belong to a person (not to the device): kept apart for the guest and each account. */
-    private val profileStringKeys = listOf(KEY_XTREAM_ACCOUNTS, KEY_XTREAM_ACTIVE, KEY_XTREAM_FAV, KEY_XTREAM_RECENT)
+    private val profileStringKeys = listOf(KEY_XTREAM_ACCOUNTS, KEY_XTREAM_ACTIVE, KEY_XTREAM_FAV, KEY_XTREAM_RECENT, KEY_XTREAM_FOLDERS)
 
     /**
      * Puts [from]'s personal settings aside (or drops them when [discard]) and brings back [to]'s
@@ -210,7 +250,7 @@ class SettingsStore(context: Context) {
     /** Forgets this profile's Xtream accounts, favourite and recent channels. */
     fun clearProfile() {
         prefs.edit().putString(KEY_XTREAM_ACCOUNTS, "[]").remove(KEY_XTREAM_ACTIVE).remove(KEY_XTREAM_FAV)
-            .remove(KEY_XTREAM_RECENT).putLong(KEY_XTREAM_UPDATED, 0).commit()
+            .remove(KEY_XTREAM_RECENT).remove(KEY_XTREAM_FOLDERS).putLong(KEY_XTREAM_UPDATED, 0).commit()
         reloadProfile()
     }
 
@@ -219,6 +259,7 @@ class SettingsStore(context: Context) {
         _xtream.value = pickActive(prefs.getString(KEY_XTREAM_ACTIVE, null))
         _xtreamFavorites.value = prefs.getString(KEY_XTREAM_FAV, "").orEmpty().split(',').filter { it.isNotBlank() }.toSet()
         _xtreamRecent.value = prefs.getString(KEY_XTREAM_RECENT, "").orEmpty().split(',').filter { it.isNotBlank() }
+        _xtreamFolders.value = loadFolders()
     }
 
     fun setApiKey(value: String) {
@@ -282,5 +323,6 @@ class SettingsStore(context: Context) {
         const val KEY_XTREAM_ACTIVE = "xtream_active"
         const val KEY_XTREAM_FAV = "xtream_favorites"
         const val KEY_XTREAM_RECENT = "xtream_recent"
+        const val KEY_XTREAM_FOLDERS = "xtream_folders"
     }
 }

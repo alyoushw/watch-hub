@@ -6,7 +6,14 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.alyoushw.watchhub.data.WatchEntry
+import com.alyoushw.watchhub.data.XtreamAccount
+import com.alyoushw.watchhub.data.XtreamApi
 import com.alyoushw.watchhub.data.XtreamItem
+import com.alyoushw.watchhub.data.XtreamKind
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /** One thing the player can play: its links (tried in order) and its history entry. */
 data class QueueItem(
@@ -42,6 +49,8 @@ class PlayerSession {
     /** "الحلقة الجاية" card: the next episode's name, and seconds left before it starts by itself. */
     var upNext by mutableStateOf<String?>(null)
     var upNextSeconds by mutableIntStateOf(0)
+    /** Set while left/right go through the same channel's sources (not the list it came from). */
+    var filter by mutableStateOf<String?>(null)
     /** "تخطي المقدمة" is shown while this is set (the label on the button). */
     var skipIntroLabel by mutableStateOf<String?>(null)
 }
@@ -66,6 +75,24 @@ class SeriesMarks(context: Context) {
 
     fun setCredits(series: String, remainingMs: Long) {
         if (remainingMs in 10_000..240_000) prefs.edit().putLong("credits:$series", remainingMs).apply()
+    }
+}
+
+/**
+ * Each account's live channels grouped by [channelKey], built once (off the main thread) and kept,
+ * so "نفس القناة في حسابات ثانية" answers at once after the first time.
+ */
+object ChannelIndex {
+    private val cache = mutableMapOf<String, Map<String, List<XtreamItem>>>()
+    private val lock = Mutex()
+
+    suspend fun of(api: XtreamApi, account: XtreamAccount): Map<String, List<XtreamItem>> {
+        val k = "${account.host}|${account.username}"
+        lock.withLock { cache[k]?.let { return it } }
+        val list = api.all(XtreamKind.LIVE, account)
+        val map = withContext(Dispatchers.Default) { list.groupBy { channelKey(it.name) } }
+        lock.withLock { cache[k] = map }
+        return map
     }
 }
 

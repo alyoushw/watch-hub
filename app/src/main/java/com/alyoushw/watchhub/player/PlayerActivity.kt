@@ -127,12 +127,15 @@ class PlayerActivity : ComponentActivity() {
         loadSeriesQueue()
         lifecycleScope.launch { watchMarkers() }
 
+        // Back while going through one channel's sources: return to the list it came from.
+        onBackPressedDispatcher.addCallback(this, filterBack)
+
         setContent {
             WatchHubTheme(forceDark = true) {
                 PlayerScreen(
                     player = player,
                     session = session,
-                    onBack = ::finish,
+                    onBack = { if (beforeFilter != null) clearFilter() else finish() },
                     onPrevious = { if (position > 0) playAt(position - 1) },
                     onNext = { nextPressed() },
                     onSkipIntro = ::skipIntro,
@@ -165,6 +168,7 @@ class PlayerActivity : ComponentActivity() {
         session.number = item.number
         session.hasPrevious = i > 0
         session.hasNext = i < queue.lastIndex
+        if (e.isLive) preloadIndexes()
         loadJob?.cancel()
         loadJob = lifecycleScope.launch {
             // Another device may have moved on a moment ago: take the newest spot from the account
@@ -311,20 +315,21 @@ class PlayerActivity : ComponentActivity() {
      * ("MBC 1 4K" finds the 4K ones, "RAW" the RAW ones).
      */
     private suspend fun otherSources(): List<ChannelSource> {
-        val now = current ?: return emptyList()
-        val name = now.channel?.name ?: now.entry.title
+        // While filtered, the sources are the list itself: offer the same ones again.
+        val base = beforeFilter?.let { (q, p) -> q[p] } ?: current ?: return emptyList()
+        val name = base.channel?.name ?: base.entry.title
         val key = channelKey(name)
         val tags = qualityTags(name)
         val accounts = container.settings.xtreamAccounts.value.filter { it.isComplete }
         return coroutineScope {
             accounts.map { acc ->
                 async {
-                    val list = try {
-                        container.xtream.all(XtreamKind.LIVE, acc)
+                    val map = try {
+                        ChannelIndex.of(container.xtream, acc)
                     } catch (x: XtreamException) {
-                        emptyList()
+                        emptyMap()
                     }
-                    list.filter { channelKey(it.name) == key && qualityTags(it.name) == tags }.map { ch ->
+                    map[key].orEmpty().filter { qualityTags(it.name) == tags }.map { ch ->
                         ChannelSource(
                             ch.name,
                             acc.label,
@@ -332,14 +337,56 @@ class PlayerActivity : ComponentActivity() {
                         )
                     }
                 }
-            }.awaitAll().flatten().filter { it.item.entry.key != now.entry.key }
+            }.awaitAll().flatten().filter { it.item.entry.key != base.entry.key }
         }
     }
 
-    private fun playSource(source: ChannelSource) {
-        // Swapped in place: left/right still move through the list it was opened from.
-        queue = queue.toMutableList().also { it[position] = source.item }
-        playAt(position)
+    private var preloaded = false
+
+    /** Builds every account's channel index in the background, once, when live TV starts. */
+    private fun preloadIndexes() {
+        if (preloaded) return
+        preloaded = true
+        container.settings.xtreamAccounts.value.filter { it.isComplete }.forEach { acc ->
+            lifecycleScope.launch { runCatching { ChannelIndex.of(container.xtream, acc) } }
+        }
+    }
+
+    /** The list and place before choosing a source; set while left/right go through the sources. */
+    private var beforeFilter: Pair<List<QueueItem>, Int>? = null
+        set(value) {
+            field = value
+            filterBack.isEnabled = value != null
+        }
+
+    private val filterBack = object : androidx.activity.OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() = clearFilter()
+    }
+
+    /**
+     * Plays [source]; from now on left/right go through the same channel's sources ([all], with
+     * the original first) until Back brings the original list back.
+     */
+    private fun playSource(source: ChannelSource, all: List<ChannelSource>) {
+        val base = beforeFilter ?: (queue to position).also { beforeFilter = it }
+        val original = base.first[base.second]
+        queue = listOf(original) + all.map { it.item }
+        session.filter = "نفس القناة: ${queue.size} مصادر · رجوع للقائمة"
+        playAt(queue.indexOfFirst { it.entry.key == source.item.entry.key }.coerceAtLeast(0))
+    }
+
+    private fun clearFilter() {
+        val (list, at) = beforeFilter ?: return
+        beforeFilter = null
+        val playing = current
+        // The source playing now takes the channel's place in the list.
+        queue = list.toMutableList().also { if (playing != null) it[at] = playing }
+        position = at
+        session.filter = null
+        session.number = queue[at].number
+        session.hasPrevious = at > 0
+        session.hasNext = at < queue.lastIndex
+        Toast.makeText(this, "رجعنا لقائمة القنوات", Toast.LENGTH_SHORT).show()
     }
 
     // ---------- saving ----------

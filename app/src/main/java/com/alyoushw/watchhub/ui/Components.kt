@@ -410,3 +410,33 @@ fun isWideShort(): Boolean {
     val c = androidx.compose.ui.platform.LocalConfiguration.current
     return c.screenHeightDp < 560 && c.screenWidthDp >= c.screenHeightDp * 1.9f
 }
+
+/** After a crash: what went wrong, so the user can send a photo of it. Shown once. */
+@Composable
+fun CrashNotice() {
+    val context = LocalContext.current
+    val file = remember { java.io.File(context.filesDir, com.alyoushw.watchhub.CRASH_FILE) }
+    var text by remember { mutableStateOf(runCatching { file.takeIf { it.exists() }?.readText() }.getOrNull()) }
+    val t = text ?: return
+    fun done() {
+        runCatching { file.delete() }
+        text = null
+    }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = ::done,
+        title = { Text("التطبيق طلع بسبب خطأ") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("صوّر هالرسالة وأرسلها عشان نصلّح المشكلة:", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    t.lines().filter { it.isNotBlank() }.take(14).joinToString("\n"),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(modifier = Modifier.focusFrame(), onClick = ::done) { Text("تمام") }
+        },
+    )
+}

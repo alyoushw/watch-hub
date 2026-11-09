@@ -139,7 +139,7 @@ fun PlayerScreen(
     onSkipIntro: () -> Unit,
     onCancelUpNext: () -> Unit,
     loadSources: suspend () -> List<ChannelSource>,
-    onPickSource: (ChannelSource) -> Unit,
+    onPickSource: (ChannelSource, List<ChannelSource>) -> Unit,
 ) {
     val title = session.title
     val subtitle = session.subtitle
@@ -578,7 +578,7 @@ fun PlayerScreen(
             }
 
             AnimatedVisibility(live && channelBanner && !controls, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopStart)) {
-                ChannelBanner(session.number, title, quality, session.hasPrevious, session.hasNext)
+                ChannelBanner(session.number, title, session.filter ?: quality, session.hasPrevious, session.hasNext)
             }
 
             session.skipIntroLabel?.let { label ->
@@ -618,6 +618,7 @@ fun PlayerScreen(
                         subtitle = subtitle,
                         live = live,
                         number = session.number,
+                        filter = session.filter,
                         badges = info?.badges.orEmpty(),
                         sleepLeft = sleepLeft,
                         hasPrevious = session.hasPrevious,
@@ -660,9 +661,9 @@ fun PlayerScreen(
                     title = title,
                     load = loadSources,
                     onClose = { menu = null },
-                    onPick = {
+                    onPick = { src, all ->
                         menu = null
-                        onPickSource(it)
+                        onPickSource(src, all)
                     },
                 )
             } else if (menu == Menu.INFO) {
@@ -768,6 +769,7 @@ private fun Controls(
     subtitle: String?,
     live: Boolean,
     number: Int?,
+    filter: String?,
     badges: List<String>,
     sleepLeft: String?,
     hasPrevious: Boolean,
@@ -806,6 +808,7 @@ private fun Controls(
                     color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
                 subtitle?.let { Text(it, color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                filter?.let { Text(it, color = Gold, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
             }
             if (live) ToolButton(PlayerIcons.Sources, "نفس القناة في حسابات ثانية") { onMenu(Menu.SOURCES) }
             ToolButton(PlayerIcons.Subtitles, "الترجمة") { onMenu(Menu.SUBTITLES) }
@@ -1249,7 +1252,7 @@ private fun UpNextCard(next: String, seconds: Int, tvHint: Boolean, modifier: Mo
 
 /** The channel playing now, from every account (same name and quality). */
 @Composable
-private fun SourcesPanel(title: String, load: suspend () -> List<ChannelSource>, onClose: () -> Unit, onPick: (ChannelSource) -> Unit) {
+private fun SourcesPanel(title: String, load: suspend () -> List<ChannelSource>, onClose: () -> Unit, onPick: (ChannelSource, List<ChannelSource>) -> Unit) {
     var sources by remember { mutableStateOf<List<ChannelSource>?>(null) }
     LaunchedEffect(Unit) { sources = runCatching { load() }.getOrDefault(emptyList()) }
     val firstFocus = remember { FocusRequester() }
@@ -1282,7 +1285,7 @@ private fun SourcesPanel(title: String, load: suspend () -> List<ChannelSource>,
                             "${src.label}  ·  ${src.account}",
                             selected = false,
                             modifier = if (n == 0) Modifier.focusRequester(firstFocus) else Modifier,
-                        ) { onPick(src) }
+                        ) { onPick(src, list) }
                     }
                 }
             }

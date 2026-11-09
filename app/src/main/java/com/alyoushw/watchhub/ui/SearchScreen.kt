@@ -428,7 +428,7 @@ fun SearchScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, o
                 item {
                     AssistChip(modifier = Modifier.focusFrame(), onClick = vm::recommendFromWatchlist, label = { Text("✨ من قائمتي") })
                 }
-                items(data.savedFilters, key = { "saved-" + it.name }) { saved ->
+                items(data.savedFilters.distinctBy { it.name }, key = { "saved-" + it.name }) { saved ->
                     AssistChip(modifier = Modifier.focusFrame(), onClick = { vm.applyFilter(saved.filter, "نمطك «${saved.name}»:") }, label = { Text("★ ${saved.name}") })
                 }
             }
@@ -474,7 +474,7 @@ fun SearchScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, o
                                 )
                             }
                         }
-                        items(s.items, key = { "${it.mediaType}:${it.id}" }) { item ->
+                        items(s.items.distinctBy { "${it.mediaType}:${it.id}" }, key = { "${it.mediaType}:${it.id}" }) { item ->
                             SearchRow(item) { item.type?.let { onOpen(it, item.id) } }
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         }
