@@ -209,6 +209,15 @@ export const folders = {
   },
 };
 
+/** The linked YouTube account on this device (its refresh token), per person. */
+export const ytAuth = {
+  get: () => data.ytRefresh || null,
+  set(token) {
+    data.ytRefresh = token || null;
+    save();
+  },
+};
+
 export const recent = {
   all: () => data.recent,
   add(id) {
@@ -385,7 +394,7 @@ function personal() {
   return {
     watchlist: data.watchlist, removedWatch: data.removedWatch,
     watchHistory: data.watchHistory, removedHistory: data.removedHistory,
-    favorites: data.favorites, recent: data.recent, folders: data.folders,
+    favorites: data.favorites, recent: data.recent, folders: data.folders, ytRefresh: data.ytRefresh || null,
     xAccounts: data.settings.xAccounts || [], xActive: data.settings.xActive || null,
     xAccountsUpdatedAt: data.settings.xAccountsUpdatedAt || 0,
   };
@@ -399,6 +408,7 @@ function apply(p) {
   data.favorites = p.favorites || [];
   data.recent = p.recent || [];
   data.folders = p.folders || {};
+  data.ytRefresh = p.ytRefresh || null;
   data.settings.xAccounts = p.xAccounts || [];
   data.settings.xActive = p.xActive || null;
   data.settings.xAccountsUpdatedAt = p.xAccountsUpdatedAt || 0;
