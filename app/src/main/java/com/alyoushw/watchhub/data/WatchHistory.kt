@@ -76,7 +76,7 @@ class WatchHistory(context: Context) {
     private val json = Json { ignoreUnknownKeys = true }
     private val serializer = ListSerializer(WatchEntry.serializer())
 
-    private fun prefKey(): String = "items_v2"
+    private fun prefKey(): String = KEY_ITEMS
 
     private fun load(): List<WatchEntry> =
         runCatching { json.decodeFromString(serializer, prefs.getString(prefKey(), "[]") ?: "[]") }.getOrDefault(emptyList())
@@ -185,6 +185,26 @@ class WatchHistory(context: Context) {
         return true
     }
 
+    /** Puts [from]'s history aside (or drops it when [discard]) and brings back [to]'s (empty if none). */
+    @Synchronized
+    fun switchProfile(from: String, to: String, discard: Boolean) {
+        val e = prefs.edit()
+        for (k in listOf(KEY_ITEMS, KEY_REMOVED)) {
+            if (discard) e.remove("$k@$from") else e.putString("$k@$from", prefs.getString(k, null))
+            e.putString(k, prefs.getString("$k@$to", null))
+            e.remove("$k@$to")
+        }
+        e.commit()
+        _entries.value = load()
+    }
+
+    /** Forgets everything watched in this profile. */
+    @Synchronized
+    fun clearAll() {
+        prefs.edit().remove(KEY_ITEMS).remove(KEY_REMOVED).commit()
+        _entries.value = emptyList()
+    }
+
     /** Re-points entries after account ids changed (old id → new id). */
     @Synchronized
     fun remapAccounts(changes: Map<String, String>) {
@@ -214,6 +234,7 @@ class WatchHistory(context: Context) {
     }
 
     private companion object {
+        const val KEY_ITEMS = "items_v2"
         const val KEY_REMOVED = "removed_v2"
         const val MAX = 80
     }

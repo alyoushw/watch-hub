@@ -171,17 +171,58 @@ class CloudSync(
         }
     }
 
+    // ---------- profiles: the device's guest, or the signed-in account ----------
+    //
+    // The personal data on screen (history, list, Xtream accounts, favourite channels) is always
+    // the current profile's. Signing in puts the guest's aside and shows the account's (the
+    // guest's is never copied into the account). Signing out deletes the account's copy from the
+    // device (it lives in the account) and brings the guest's back. So nobody using the device
+    // after you sees what you watched.
+
+    private val profile: String get() = prefs.getString(KEY_PROFILE, GUEST) ?: GUEST
+
+    private suspend fun switchProfile(to: String, discardCurrent: Boolean) {
+        val from = profile
+        if (from == to) return
+        history.switchProfile(from, to, discardCurrent)
+        store.switchWatchProfile(from, to, discardCurrent)
+        settings.switchProfile(from, to, discardCurrent)
+        prefs.edit().putString(KEY_PROFILE, to).commit()
+    }
+
+    /** True when this device shows the guest's data (nobody signed in). */
+    val isGuest: Boolean get() = profile == GUEST
+
+    /** Clears the guest's history, list, Xtream accounts and favourite channels on this device. */
+    suspend fun clearGuestData() {
+        if (!isGuest) return
+        history.clearAll()
+        store.clearWatchlist()
+        settings.clearProfile()
+    }
+
     private fun onUser(user: FirebaseUser?) {
+        // Versions before profiles kept no profile: whatever is on the device belongs to whoever
+        // is signed in right now (or to the guest), so it is labelled, not moved.
+        if (!prefs.contains(KEY_PROFILE)) {
+            prefs.edit().putString(KEY_PROFILE, if (user == null) GUEST else "u:${user.uid}").commit()
+        }
         if (user == null) {
             stopListening()
             uid = null
             _state.value = if (auth != null) State.SignedOut else State.NotConfigured
+            if (!isGuest) scope.launch { switchProfile(GUEST, discardCurrent = true) }
             return
         }
         _state.value = State.SignedIn(user.displayName, user.email, user.photoUrl?.toString())
         if (uid == user.uid) return
         uid = user.uid
-        startSyncing(user.uid)
+        val mine = "u:${user.uid}"
+        scope.launch {
+            // Another account's copy (signed in without signing out) is not kept either.
+            if (profile != mine) switchProfile(mine, discardCurrent = !isGuest)
+            if (uid == user.uid) startSyncing(user.uid)
+        }
     }
 
     // ---------- signing in ----------
@@ -266,6 +307,11 @@ class CloudSync(
     }
 
     fun signOut() {
+        // Positions still waiting for their 10-second turn go out first.
+        pendingHistory.keys.toList().forEach { key ->
+            historyJobs.remove(key)?.cancel()
+            sendHistory(key)
+        }
         auth?.signOut()
         scope.launch {
             runCatching { androidx.credentials.CredentialManager.create(context).clearCredentialState(androidx.credentials.ClearCredentialStateRequest()) }
@@ -548,6 +594,8 @@ class CloudSync(
         const val TAG = "CloudSync"
         const val APP_NAME = "watchhub"
         const val KEY_CONFIG = "config"
+        const val KEY_PROFILE = "profile"
+        const val GUEST = "guest"
         const val PROGRESS_EVERY_MS = 10_000L
     }
 }

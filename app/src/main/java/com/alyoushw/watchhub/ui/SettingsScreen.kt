@@ -668,6 +668,7 @@ private fun AccountSection() {
                 )
             }
             com.alyoushw.watchhub.data.CloudSync.State.SignedOut -> {
+                GuestNote(onCleared = { message = "✓ انمسحت بيانات الزائر من هذا الجهاز" })
                 Text(
                     "سجّل دخولك بحساب Google، وكل أجهزتك (الجوال والتلفاز والموقع) تصير على نفس القائمة ونفس «تابع المشاهدة». " +
                         "توقف حلقة في الجوال، وتكملها في التلفاز من نفس الثانية.",
@@ -824,5 +825,52 @@ private fun QrCode(text: String, modifier: Modifier = Modifier) {
     }
     bitmap?.let {
         androidx.compose.foundation.Image(it, contentDescription = "رمز QR", modifier = modifier.clip(RoundedCornerShape(8.dp)))
+    }
+}
+
+
+/**
+ * Shown while nobody is signed in: this device is in guest mode, with its own data. Lets the
+ * owner wipe the guest's history, list and Xtream accounts (e.g. a shared TV).
+ */
+@Composable
+private fun GuestNote(onCleared: () -> Unit) {
+    val container = appContainer()
+    val scope = rememberCoroutineScope()
+    var confirm by remember { mutableStateOf(false) }
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("👤", fontSize = 20.sp)
+        Column(Modifier.weight(1f)) {
+            Text("أنت الحين زائر", fontWeight = FontWeight.Bold)
+            Text(
+                "اللي تشوفه هنا خاص بهذا الجهاز. لما تسجّل دخول تطلع بياناتك أنت، ولما تطلع ترجع بيانات الزائر.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        TextButton(modifier = Modifier.focusFrame(), onClick = { confirm = true }) {
+            Text("امسحها", color = MaterialTheme.colorScheme.error)
+        }
+    }
+    if (confirm) {
+        AlertDialog(
+            onDismissRequest = { confirm = false },
+            title = { Text("تمسح بيانات الزائر؟") },
+            text = { Text("ينمسح من هذا الجهاز: تابع المشاهدة، وقائمتي، وحسابات Xtream، والقنوات المفضلة. حسابك في Google ما يتأثر.") },
+            confirmButton = {
+                TextButton(modifier = Modifier.focusFrame(), onClick = {
+                    confirm = false
+                    scope.launch {
+                        container.cloud.clearGuestData()
+                        onCleared()
+                    }
+                }) { Text("امسح", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = { confirm = false }) { Text("إلغاء") } },
+        )
     }
 }

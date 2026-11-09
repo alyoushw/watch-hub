@@ -87,6 +87,32 @@ class LocalStore(private val file: File) {
         onWatchChanged?.invoke(null, key, now)
     }
 
+    /** One profile's watchlist, kept aside in its own file while another profile is in use. */
+    @kotlinx.serialization.Serializable
+    private data class WatchSide(val watchlist: List<WatchItem> = emptyList(), val removedWatch: Map<String, Long> = emptyMap())
+
+    private fun sideFile(profile: String) = File(file.parentFile, "watchlist@${profile.replace(Regex("[^A-Za-z0-9_:-]"), "_")}.json")
+
+    /**
+     * Puts [from]'s watchlist aside (or drops it when [discard]) and brings back [to]'s (empty if
+     * none). Subscriptions and saved searches belong to the device and stay.
+     */
+    suspend fun switchWatchProfile(from: String, to: String, discard: Boolean) {
+        val current = _data.value
+        val incoming = withContext(Dispatchers.IO) {
+            val out = sideFile(from)
+            if (discard) out.delete() else out.writeText(json.encodeToString(WatchSide.serializer(), WatchSide(current.watchlist, current.removedWatch)))
+            val inFile = sideFile(to)
+            val side = if (inFile.exists()) runCatching { json.decodeFromString(WatchSide.serializer(), inFile.readText()) }.getOrNull() else null
+            inFile.delete()
+            side ?: WatchSide()
+        }
+        update { it.copy(watchlist = incoming.watchlist, removedWatch = incoming.removedWatch) }
+    }
+
+    /** Forgets this profile's watchlist. */
+    suspend fun clearWatchlist() = update { it.copy(watchlist = emptyList(), removedWatch = emptyMap()) }
+
     /**
      * A watchlist change from another device, kept when newer than this device's copy.
      * [item] null means it was removed at [updatedAt]. Nothing is sent back.

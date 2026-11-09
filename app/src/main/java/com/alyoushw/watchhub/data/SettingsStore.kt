@@ -181,6 +181,46 @@ class SettingsStore(context: Context) {
         _xtreamRecent.value = now
     }
 
+    // ---------- profiles (guest / signed-in account) ----------
+
+    /** The settings that belong to a person (not to the device): kept apart for the guest and each account. */
+    private val profileStringKeys = listOf(KEY_XTREAM_ACCOUNTS, KEY_XTREAM_ACTIVE, KEY_XTREAM_FAV, KEY_XTREAM_RECENT)
+
+    /**
+     * Puts [from]'s personal settings aside (or drops them when [discard]) and brings back [to]'s
+     * (empty if it never had any). The device's own settings (TMDB key, region, look) stay.
+     */
+    fun switchProfile(from: String, to: String, discard: Boolean) {
+        val e = prefs.edit()
+        for (k in profileStringKeys) {
+            if (discard) e.remove("$k@$from") else e.putString("$k@$from", prefs.getString(k, null))
+            e.putString(k, prefs.getString("$k@$to", null))
+            e.remove("$k@$to")
+        }
+        if (discard) e.remove("$KEY_XTREAM_UPDATED@$from") else e.putLong("$KEY_XTREAM_UPDATED@$from", prefs.getLong(KEY_XTREAM_UPDATED, 0))
+        e.putLong(KEY_XTREAM_UPDATED, prefs.getLong("$KEY_XTREAM_UPDATED@$to", 0))
+        e.remove("$KEY_XTREAM_UPDATED@$to")
+        // A profile without accounts starts empty (not from the single account of old versions).
+        if (prefs.getString("$KEY_XTREAM_ACCOUNTS@$to", null) == null) e.putString(KEY_XTREAM_ACCOUNTS, "[]")
+        e.remove(KEY_XTREAM_HOST).remove(KEY_XTREAM_USER).remove(KEY_XTREAM_PASS)
+        e.commit()
+        reloadProfile()
+    }
+
+    /** Forgets this profile's Xtream accounts, favourite and recent channels. */
+    fun clearProfile() {
+        prefs.edit().putString(KEY_XTREAM_ACCOUNTS, "[]").remove(KEY_XTREAM_ACTIVE).remove(KEY_XTREAM_FAV)
+            .remove(KEY_XTREAM_RECENT).putLong(KEY_XTREAM_UPDATED, 0).commit()
+        reloadProfile()
+    }
+
+    private fun reloadProfile() {
+        _xtreamAccounts.value = loadAccounts()
+        _xtream.value = pickActive(prefs.getString(KEY_XTREAM_ACTIVE, null))
+        _xtreamFavorites.value = prefs.getString(KEY_XTREAM_FAV, "").orEmpty().split(',').filter { it.isNotBlank() }.toSet()
+        _xtreamRecent.value = prefs.getString(KEY_XTREAM_RECENT, "").orEmpty().split(',').filter { it.isNotBlank() }
+    }
+
     fun setApiKey(value: String) {
         val v = value.trim()
         prefs.edit().putString(KEY_TMDB, v).apply()
