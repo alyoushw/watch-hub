@@ -15,6 +15,7 @@ data.settings ??= {};
 data.watchlist ??= [];
 data.favorites ??= [];
 data.recent ??= [];
+data.folders ??= {};
 
 function save() {
   try {
@@ -186,6 +187,25 @@ export const favorites = {
     data.favorites = data.favorites.includes(id) ? data.favorites.filter((x) => x !== id) : [...data.favorites, id];
     save();
     return data.favorites.includes(id);
+  },
+};
+
+/** Channel folders ("رياضة", "أخبار", …): name → stream ids. */
+export const folders = {
+  all: () => data.folders,
+  has: (name, id) => (data.folders[name] || []).includes(id),
+  inAny: (id) => Object.values(data.folders).some((ids) => ids.includes(id)),
+  set(name, id, inside) {
+    const n = String(name).trim().slice(0, 30);
+    if (!n) return;
+    const ids = (data.folders[n] || []).filter((x) => x !== id);
+    data.folders = { ...data.folders, [n]: inside ? [...ids, id] : ids };
+    save();
+  },
+  remove(name) {
+    const { [name]: _, ...rest } = data.folders;
+    data.folders = rest;
+    save();
   },
 };
 
@@ -365,7 +385,7 @@ function personal() {
   return {
     watchlist: data.watchlist, removedWatch: data.removedWatch,
     watchHistory: data.watchHistory, removedHistory: data.removedHistory,
-    favorites: data.favorites, recent: data.recent,
+    favorites: data.favorites, recent: data.recent, folders: data.folders,
     xAccounts: data.settings.xAccounts || [], xActive: data.settings.xActive || null,
     xAccountsUpdatedAt: data.settings.xAccountsUpdatedAt || 0,
   };
@@ -378,6 +398,7 @@ function apply(p) {
   data.removedHistory = p.removedHistory || {};
   data.favorites = p.favorites || [];
   data.recent = p.recent || [];
+  data.folders = p.folders || {};
   data.settings.xAccounts = p.xAccounts || [];
   data.settings.xActive = p.xActive || null;
   data.settings.xAccountsUpdatedAt = p.xAccountsUpdatedAt || 0;

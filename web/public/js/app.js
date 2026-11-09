@@ -5,7 +5,7 @@ import { play, fmt } from "./player.js";
 import * as smart from "./smart.js";
 import { fillTranslated } from "./translate.js";
 import * as cloud from "./cloud.js";
-import { settings, watchlist, favorites, recent, xtreamReady, history, isFinished, progressOf, accounts, restoreHistory } from "./store.js";
+import { settings, watchlist, favorites, folders, recent, xtreamReady, history, isFinished, progressOf, accounts, restoreHistory } from "./store.js";
 
 const view = document.getElementById("view");
 
@@ -671,6 +671,22 @@ async function listPage() {
 // ---------- live channels ----------
 
 const RECENT = "__recent";
+const FOLDER = "__folder:";
+const FOLDER_HINTS = [
+  ["رياضة", ["sport", "bein", "ssc", "dazn", "espn", "kass", "football", "كورة", "كوره", "رياض", "nba", "ufc", "wwe", " f1", "arryadia", "eurosport", "on time"]],
+  ["أخبار", ["news", "اخبار", "أخبار", "jazeera", "الجزيرة", "العربية", "alarabiya", "cnn", "bbc", "france 24", "الحدث", "alhadath"]],
+  ["أطفال", ["kids", "cartoon", "spacetoon", "سبيستون", "mbc 3", "mbc3", "baraem", "براعم", "jeem", "disney", "nick", "majid", "ماجد", "طيور", "toyor", "اطفال", "أطفال"]],
+  ["أفلام", ["movie", "cinema", "film", "افلام", "أفلام", "سينما", "mbc 2", "mbc2", "mbc max", "action"]],
+  ["مسلسلات", ["drama", "دراما", "series", "مسلسل", "mbc 4", "mbc4", "shahid", "شاهد"]],
+  ["دينية", ["quran", "قرآن", "قران", "sunnah", "iqraa", "اقرأ", "majd", "المجد", "makkah", "مكة", "islam", "اسلام"]],
+  ["موسيقى", ["music", "موسيقى", "اغاني", "أغاني", "clip", "كليب", "mazzika", "مزيكا", "mtv", "wanasah", "وناسة"]],
+  ["وثائقي", ["documentary", "وثائقي", "nat geo", "national geographic", "discovery", "animal planet", "history"]],
+];
+/** Folder names the app suggests for a channel, from its name and category. */
+const suggestFolders = (name, cat) => {
+  const t = ` ${String(name).toLowerCase()} ${String(cat || "").toLowerCase()} `;
+  return FOLDER_HINTS.filter(([, words]) => words.some((w) => t.includes(w))).map(([n]) => n);
+};
 const ALL = "__all";
 const FAV = "__fav";
 
@@ -728,11 +744,18 @@ async function live(id) {
   const listEl = $("#channels");
   const previewEl = $("#preview");
 
+  // "سجل المشاهدة": this account's channels played lately (synced with the account), newest first.
+  const watched = () => {
+    const acc = accounts.active()?.id;
+    return [...new Set(history.list().filter((h) => h.kind === "live" && h.accountId === acc)
+      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).map((h) => h.itemId))].filter((x) => byId.has(x));
+  };
   function renderCats() {
     const fixed = catQuery ? [] : [
-      [RECENT, "شوهد مؤخراً", recent.all().filter((x) => byId.has(x)).length],
+      [RECENT, "🕘 سجل المشاهدة", watched().length],
       [ALL, "الكل", channels.length],
-      [FAV, "المفضلة", favorites.all().filter((x) => byId.has(x)).length],
+      [FAV, "⭐ المفضلة", favorites.all().filter((x) => byId.has(x)).length],
+      ...Object.entries(folders.all()).map(([name, ids]) => [FOLDER + name, `📁 ${name}`, ids.filter((x) => byId.has(x)).length]),
     ];
     const rest = cats.filter((c) => !catQuery || c.name.toLowerCase().includes(catQuery.toLowerCase()))
       .map((c) => [c.id, c.name, counts[c.id] || 0]);
@@ -745,7 +768,8 @@ async function live(id) {
     if (q) return channels.filter((c) => c.name.toLowerCase().includes(q));
     if (category === ALL) return channels;
     if (category === FAV) return channels.filter((c) => favorites.has(c.id));
-    if (category === RECENT) return recent.all().map((x) => byId.get(x)).filter(Boolean);
+    if (category === RECENT) return watched().map((x) => byId.get(x));
+    if (category.startsWith(FOLDER)) return (folders.all()[category.slice(FOLDER.length)] || []).map((x) => byId.get(x)).filter(Boolean);
     return channels.filter((c) => c.categoryId === category);
   }
 
@@ -753,7 +777,7 @@ async function live(id) {
       <span class="num">${c.num || i + 1}</span>
       <span class="logo">${c.image ? `<img loading="lazy" src="${esc(xt.img(c.image))}" alt="" onerror="this.remove()">` : "📺"}</span>
       <span class="nm" dir="auto">${esc(c.name)}</span>
-      ${favorites.has(c.id) ? `<span class="star">★</span>` : ""}
+      ${favorites.has(c.id) || folders.inAny(c.id) ? `<span class="star">★</span>` : ""}
     </button>`;
 
   // Thousands of channels: add rows in batches as the list scrolls.
@@ -796,14 +820,7 @@ async function live(id) {
         <button class="btn ghost" id="pv-fav">${fav ? "♥" : "♡"} المفضلة</button>
       </div>`;
     $("#pv-play").addEventListener("click", () => start(selected));
-    $("#pv-fav").addEventListener("click", () => {
-      const on = favorites.toggle(selected.id);
-      toast(on ? "أُضيفت للمفضلة" : "انشالت من المفضلة");
-      renderCats();
-      renderPreview(guide);
-      const row = listEl.querySelector(`[data-id="${CSS.escape(selected.id)}"]`);
-      if (row) row.outerHTML = rowHtml(selected, shown.indexOf(selected));
-    });
+    $("#pv-fav").addEventListener("click", () => folderSheet(selected, () => renderPreview(guide)));
   }
 
   function select(c) {
@@ -861,12 +878,63 @@ async function live(id) {
   onLongPress(listEl, (e) => {
     const b = e.target.closest("[data-id]");
     if (!b) return;
-    const c = byId.get(b.dataset.id);
-    const on = favorites.toggle(c.id);
-    toast(on ? `«${c.name}» أُضيفت للمفضلة` : `«${c.name}» انشالت من المفضلة`);
-    b.outerHTML = rowHtml(c, shown.indexOf(c));
-    renderCats();
+    folderSheet(byId.get(b.dataset.id));
   });
+
+  // Right click on a computer does the same.
+  listEl.addEventListener("contextmenu", (e) => {
+    const b = e.target.closest("[data-id]");
+    if (!b) return;
+    e.preventDefault();
+    folderSheet(byId.get(b.dataset.id));
+  });
+
+  /** Which lists a channel is in: المفضلة, the user's folders, suggested ones, or a new folder. */
+  function folderSheet(c, after) {
+    document.querySelector(".sheet-wrap")?.remove();
+    const cat = cats.find((x) => x.id === c.categoryId)?.name;
+    const wrap = document.createElement("div");
+    wrap.className = "sheet-wrap";
+    const draw = () => {
+      const mine = Object.keys(folders.all());
+      const sug = suggestFolders(c.name, cat).filter((n) => !mine.includes(n));
+      const row = (a, label, on) => `<button class="btn ${on ? "" : "ghost"}" data-a="${esc(a)}">${esc(label)}${on ? " ✓" : ""}</button>`;
+      wrap.innerHTML = `<div class="sheet" role="dialog" aria-modal="true">
+          <b class="sheet-title"></b>
+          ${row("fav", "⭐ المفضلة", favorites.has(c.id))}
+          ${mine.map((n) => row("f:" + n, `📁 ${n}`, folders.has(n, c.id))).join("")}
+          ${sug.length ? `<small style="color:var(--gold)">مقترح لهالقناة</small>${sug.map((n) => row("f:" + n, `＋ مجلد «${n}»`, false)).join("")}` : ""}
+          <div style="display:flex;gap:8px"><input id="newfolder" class="input" placeholder="اسم مجلد جديد" maxlength="30" style="flex:1"><button class="btn ghost" data-a="new">أضف</button></div>
+          <button class="btn ghost" data-a="x">تم</button>
+        </div>`;
+      wrap.querySelector(".sheet-title").textContent = c.name;
+    };
+    draw();
+    wrap.addEventListener("click", (ev) => {
+      const a = ev.target.closest("[data-a]")?.dataset.a;
+      if (ev.target === wrap || a === "x") {
+        wrap.remove();
+        renderCats();
+        const row = listEl.querySelector(`[data-id="${CSS.escape(c.id)}"]`);
+        if (row) row.outerHTML = rowHtml(c, shown.indexOf(c));
+        after?.();
+        return;
+      }
+      if (!a) return;
+      if (a === "fav") favorites.toggle(c.id);
+      else if (a === "new") {
+        const n = wrap.querySelector("#newfolder").value.trim();
+        if (!n) return;
+        folders.set(n, c.id, true);
+      } else if (a.startsWith("f:")) {
+        const n = a.slice(2);
+        folders.set(n, c.id, !folders.has(n, c.id));
+      }
+      draw();
+    });
+    document.body.appendChild(wrap);
+    wrap.querySelector("[data-a]")?.focus();
+  }
 
   let qTimer;
   $("#chq").addEventListener("input", (e) => {
