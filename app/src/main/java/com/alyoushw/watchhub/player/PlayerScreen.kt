@@ -10,6 +10,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -97,7 +98,7 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.hypot
 
-private enum class Menu { SUBTITLES, AUDIO, SPEED }
+private enum class Menu { SUBTITLES, AUDIO, SPEED, SOURCES }
 
 /** Picture modes for the "حجم الصورة" button. */
 private val ResizeModes = listOf(
@@ -113,7 +114,20 @@ private data class Indicator(val icon: ImageVector, val text: String, val level:
 
 @OptIn(UnstableApi::class)
 @Composable
-fun PlayerScreen(player: ExoPlayer, title: String, subtitle: String?, live: Boolean, onBack: () -> Unit) {
+fun PlayerScreen(
+    player: ExoPlayer,
+    session: PlayerSession,
+    onBack: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onSkipIntro: () -> Unit,
+    onCancelUpNext: () -> Unit,
+    loadSources: suspend () -> List<ChannelSource>,
+    onPickSource: (ChannelSource) -> Unit,
+) {
+    val title = session.title
+    val subtitle = session.subtitle
+    val live = session.live
     val context = LocalContext.current
     val activity = context as Activity
     val tv = remember { context.isTvDevice }
@@ -135,6 +149,19 @@ fun PlayerScreen(player: ExoPlayer, title: String, subtitle: String?, live: Bool
     var tracks by remember { mutableStateOf(player.currentTracks) }
     var speed by remember { mutableFloatStateOf(1f) }
     var seekPreview by remember { mutableStateOf<Long?>(null) }
+    var quality by remember { mutableStateOf<String?>(null) }
+    var channelBanner by remember { mutableStateOf(false) }
+
+    // Live: a channel change shows its number and name for a moment.
+    LaunchedEffect(title, live) {
+        if (live) {
+            channelBanner = true
+            delay(3_000)
+            channelBanner = false
+        } else {
+            channelBanner = false
+        }
+    }
 
     fun poke() {
         touchedAt = System.currentTimeMillis()
@@ -154,6 +181,11 @@ fun PlayerScreen(player: ExoPlayer, title: String, subtitle: String?, live: Bool
 
     fun togglePlay() {
         if (player.isPlaying) player.pause() else player.play()
+        poke()
+    }
+
+    fun switchChannel(forward: Boolean) {
+        if (forward && session.hasNext) onNext() else if (!forward && session.hasPrevious) onPrevious()
         poke()
     }
 
@@ -177,9 +209,30 @@ fun PlayerScreen(player: ExoPlayer, title: String, subtitle: String?, live: Bool
 
     // Clock for the seek bar.
     LaunchedEffect(player) {
+        var frames = -1
+        var framesAt = 0L
+        var measured = 0f
         while (true) {
             position = player.currentPosition.coerceAtLeast(0)
             duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: 0
+            // Picture size from the stream; frame rate from the stream, else counted from
+            // the frames actually shown.
+            val counters = player.videoDecoderCounters
+            val now = System.currentTimeMillis()
+            if (counters != null) {
+                counters.ensureUpdated()
+                val n = counters.renderedOutputBufferCount
+                if (frames >= 0 && n >= frames && now - framesAt >= 1_500) {
+                    val fps = (n - frames) * 1000f / (now - framesAt)
+                    measured = if (player.isPlaying && fps > 1f) fps else measured
+                    frames = n
+                    framesAt = now
+                } else if (frames < 0 || n < frames) {
+                    frames = n
+                    framesAt = now
+                }
+            }
+            quality = videoQuality(player.videoFormat, measured)
             delay(500)
         }
     }
@@ -198,8 +251,12 @@ fun PlayerScreen(player: ExoPlayer, title: String, subtitle: String?, live: Bool
         }
     }
 
-    BackHandler(enabled = menu != null || (tv && controls)) {
-        if (menu != null) menu = null else controls = false
+    BackHandler(enabled = menu != null || (tv && controls) || session.upNext != null) {
+        when {
+            menu != null -> menu = null
+            session.upNext != null && !controls -> onCancelUpNext()
+            else -> controls = false
+        }
     }
 
     val rootFocus = remember { FocusRequester() }
@@ -248,13 +305,34 @@ fun PlayerScreen(player: ExoPlayer, title: String, subtitle: String?, live: Bool
                             seekBy(-30_000)
                             true
                         }
-                        KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> if (!controls && !locked) {
-                            seekBy(if (e.key.nativeKeyCode == KeyEvent.KEYCODE_DPAD_LEFT) -10_000 else 10_000)
+                        KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_PAGE_UP, KeyEvent.KEYCODE_MEDIA_NEXT -> {
+                            if (live) switchChannel(true) else if (session.hasNext) onNext()
+                            true
+                        }
+                        KeyEvent.KEYCODE_CHANNEL_DOWN, KeyEvent.KEYCODE_PAGE_DOWN, KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
+                            if (live) switchChannel(false) else if (session.hasPrevious) onPrevious()
+                            true
+                        }
+                        // Controls hidden: left/right switch channel (live) or skip 10 s.
+                        KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> if (!controls && !locked && menu == null) {
+                            val right = e.key.nativeKeyCode == KeyEvent.KEYCODE_DPAD_RIGHT
+                            if (live) switchChannel(right) else seekBy(if (right) 10_000 else -10_000)
                             true
                         } else {
                             false
                         }
-                        KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> if (!controls) {
+                        // Controls hidden: OK answers the card on screen (next episode, skip intro).
+                        KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> if (!controls && menu == null) {
+                            when {
+                                session.upNext != null -> onNext()
+                                session.skipIntroLabel != null -> onSkipIntro()
+                                else -> controls = true
+                            }
+                            true
+                        } else {
+                            false
+                        }
+                        KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> if (!controls) {
                             controls = true
                             true
                         } else {
@@ -325,6 +403,7 @@ fun PlayerScreen(player: ExoPlayer, title: String, subtitle: String?, live: Bool
                             var startZoom = zoom
                             var startDist = 0f
                             var target = startPos
+                            var swipeDx = 0f
                             do {
                                 val event = awaitPointerEvent()
                                 val pressed = event.changes.filter { it.pressed }
@@ -345,7 +424,7 @@ fun PlayerScreen(player: ExoPlayer, title: String, subtitle: String?, live: Bool
                                     val dy = c.position.y - down.position.y
                                     if (mode == 0 && (abs(dx) > slop || abs(dy) > slop)) {
                                         mode = when {
-                                            abs(dx) > abs(dy) -> if (live) -1 else 1
+                                            abs(dx) > abs(dy) -> if (live) 5 else 1
                                             down.position.x < size.width / 2f -> 2
                                             else -> 3
                                         }
@@ -361,11 +440,14 @@ fun PlayerScreen(player: ExoPlayer, title: String, subtitle: String?, live: Bool
                                         }
                                         2 -> setBrightness(startBright - dy / size.height * 1.3f)
                                         3 -> setVolume(startVol - dy / size.height * 1.3f)
+                                        5 -> swipeDx = dx
                                     }
                                     if (mode > 0) c.consume()
                                 }
                             } while (event.changes.any { it.pressed })
                             if (mode == 1) player.seekTo(target)
+                            // Live: a swipe of a fifth of the screen changes channel (to the left = next).
+                            if (mode == 5 && abs(swipeDx) > size.width / 5f) switchChannel(swipeDx < 0)
                             seekPreview = null
                         }
                     },
@@ -401,6 +483,33 @@ fun PlayerScreen(player: ExoPlayer, title: String, subtitle: String?, live: Bool
                 }
             }
 
+            AnimatedVisibility(live && channelBanner && !controls, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopStart)) {
+                ChannelBanner(session.number, title, quality, session.hasPrevious, session.hasNext)
+            }
+
+            session.skipIntroLabel?.let { label ->
+                if (!locked && session.upNext == null) {
+                    PillButton(
+                        label + if (tv && !controls) "  (OK)" else "",
+                        Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = if (controls) 110.dp else 32.dp),
+                        onClick = onSkipIntro,
+                    )
+                }
+            }
+
+            session.upNext?.let { next ->
+                if (!locked) {
+                    UpNextCard(
+                        next = next,
+                        seconds = session.upNextSeconds,
+                        tvHint = tv && !controls,
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = if (controls) 110.dp else 32.dp),
+                        onPlay = onNext,
+                        onCancel = onCancelUpNext,
+                    )
+                }
+            }
+
             AnimatedVisibility(controls, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
                 if (locked) {
                     Box(Modifier.fillMaxSize()) {
@@ -414,6 +523,12 @@ fun PlayerScreen(player: ExoPlayer, title: String, subtitle: String?, live: Bool
                         title = title,
                         subtitle = subtitle,
                         live = live,
+                        number = session.number,
+                        quality = quality,
+                        hasPrevious = session.hasPrevious,
+                        hasNext = session.hasNext,
+                        onPrevious = { if (live) switchChannel(false) else onPrevious() },
+                        onNext = { if (live) switchChannel(true) else onNext() },
                         playing = playing,
                         position = seekPreview ?: position,
                         duration = duration,
@@ -446,7 +561,17 @@ fun PlayerScreen(player: ExoPlayer, title: String, subtitle: String?, live: Bool
                 }
             }
 
-            menu?.let { m ->
+            if (menu == Menu.SOURCES) {
+                SourcesPanel(
+                    title = title,
+                    load = loadSources,
+                    onClose = { menu = null },
+                    onPick = {
+                        menu = null
+                        onPickSource(it)
+                    },
+                )
+            } else menu?.let { m ->
                 MenuPanel(
                     menu = m,
                     tracks = tracks,
@@ -482,6 +607,12 @@ private fun Controls(
     title: String,
     subtitle: String?,
     live: Boolean,
+    number: Int?,
+    quality: String?,
+    hasPrevious: Boolean,
+    hasNext: Boolean,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
     playing: Boolean,
     position: Long,
     duration: Long,
@@ -509,9 +640,13 @@ private fun Controls(
         ) {
             ToolButton(Icons.AutoMirrored.Filled.ArrowBack, "رجوع", onBack)
             Column(Modifier.weight(1f).padding(horizontal = 6.dp)) {
-                Text(title, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    (number?.let { "$it · " } ?: "") + title,
+                    color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
                 subtitle?.let { Text(it, color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             }
+            if (live) ToolButton(PlayerIcons.Sources, "نفس القناة في حسابات ثانية") { onMenu(Menu.SOURCES) }
             ToolButton(PlayerIcons.Subtitles, "الترجمة") { onMenu(Menu.SUBTITLES) }
             ToolButton(PlayerIcons.Audio, "الصوت المعلّق") { onMenu(Menu.AUDIO) }
             ToolButton(PlayerIcons.Aspect, resizeLabel, onResize)
@@ -525,6 +660,7 @@ private fun Controls(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(36.dp),
         ) {
+            if (live && hasPrevious) RoundButton(PlayerIcons.Previous, "القناة السابقة", onClick = onPrevious)
             if (!live) RoundButton(PlayerIcons.Replay, "رجوع 10 ثواني", label = "10") { onSeekBy(-10_000) }
             RoundButton(
                 if (playing) PlayerIcons.Pause else Icons.Filled.PlayArrow,
@@ -534,6 +670,7 @@ private fun Controls(
                 onClick = onPlayPause,
             )
             if (!live) RoundButton(PlayerIcons.Forward, "تقديم 10 ثواني", label = "10") { onSeekBy(10_000) }
+            if (live && hasNext) RoundButton(PlayerIcons.Next, "القناة الجاية", onClick = onNext)
         }
 
         // Bottom: timeline, or the live badge.
@@ -545,12 +682,17 @@ private fun Controls(
                 .padding(horizontal = 20.dp, vertical = 14.dp),
         ) {
             if (live) {
-                Text(
-                    "● مباشر",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xFFE5484D)).padding(horizontal = 10.dp, vertical = 4.dp),
-                )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "● مباشر",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xFFE5484D)).padding(horizontal = 10.dp, vertical = 4.dp),
+                    )
+                    quality?.let { QualityBadge(it) }
+                    Spacer(Modifier.weight(1f))
+                    Text("◀ ▶ لتغيير القناة", color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
+                }
             } else {
                 var dragging by remember { mutableStateOf<Float?>(null) }
                 val fraction = if (duration > 0) position.toFloat() / duration else 0f
@@ -567,9 +709,12 @@ private fun Controls(
                     colors = SliderDefaults.colors(thumbColor = Gold, activeTrackColor = Gold, inactiveTrackColor = Color.White.copy(alpha = 0.3f)),
                     modifier = Modifier.fillMaxWidth().height(28.dp),
                 )
-                Row(Modifier.fillMaxWidth()) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(formatTime(dragging?.let { (it * duration).toLong() } ?: position), color = Color.White, fontSize = 13.sp)
+                    quality?.let { QualityBadge(it) }
                     Spacer(Modifier.weight(1f))
+                    if (hasPrevious) PillButton("⏮ السابقة", small = true, onClick = onPrevious)
+                    if (hasNext) PillButton("الحلقة الجاية ⏭", small = true, onClick = onNext)
                     Text(if (duration > 0) "-" + formatTime(duration - position) else "--:--", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
                 }
             }
@@ -730,6 +875,149 @@ private fun RoundButton(
     }
 }
 
+/** "1080p · 50fps", from what the stream says, else the frames counted while playing. */
+@OptIn(UnstableApi::class)
+private fun videoQuality(format: androidx.media3.common.Format?, measuredFps: Float): String? {
+    if (format == null || format.height <= 0) return null
+    val lines = minOf(format.width.takeIf { it > 0 } ?: format.height, format.height)
+    val name = when {
+        format.width >= 3800 || lines >= 2100 -> "4K"
+        else -> "${lines}p"
+    }
+    val fps = format.frameRate.takeIf { it > 1f } ?: measuredFps.takeIf { it > 1f }
+    return listOfNotNull(name, fps?.let { "${Math.round(it)}fps" }, format.codecs?.let(::codecName)).joinToString(" · ")
+}
+
+private fun codecName(codecs: String): String? = when {
+    codecs.startsWith("hvc1") || codecs.startsWith("hev1") -> "HEVC"
+    codecs.startsWith("avc") -> "H.264"
+    codecs.startsWith("av01") -> "AV1"
+    else -> null
+}
+
+@Composable
+private fun QualityBadge(text: String) {
+    Text(
+        text,
+        color = Color.White,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color.White.copy(alpha = 0.16f))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    )
+}
+
+@Composable
+private fun ChannelBanner(number: Int?, title: String, quality: String?, hasPrevious: Boolean, hasNext: Boolean) {
+    Row(
+        Modifier
+            .padding(20.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.Black.copy(alpha = 0.72f))
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (hasPrevious) Text("◀", color = Color.White.copy(alpha = 0.5f))
+        number?.let { Text("$it", color = Gold, fontSize = 26.sp, fontWeight = FontWeight.Bold) }
+        Column {
+            Text(title, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            quality?.let { Text(it, color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp) }
+        }
+        if (hasNext) Text("▶", color = Color.White.copy(alpha = 0.5f))
+    }
+}
+
+@Composable
+private fun PillButton(text: String, modifier: Modifier = Modifier, small: Boolean = false, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    Text(
+        text,
+        color = if (focused) Color.Black else Color.White,
+        fontSize = if (small) 13.sp else 16.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = modifier
+            .onFocusChanged { focused = it.isFocused }
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (focused) Gold else Color.Black.copy(alpha = 0.6f))
+            .border(1.dp, Color.White.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = if (small) 10.dp else 18.dp, vertical = if (small) 5.dp else 11.dp),
+    )
+}
+
+/** "الحلقة الجاية" near the end: counts down, then the next episode starts by itself. */
+@Composable
+private fun UpNextCard(next: String, seconds: Int, tvHint: Boolean, modifier: Modifier, onPlay: () -> Unit, onCancel: () -> Unit) {
+    Column(
+        modifier
+            .width(320.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color(0xF2141210))
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("الحلقة الجاية", color = Gold, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Text(next, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        LinearProgressIndicator(
+            progress = { (10 - seconds) / 10f },
+            modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+            color = Gold,
+            trackColor = Color.White.copy(alpha = 0.2f),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            PillButton("شغّلها الحين ($seconds)", small = true, onClick = onPlay)
+            PillButton("إلغاء", small = true, onClick = onCancel)
+        }
+        if (tvHint) Text("OK للتشغيل · رجوع للإلغاء", color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp)
+    }
+}
+
+/** The channel playing now, from every account (same name and quality). */
+@Composable
+private fun SourcesPanel(title: String, load: suspend () -> List<ChannelSource>, onClose: () -> Unit, onPick: (ChannelSource) -> Unit) {
+    var sources by remember { mutableStateOf<List<ChannelSource>?>(null) }
+    LaunchedEffect(Unit) { sources = runCatching { load() }.getOrDefault(emptyList()) }
+    val firstFocus = remember { FocusRequester() }
+    LaunchedEffect(sources) { runCatching { firstFocus.requestFocus() } }
+
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)).clickable(onClick = onClose)) {
+        Column(
+            Modifier
+                .align(Alignment.CenterEnd)
+                .fillMaxHeight()
+                .width(360.dp)
+                .background(Color(0xF2141210))
+                .pointerInput(Unit) { detectTapGestures { } }
+                .padding(vertical = 18.dp),
+        ) {
+            Text("نفس القناة في حساباتك", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
+            Text(title, color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 20.dp))
+            Spacer(Modifier.height(8.dp))
+            val list = sources
+            when {
+                list == null -> Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    CircularProgressIndicator(Modifier.size(22.dp), color = Gold, strokeWidth = 2.dp)
+                    Text("ندوّر في كل الحسابات…", color = Color.White.copy(alpha = 0.7f))
+                }
+                list.isEmpty() -> Hint("ما لقينا نفس القناة بنفس الجودة في حساب ثاني")
+                else -> LazyColumn(contentPadding = PaddingValues(vertical = 6.dp)) {
+                    items(list.size) { n ->
+                        val src = list[n]
+                        MenuRow(
+                            "${src.label}  ·  ${src.account}",
+                            selected = false,
+                            modifier = if (n == 0) Modifier.focusRequester(firstFocus) else Modifier,
+                        ) { onPick(src) }
+                    }
+                }
+            }
+        }
+    }
+}
+
 fun formatTime(ms: Long): String {
     val s = (ms / 1000).coerceAtLeast(0)
     val h = s / 3600
@@ -754,4 +1042,7 @@ object PlayerIcons {
     val Brightness = icon("Brightness", "M20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12 20 8.69zM12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6zm0-10c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4z")
     val Volume = icon("Volume", "M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z")
     val Lock = Icons.Filled.Lock
+    val Next = icon("Next", "M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z")
+    val Previous = icon("Previous", "M6 6h2v12H6zm3.5 6l8.5 6V6z")
+    val Sources = icon("Sources", "M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8 12.5v-9l6 4.5-6 4.5z")
 }

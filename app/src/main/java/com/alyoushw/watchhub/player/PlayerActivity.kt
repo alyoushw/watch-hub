@@ -14,7 +14,6 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.launch
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -27,23 +26,41 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.alyoushw.watchhub.WatchHubApp
 import com.alyoushw.watchhub.data.WatchEntry
+import com.alyoushw.watchhub.data.XtreamException
+import com.alyoushw.watchhub.data.XtreamKind
 import com.alyoushw.watchhub.ui.WatchHubTheme
-import kotlinx.serialization.json.Json
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Full-screen player for the user's Xtream Codes streams: our own controls and gestures
  * (see [PlayerScreen]), resumes where the user stopped, and tries each link in turn.
+ *
+ * It plays a queue ([PlayerQueue]): the channels of the list it was opened from (left/right
+ * switch channel) or a series' episodes ("الحلقة الجاية" near the end, then on by itself).
  */
 @OptIn(UnstableApi::class)
 class PlayerActivity : ComponentActivity() {
     private lateinit var player: ExoPlayer
-    private var urls: List<String> = emptyList()
-    private var index = 0
-    private var entry: WatchEntry? = null
+    private val container get() = (application as WatchHubApp).container
+    private val history get() = container.history
+    private val cloud get() = container.cloud
+    private val marks by lazy { SeriesMarks(this) }
     private val handler = Handler(Looper.getMainLooper())
-    private val history get() = (application as WatchHubApp).container.history
-    private val cloud get() = (application as WatchHubApp).container.cloud
+    private val session = PlayerSession()
+
+    private var queue: List<QueueItem> = emptyList()
+    private var position = 0
+    private var urlIndex = 0
     private var started = false
+    private var loadJob: Job? = null
+
+    private val current: QueueItem? get() = queue.getOrNull(position)
+    private val entry: WatchEntry? get() = current?.entry
 
     private val saver = object : Runnable {
         override fun run() {
@@ -54,9 +71,9 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        urls = intent.getStringArrayListExtra(EXTRA_URLS).orEmpty()
-        entry = intent.getStringExtra(EXTRA_ENTRY)?.let { runCatching { Json.decodeFromString(WatchEntry.serializer(), it) }.getOrNull() }
-        if (urls.isEmpty()) {
+        queue = PlayerQueue.items
+        position = PlayerQueue.index.coerceIn(0, (queue.size - 1).coerceAtLeast(0))
+        if (queue.isEmpty()) {
             finish()
             return
         }
@@ -82,10 +99,11 @@ class PlayerActivity : ComponentActivity() {
             .build()
         player.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
-                if (index < urls.lastIndex) {
+                val urls = current?.urls.orEmpty()
+                if (urlIndex < urls.lastIndex) {
                     val at = player.currentPosition
-                    index++
-                    load(at)
+                    urlIndex++
+                    setMedia(at)
                 } else {
                     Toast.makeText(this@PlayerActivity, "ما قدرنا نشغّل «${entry?.title.orEmpty()}»", Toast.LENGTH_LONG).show()
                 }
@@ -94,7 +112,8 @@ class PlayerActivity : ComponentActivity() {
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) {
                     saveProgress(important = true)
-                    finish()
+                    // A series goes on to the next episode; anything else closes.
+                    if (session.hasNext && entry?.kind == WatchEntry.EPISODE) playAt(position + 1) else finish()
                 }
             }
 
@@ -104,43 +123,226 @@ class PlayerActivity : ComponentActivity() {
             }
         })
 
-        val e = entry
-        lifecycleScope.launch {
-            // Another device may have moved on a moment ago: take the newest spot from the account
-            // first (at most ~2 s; offline or signed out, this device's own copy is used).
-            e?.let { cloud.refreshEntry(it.key) }
-            val saved = e?.let { history.get(it.key) }
-            val resumeAt = saved?.takeIf { !it.isLive && !it.finished && it.positionMs > 10_000 }?.positionMs ?: 0L
-            e?.let { history.save(it, important = true) }
-            load(resumeAt)
-            started = true
-            if (resumeAt > 0) {
-                Toast.makeText(this@PlayerActivity, "نكمل من ${formatTime(resumeAt)}", Toast.LENGTH_SHORT).show()
-            }
-        }
+        playAt(position)
+        loadSeriesQueue()
+        lifecycleScope.launch { watchMarkers() }
 
         setContent {
             WatchHubTheme(forceDark = true) {
                 PlayerScreen(
                     player = player,
-                    title = e?.title.orEmpty(),
-                    subtitle = e?.subtitle,
-                    live = e?.isLive == true,
+                    session = session,
                     onBack = ::finish,
+                    onPrevious = { if (position > 0) playAt(position - 1) },
+                    onNext = { nextPressed() },
+                    onSkipIntro = ::skipIntro,
+                    onCancelUpNext = { upNextDismissedFor = entry?.key; session.upNext = null },
+                    loadSources = ::otherSources,
+                    onPickSource = ::playSource,
                 )
             }
         }
     }
 
-    private fun load(startAt: Long) {
+    // ---------- moving through the queue ----------
+
+    /** Starts queue item [i]: saves where the current one stopped, then resumes the new one. */
+    private fun playAt(i: Int) {
+        if (i !in queue.indices) return
+        if (started) saveProgress(important = true)
+        position = i
+        urlIndex = 0
+        started = false
+        session.upNext = null
+        session.skipIntroLabel = null
+        upNextDismissedFor = null
+        introPending = null
+        val item = queue[i]
+        val e = item.entry
+        session.title = e.title
+        session.subtitle = e.subtitle
+        session.live = e.isLive
+        session.number = item.number
+        session.hasPrevious = i > 0
+        session.hasNext = i < queue.lastIndex
+        loadJob?.cancel()
+        loadJob = lifecycleScope.launch {
+            // Another device may have moved on a moment ago: take the newest spot from the account
+            // first (at most ~2 s; offline or signed out, this device's own copy is used).
+            cloud.refreshEntry(e.key)
+            val saved = history.get(e.key)
+            val resumeAt = saved?.takeIf { !it.isLive && !it.finished && it.positionMs > 10_000 }?.positionMs ?: 0L
+            history.save(e, important = true)
+            setMedia(resumeAt)
+            started = true
+            if (resumeAt > 0) Toast.makeText(this@PlayerActivity, "نكمل من ${formatTime(resumeAt)}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun setMedia(startAt: Long) {
+        val urls = current?.urls ?: return
         val item = MediaItem.Builder()
-            .setUri(urls[index])
+            .setUri(urls[urlIndex.coerceIn(0, urls.lastIndex)])
             .setMediaMetadata(MediaMetadata.Builder().setTitle(entry?.title).build())
             .build()
         if (startAt > 0) player.setMediaItem(item, startAt) else player.setMediaItem(item)
         player.prepare()
         player.playWhenReady = true
     }
+
+    /**
+     * Opened from "تابع المشاهدة" (one episode only): fetch the series so "الحلقة الجاية" works.
+     */
+    private fun loadSeriesQueue() {
+        val e = entry ?: return
+        if (e.kind != WatchEntry.EPISODE || queue.size > 1) return
+        val seriesId = e.seriesId ?: return
+        val account = container.settings.xtreamAccount(e.accountId) ?: return
+        lifecycleScope.launch {
+            val series = try {
+                container.xtream.series(seriesId, account)
+            } catch (x: XtreamException) {
+                return@launch
+            }
+            val items = series.episodes.map { ep ->
+                QueueItem(container.xtream.playUrls(ep, account), WatchEntry.episode(account, seriesId, series.name.ifBlank { e.title }, series.cover, ep))
+            }
+            val at = items.indexOfFirst { it.entry.key == e.key }
+            if (at < 0 || entry?.key != e.key) return@launch
+            queue = items
+            position = at
+            session.hasPrevious = at > 0
+            session.hasNext = at < items.lastIndex
+        }
+    }
+
+    private fun nextPressed() {
+        val e = entry
+        // Pressed in the last minutes: that is where this series' end credits start.
+        if (e?.kind == WatchEntry.EPISODE && e.seriesId != null && player.duration > 0) {
+            val remaining = player.duration - player.currentPosition
+            if (remaining < 240_000) marks.setCredits(seriesKey(e), remaining)
+        }
+        if (position < queue.lastIndex) playAt(position + 1)
+    }
+
+    // ---------- "الحلقة الجاية" and "تخطي المقدمة" ----------
+
+    private var upNextDismissedFor: String? = null
+
+    /** Intro skip waiting to be learned: (series, pressed at, landed at, when). */
+    private var introPending: IntroLearn? = null
+
+    private data class IntroLearn(val series: String, val start: Long, var end: Long, val at: Long)
+
+    private fun seriesKey(e: WatchEntry) = "${e.accountId}:${e.seriesId}"
+
+    /** Twice a second: shows / hides the intro and next-episode buttons, counts down. */
+    private suspend fun watchMarkers() {
+        var countdownTicks = 0
+        var lastPos = -1L
+        while (true) {
+            delay(500)
+            val e = entry
+            if (!started || e == null || e.kind != WatchEntry.EPISODE || e.seriesId == null) {
+                session.skipIntroLabel = null
+                session.upNext = null
+                lastPos = -1L
+                continue
+            }
+            val pos = player.currentPosition
+            val dur = player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: continue
+            val key = seriesKey(e)
+            // A jump of more than a few seconds in half a second is a seek by the user.
+            val seeked = lastPos >= 0 && kotlin.math.abs(pos - lastPos) > 3_000
+            lastPos = pos
+
+            // Intro: where this series' intro was learned, else the first four minutes.
+            val learned = marks.intro(key)
+            session.skipIntroLabel = when {
+                introPending != null -> null
+                learned != null && pos in (learned.first - 3_000)..(learned.last - 5_000) -> "تخطي المقدمة"
+                learned == null && pos in 5_000..240_000 && dur > 600_000 -> "تخطي المقدمة +٨٥ث"
+                else -> null
+            }
+            // Learning: after a skip, a seek within 30 s corrects where the intro ends; then it is kept.
+            introPending?.let { p ->
+                if (seeked && pos > p.start && pos - p.start < 600_000) p.end = pos
+                if (System.currentTimeMillis() - p.at > 30_000) {
+                    marks.setIntro(p.series, p.start, p.end)
+                    introPending = null
+                }
+            }
+
+            // End credits: learned, else the last ~3.5 % (between 30 s and 2 min).
+            val credits = marks.credits(key) ?: (dur * 0.035).toLong().coerceIn(30_000, 120_000)
+            val remaining = dur - pos
+            val next = queue.getOrNull(position + 1)
+            if (next != null && remaining in 1..credits && upNextDismissedFor != e.key) {
+                if (session.upNext == null) countdownTicks = 0
+                session.upNext = next.entry.subtitle ?: next.entry.title
+                // Counts only while playing: a pause holds the countdown.
+                if (player.isPlaying) countdownTicks++
+                val left = 10 - countdownTicks / 2
+                session.upNextSeconds = left.coerceAtLeast(0)
+                if (left <= 0) playAt(position + 1)
+            } else {
+                session.upNext = null
+            }
+        }
+    }
+
+    private fun skipIntro() {
+        val e = entry ?: return
+        val key = seriesKey(e)
+        val learned = marks.intro(key)
+        val from = player.currentPosition
+        val to = learned?.last ?: (from + 85_000)
+        player.seekTo(to)
+        session.skipIntroLabel = null
+        // Watched for 30 s: a seek right after corrects where this series' intro ends.
+        introPending = IntroLearn(key, learned?.first ?: from, to, System.currentTimeMillis())
+    }
+
+    // ---------- the same channel in other accounts ----------
+
+    /**
+     * The channel playing now, from every account: same name and the same quality tags
+     * ("MBC 1 4K" finds the 4K ones, "RAW" the RAW ones).
+     */
+    private suspend fun otherSources(): List<ChannelSource> {
+        val now = current ?: return emptyList()
+        val name = now.channel?.name ?: now.entry.title
+        val key = channelKey(name)
+        val tags = qualityTags(name)
+        val accounts = container.settings.xtreamAccounts.value.filter { it.isComplete }
+        return coroutineScope {
+            accounts.map { acc ->
+                async {
+                    val list = try {
+                        container.xtream.all(XtreamKind.LIVE, acc)
+                    } catch (x: XtreamException) {
+                        emptyList()
+                    }
+                    list.filter { channelKey(it.name) == key && qualityTags(it.name) == tags }.map { ch ->
+                        ChannelSource(
+                            ch.name,
+                            acc.label,
+                            QueueItem(container.xtream.playUrls(ch, acc), WatchEntry.live(ch, acc), ch.num, ch),
+                        )
+                    }
+                }
+            }.awaitAll().flatten().filter { it.item.entry.key != now.entry.key }
+        }
+    }
+
+    private fun playSource(source: ChannelSource) {
+        // Swapped in place: left/right still move through the list it was opened from.
+        queue = queue.toMutableList().also { it[position] = source.item }
+        playAt(position)
+    }
+
+    // ---------- saving ----------
 
     private fun saveProgress(important: Boolean = false) {
         val e = entry ?: return
@@ -172,17 +374,16 @@ class PlayerActivity : ComponentActivity() {
     }
 
     companion object {
-        private const val EXTRA_URLS = "urls"
-        private const val EXTRA_ENTRY = "entry"
-
         /** Plays [urls] (tried in order); [entry] names it and keeps its place in the watch history. */
-        fun start(context: Context, urls: List<String>, entry: WatchEntry) {
-            if (urls.isEmpty()) return
-            context.startActivity(
-                Intent(context, PlayerActivity::class.java)
-                    .putStringArrayListExtra(EXTRA_URLS, ArrayList(urls))
-                    .putExtra(EXTRA_ENTRY, Json.encodeToString(WatchEntry.serializer(), entry)),
-            )
+        fun start(context: Context, urls: List<String>, entry: WatchEntry) =
+            start(context, listOf(QueueItem(urls, entry)), 0)
+
+        /** Plays [items] starting at [index]: left/right (channels) or next episode move through them. */
+        fun start(context: Context, items: List<QueueItem>, index: Int) {
+            if (items.isEmpty() || items.getOrNull(index)?.urls.isNullOrEmpty()) return
+            PlayerQueue.items = items
+            PlayerQueue.index = index
+            context.startActivity(Intent(context, PlayerActivity::class.java))
         }
     }
 }

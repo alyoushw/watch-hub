@@ -356,7 +356,13 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
     val history by container.history.entries.collectAsStateWithLifecycle()
     val account by container.settings.xtream.collectAsStateWithLifecycle()
     val playEpisode: (XtreamEpisode) -> Unit = { ep ->
-        series?.let { PlayerActivity.start(context, container.xtream.playUrls(ep, account), WatchEntry.episode(account, seriesId, it.name, it.cover, ep)) }
+        series?.let { sr ->
+            // The whole series as a queue: "الحلقة الجاية" goes on through the episodes.
+            val items = sr.episodes.map { e ->
+                com.alyoushw.watchhub.player.QueueItem(container.xtream.playUrls(e, account), WatchEntry.episode(account, seriesId, sr.name, sr.cover, e))
+            }
+            PlayerActivity.start(context, items, sr.episodes.indexOfFirst { it.id == ep.id }.coerceAtLeast(0))
+        }
     }
 
     Scaffold(
@@ -642,11 +648,30 @@ fun ContinueWatchingRow(
         e.seriesId?.let(onOpenSeries)
     }
 
+    /** The title's page on the platform side (TMDB): its known id, else found by its name. */
+    fun openPlatformPage(e: WatchEntry) {
+        val type = if (e.kind == WatchEntry.EPISODE) MediaType.TV else MediaType.MOVIE
+        val known = e.tmdbId
+        if (known != null && type == MediaType.MOVIE) {
+            onOpenTitle(type, known)
+            return
+        }
+        scope.launch {
+            val name = XtreamApi.normalizeTitle(e.title)
+            val hit = runCatching { container.api.search(name).firstOrNull { it.type == type } }.getOrNull()
+            if (hit != null) {
+                onOpenTitle(type, hit.id)
+            } else {
+                android.widget.Toast.makeText(context, "ما لقينا صفحة «$name» في المنصة", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     // Long press: open the title's own page, or drop it from the row.
     menuFor?.let { e ->
         val openLabel = when (e.kind) {
-            WatchEntry.EPISODE -> "افتح صفحة المسلسل"
-            WatchEntry.MOVIE -> "افتح صفحة الفيلم"
+            WatchEntry.EPISODE -> "حلقات المسلسل في الحساب"
+            WatchEntry.MOVIE -> "معلومات الفيلم (المنصة)"
             else -> "افتح القنوات المباشرة"
         }
         AlertDialog(
@@ -664,27 +689,19 @@ fun ContinueWatchingRow(
                                     e.accountId?.let { container.settings.setActiveXtream(it) }
                                     onOpenLive()
                                 }
-                                else -> {
-                                    val known = e.tmdbId
-                                    if (known != null) {
-                                        onOpenTitle(MediaType.MOVIE, known)
-                                    } else {
-                                        // Not matched yet: look the film up on TMDB by its name.
-                                        scope.launch {
-                                            val hit = runCatching {
-                                                container.api.search(XtreamApi.normalizeTitle(e.title)).firstOrNull { it.type == MediaType.MOVIE }
-                                            }.getOrNull()
-                                            if (hit != null) {
-                                                onOpenTitle(MediaType.MOVIE, hit.id)
-                                            } else {
-                                                android.widget.Toast.makeText(context, "ما لقينا صفحة لهذا الفيلم", android.widget.Toast.LENGTH_SHORT).show()
-                                            }
-                                        }
-                                    }
-                                }
+                                else -> openPlatformPage(e)
                             }
                         },
                     ) { Text(openLabel) }
+                    if (e.kind == WatchEntry.EPISODE) {
+                        OutlinedButton(
+                            modifier = Modifier.fillMaxWidth().focusFrame(),
+                            onClick = {
+                                menuFor = null
+                                openPlatformPage(e)
+                            },
+                        ) { Text("معلومات المسلسل (المنصة)") }
+                    }
                     OutlinedButton(
                         modifier = Modifier.fillMaxWidth().focusFrame(),
                         onClick = {

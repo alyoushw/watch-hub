@@ -1,0 +1,93 @@
+package com.alyoushw.watchhub.player
+
+import android.content.Context
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.alyoushw.watchhub.data.WatchEntry
+import com.alyoushw.watchhub.data.XtreamItem
+
+/** One thing the player can play: its links (tried in order) and its history entry. */
+data class QueueItem(
+    val urls: List<String>,
+    val entry: WatchEntry,
+    /** For channels: the number to show ("12"), when known. */
+    val number: Int? = null,
+    /** For channels: the item itself (used to find the same channel in other accounts). */
+    val channel: XtreamItem? = null,
+)
+
+/**
+ * What the player goes through: the channels of the list it was opened from (left/right switch
+ * channel), or a series' episodes (for "الحلقة الجاية"). Handed over in memory: lists can hold
+ * thousands of channels, too many for an Intent.
+ */
+object PlayerQueue {
+    var items: List<QueueItem> = emptyList()
+    var index: Int = 0
+}
+
+/** Another source for the same channel: same name and quality, from any account. */
+data class ChannelSource(val label: String, val account: String, val item: QueueItem)
+
+/** What the player screen shows and reacts to; the activity changes it as playback moves. */
+class PlayerSession {
+    var title by mutableStateOf("")
+    var subtitle by mutableStateOf<String?>(null)
+    var live by mutableStateOf(false)
+    var number by mutableStateOf<Int?>(null)
+    var hasPrevious by mutableStateOf(false)
+    var hasNext by mutableStateOf(false)
+    /** "الحلقة الجاية" card: the next episode's name, and seconds left before it starts by itself. */
+    var upNext by mutableStateOf<String?>(null)
+    var upNextSeconds by mutableIntStateOf(0)
+    /** "تخطي المقدمة" is shown while this is set (the label on the button). */
+    var skipIntroLabel by mutableStateOf<String?>(null)
+}
+
+/**
+ * Where a series' opening and closing credits are, learned from what the user does:
+ * pressing "تخطي المقدمة" (and adjusting after) teaches the intro; pressing "الحلقة الجاية"
+ * early teaches how long the end credits are. Kept per series, on the device.
+ */
+class SeriesMarks(context: Context) {
+    private val prefs = context.getSharedPreferences("series_marks", Context.MODE_PRIVATE)
+
+    fun intro(series: String): LongRange? = prefs.getString("intro:$series", null)?.split(',')
+        ?.mapNotNull { it.toLongOrNull() }?.takeIf { it.size == 2 && it[1] > it[0] }?.let { it[0]..it[1] }
+
+    fun setIntro(series: String, start: Long, end: Long) {
+        if (end > start) prefs.edit().putString("intro:$series", "$start,$end").apply()
+    }
+
+    /** How long before the end the credits start, in ms (learned), or null. */
+    fun credits(series: String): Long? = prefs.getLong("credits:$series", -1).takeIf { it > 0 }
+
+    fun setCredits(series: String, remainingMs: Long) {
+        if (remainingMs in 10_000..240_000) prefs.edit().putLong("credits:$series", remainingMs).apply()
+    }
+}
+
+/** Quality words in channel names ("MBC 1 4K", "MBC1 FHD", "beIN 1 RAW"). */
+private val QualityWords = listOf("4k", "uhd", "8k", "fhd", "hd", "sd", "raw", "hevc", "h265", "50fps", "60fps", "low")
+
+/** The quality tags of a channel name, e.g. {"4k"} or {"raw","fhd"}. */
+fun qualityTags(name: String): Set<String> {
+    val words = name.lowercase().split(Regex("[^\\p{L}\\p{Nd}]+")).toSet()
+    val tags = QualityWords.filter { it in words }.toMutableSet()
+    if ("uhd" in tags) { tags.remove("uhd"); tags.add("4k") }
+    if ("h265" in tags) { tags.remove("h265"); tags.add("hevc") }
+    return tags
+}
+
+/** The channel itself without prefixes, quality words or symbols: "AR| MBC 1 4K ᴿᴬᵂ" → "mbc1". */
+fun channelKey(name: String): String {
+    var t = name.lowercase()
+        .replace(Regex("^\\s*(\\[[^\\]]*\\]|\\|[^|]{1,6}\\||[a-z]{2,3}\\s*[|:]\\s*|[a-z]{2,3}\\s+-\\s+)"), "")
+        .replace(Regex("[(\\[{][^)\\]}]*[)\\]}]"), " ")
+    val words = t.split(Regex("[^\\p{L}\\p{Nd}]+")).filter { it.isNotBlank() && it !in QualityWords }
+    t = words.joinToString("")
+    return t
+        .replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا').replace('ة', 'ه').replace('ى', 'ي')
+}

@@ -69,7 +69,37 @@ import com.alyoushw.watchhub.data.XtreamException
 import com.alyoushw.watchhub.data.XtreamItem
 import com.alyoushw.watchhub.data.XtreamKind
 import com.alyoushw.watchhub.data.XtreamProgram
+import com.alyoushw.watchhub.data.WatchEntry
+import com.alyoushw.watchhub.data.XtreamAccount
 import com.alyoushw.watchhub.player.PlayerActivity
+import com.alyoushw.watchhub.player.QueueItem
+import com.alyoushw.watchhub.player.channelKey
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.PlayerView
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -77,6 +107,11 @@ import kotlinx.coroutines.launch
 private const val RECENT = "__recent"
 private const val ALL = "__all"
 private const val FAVORITES = "__fav"
+
+/** A channel and the account it comes from (search runs over every account). */
+data class LiveHit(val channel: XtreamItem, val account: XtreamAccount) {
+    val key get() = "${account.id}:${channel.id}"
+}
 
 /** All live channels of the account, grouped by category, with a now/next guide for the chosen one. */
 class LiveViewModel(private val api: XtreamApi) : ViewModel() {
@@ -91,10 +126,15 @@ class LiveViewModel(private val api: XtreamApi) : ViewModel() {
     var error by mutableStateOf<String?>(null)
         private set
     var category by mutableStateOf(ALL)
-    var selected by mutableStateOf<XtreamItem?>(null)
+    var selected by mutableStateOf<LiveHit?>(null)
         private set
     var guide by mutableStateOf<List<XtreamProgram>?>(null)
         private set
+
+    /** Every account's channels, loaded the first time the user searches. */
+    var everywhere by mutableStateOf<List<LiveHit>?>(null)
+        private set
+    private var everywhereFor: List<String> = emptyList()
 
     private var guideJob: Job? = null
 
@@ -111,7 +151,6 @@ class LiveViewModel(private val api: XtreamApi) : ViewModel() {
                 val all = api.all(XtreamKind.LIVE)
                 channels = all
                 counts = all.groupingBy { it.categoryId.orEmpty() }.eachCount()
-                if (selected == null) select(all.firstOrNull())
             } catch (e: XtreamException) {
                 error = e.message
             }
@@ -119,15 +158,34 @@ class LiveViewModel(private val api: XtreamApi) : ViewModel() {
         }
     }
 
-    fun select(channel: XtreamItem?) {
-        if (channel == null || channel.id == selected?.id) return
-        selected = channel
+    fun loadEverywhere(accounts: List<XtreamAccount>) {
+        val ids = accounts.map { it.id }
+        if (ids == everywhereFor && everywhere != null) return
+        everywhereFor = ids
+        viewModelScope.launch {
+            everywhere = coroutineScope {
+                accounts.map { acc ->
+                    async {
+                        try {
+                            api.all(XtreamKind.LIVE, acc).map { LiveHit(it, acc) }
+                        } catch (e: XtreamException) {
+                            emptyList()
+                        }
+                    }
+                }.awaitAll().flatten()
+            }
+        }
+    }
+
+    fun select(hit: LiveHit?) {
+        if (hit == null || hit.key == selected?.key) return
+        selected = hit
         guide = null
         guideJob?.cancel()
         guideJob = viewModelScope.launch {
             delay(350) // Moving down the list with the remote should not fire a request per row.
             guide = try {
-                api.shortEpg(channel.id)
+                api.shortEpg(hit.channel.id, hit.account)
             } catch (e: XtreamException) {
                 emptyList()
             }
@@ -135,22 +193,37 @@ class LiveViewModel(private val api: XtreamApi) : ViewModel() {
     }
 }
 
-/** Live channels in three panes: categories, channels, and a preview of the chosen channel. */
+/**
+ * Live channels: categories, channels, and a small live picture of the chosen channel.
+ * First tap plays a channel in the small picture; the second (or tapping the picture) opens it
+ * full screen, where left/right go through the same list.
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun LiveChannels(showAccounts: Boolean = true) {
     val container = appContainer()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val account by container.settings.xtream.collectAsStateWithLifecycle()
+    val accounts by container.settings.xtreamAccounts.collectAsStateWithLifecycle()
     val favorites by container.settings.xtreamFavorites.collectAsStateWithLifecycle()
     val recent by container.settings.xtreamRecent.collectAsStateWithLifecycle()
     val vm: LiveViewModel = viewModel(key = "live:${account.host}:${account.username}") { LiveViewModel(container.xtream) }
     var query by remember { mutableStateOf("") }
+    /** The channel playing in the small picture, if any. */
+    var previewing by remember { mutableStateOf<LiveHit?>(null) }
 
-    val play: (XtreamItem) -> Unit = { ch ->
-        container.settings.addXtreamRecent(ch.id)
-        PlayerActivity.start(context, container.xtream.playUrls(ch, account), com.alyoushw.watchhub.data.WatchEntry.live(ch, account))
+    // Leaving the app (or opening the full player) stops the small picture.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) previewing = null }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
     }
+
+    val complete = remember(accounts) { accounts.filter { it.isComplete } }
+    val searching = query.isNotBlank()
+    LaunchedEffect(searching, complete) { if (searching && complete.size > 1) vm.loadEverywhere(complete) }
 
     when {
         vm.loading && vm.channels.isEmpty() -> {
@@ -164,70 +237,130 @@ fun LiveChannels(showAccounts: Boolean = true) {
     }
 
     val byId = remember(vm.channels) { vm.channels.associateBy { it.id } }
-    val shown = remember(vm.channels, vm.category, favorites, recent, query) {
+    val shown: List<LiveHit> = remember(vm.channels, vm.category, favorites, recent, query, vm.everywhere, account) {
         val q = query.trim()
+        fun mine(list: List<XtreamItem>) = list.map { LiveHit(it, account) }
         when {
-            q.isNotEmpty() -> vm.channels.filter { it.name.contains(q, ignoreCase = true) }
-            vm.category == ALL -> vm.channels
-            vm.category == FAVORITES -> vm.channels.filter { it.id in favorites }
-            vm.category == RECENT -> recent.mapNotNull { byId[it] }
-            else -> vm.channels.filter { it.categoryId == vm.category }
+            q.isNotEmpty() -> {
+                // Search: every account's channels (the active account first).
+                val pool = vm.everywhere?.takeIf { complete.size > 1 } ?: mine(vm.channels)
+                val key = channelKey(q)
+                pool.filter { it.channel.name.contains(q, ignoreCase = true) || (key.isNotEmpty() && channelKey(it.channel.name).contains(key)) }
+                    .sortedBy { if (it.account.id == account.id) 0 else 1 }
+            }
+            vm.category == ALL -> mine(vm.channels)
+            vm.category == FAVORITES -> mine(vm.channels.filter { it.id in favorites })
+            vm.category == RECENT -> mine(recent.mapNotNull { byId[it] })
+            else -> mine(vm.channels.filter { it.categoryId == vm.category })
         }
     }
     val listState = remember(vm.category, query.isBlank()) { LazyListState() }
+    val multi = complete.size > 1
+
+    fun openFull(hit: LiveHit) {
+        container.settings.addXtreamRecent(hit.channel.id)
+        val list = shown.ifEmpty { listOf(hit) }
+        val items = list.mapIndexed { i, h ->
+            QueueItem(container.xtream.playUrls(h.channel, h.account), WatchEntry.live(h.channel, h.account), h.channel.num ?: (i + 1), h.channel)
+        }
+        val index = list.indexOfFirst { it.key == hit.key }.coerceAtLeast(0)
+        // One connection at a time: the small picture lets go before the full player starts.
+        val wasPreviewing = previewing != null
+        previewing = null
+        scope.launch {
+            if (wasPreviewing) delay(400)
+            PlayerActivity.start(context, items, index)
+        }
+    }
+
+    fun tap(hit: LiveHit) {
+        if (previewing?.key == hit.key) {
+            openFull(hit)
+        } else {
+            vm.select(hit)
+            previewing = hit
+        }
+    }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 720.dp
-        Column(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (showAccounts) AccountSwitcher()
-            PillSearch(query, { query = it }, "البحث في القنوات", Modifier.fillMaxWidth().padding(top = 4.dp))
-
-            // Right to left: preview, then channels, then categories on the far side.
-            Row(Modifier.weight(1f).fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (wide) {
-                    PreviewPane(
-                        channel = vm.selected,
-                        categoryName = vm.categories.firstOrNull { it.id == vm.selected?.categoryId }?.name,
-                        guide = vm.guide,
-                        favorite = vm.selected?.id?.let { it in favorites } == true,
-                        onPlay = { vm.selected?.let(play) },
-                        onFavorite = { vm.selected?.let { container.settings.toggleXtreamFavorite(it.id) } },
-                        modifier = Modifier.weight(1f).fillMaxHeight(),
-                    )
-                }
-
-                Pane(Modifier.weight(if (wide) 1.25f else 1f).fillMaxHeight()) {
-                    if (shown.isEmpty()) {
-                        Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
-                            Text(
-                                if (vm.category == FAVORITES) "اضغط مطولاً على أي قناة عشان تضيفها للمفضلة" else "ما فيه قنوات هنا",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+        val channelList: @Composable (Modifier) -> Unit = { mod ->
+            Pane(mod) {
+                when {
+                    searching && multi && vm.everywhere == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("ندوّر في كل حساباتك…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    shown.isEmpty() -> Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
+                        Text(
+                            when {
+                                searching -> "ما لقينا قناة بهالاسم"
+                                vm.category == FAVORITES -> "اضغط مطولاً على أي قناة عشان تضيفها للمفضلة"
+                                else -> "ما فيه قنوات هنا"
+                            },
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    else -> LazyColumn(state = listState, contentPadding = PaddingValues(6.dp)) {
+                        itemsIndexed(shown, key = { _, h -> h.key }) { index, h ->
+                            ChannelRow(
+                                number = h.channel.num ?: (index + 1),
+                                channel = h.channel,
+                                accountLabel = if (multi && searching) h.account.label else null,
+                                selected = vm.selected?.key == h.key,
+                                playing = previewing?.key == h.key,
+                                favorite = h.account.id == account.id && h.channel.id in favorites,
+                                onFocus = { if (wide && previewing == null) vm.select(h) },
+                                onClick = { tap(h) },
+                                onLongClick = {
+                                    if (h.account.id != account.id) return@ChannelRow
+                                    container.settings.toggleXtreamFavorite(h.channel.id)
+                                    val added = h.channel.id !in favorites
+                                    Toast.makeText(context, if (added) "أُضيفت للمفضلة" else "انشالت من المفضلة", Toast.LENGTH_SHORT).show()
+                                },
                             )
-                        }
-                    } else {
-                        LazyColumn(state = listState, contentPadding = PaddingValues(6.dp)) {
-                            itemsIndexed(shown, key = { _, ch -> ch.id }) { index, ch ->
-                                ChannelRow(
-                                    number = ch.num ?: (index + 1),
-                                    channel = ch,
-                                    selected = wide && vm.selected?.id == ch.id,
-                                    favorite = ch.id in favorites,
-                                    onFocus = { if (wide) vm.select(ch) },
-                                    onClick = {
-                                        // On a big screen the first tap previews, the second plays.
-                                        if (wide && vm.selected?.id != ch.id) vm.select(ch) else play(ch)
-                                    },
-                                    onLongClick = {
-                                        container.settings.toggleXtreamFavorite(ch.id)
-                                        val added = ch.id !in favorites
-                                        Toast.makeText(context, if (added) "أُضيفت للمفضلة" else "انشالت من المفضلة", Toast.LENGTH_SHORT).show()
-                                    },
-                                )
-                            }
                         }
                     }
                 }
+            }
+        }
+        val search: @Composable (Modifier) -> Unit = { mod ->
+            PillSearch(query, { query = it }, if (multi) "ابحث عن قناة في كل الحسابات" else "البحث في القنوات", mod)
+        }
 
+        if (wide) {
+            // Big screens: categories | channels | live picture and guide, edge to edge.
+            Row(Modifier.fillMaxSize().padding(start = 12.dp, end = 12.dp, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(Modifier.weight(1.15f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    val hit = previewing ?: vm.selected
+                    LivePicture(
+                        hit = previewing,
+                        idle = hit,
+                        onOpen = { (previewing ?: vm.selected)?.let(::openFull) },
+                        modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+                    )
+                    Pane(Modifier.fillMaxWidth().weight(1f)) {
+                        if (hit == null) {
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Text("اختر قناة: ضغطة تشغّلها هنا، والثانية تفتحها كاملة", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        } else {
+                            ChannelInfo(
+                                hit = hit,
+                                accountLabel = if (multi) hit.account.label else null,
+                                categoryName = vm.categories.firstOrNull { it.id == hit.channel.categoryId }?.name.takeIf { hit.account.id == account.id },
+                                guide = vm.guide.takeIf { vm.selected?.key == hit.key },
+                                favorite = hit.account.id == account.id && hit.channel.id in favorites,
+                                onPlay = { openFull(hit) },
+                                onFavorite = { if (hit.account.id == account.id) container.settings.toggleXtreamFavorite(hit.channel.id) },
+                            )
+                        }
+                    }
+                }
+                Column(Modifier.weight(1.25f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    search(Modifier.fillMaxWidth())
+                    if (showAccounts) AccountSwitcher()
+                    channelList(Modifier.fillMaxWidth().weight(1f))
+                }
                 CategoryPane(
                     categories = vm.categories,
                     counts = vm.counts,
@@ -239,9 +372,204 @@ fun LiveChannels(showAccounts: Boolean = true) {
                         query = ""
                         vm.category = it
                     },
-                    modifier = Modifier.width(if (wide) 250.dp else 132.dp).fillMaxHeight(),
+                    modifier = Modifier.width(230.dp).fillMaxHeight(),
                 )
             }
+        } else {
+            // Phones: the live picture on top while a channel plays, categories as chips, the list below.
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                previewing?.let { hit ->
+                    Column {
+                        LivePicture(hit = hit, idle = hit, onOpen = { openFull(hit) }, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f), rounded = false)
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(hit.channel.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                val now = vm.guide?.firstOrNull()?.title.takeIf { vm.selected?.key == hit.key }
+                                Text(
+                                    listOfNotNull(now?.let { "الحين: $it" }, if (multi) hit.account.label else null).joinToString(" · ").ifEmpty { "اضغط مرة ثانية عشان تفتحها كاملة" },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            Button(
+                                onClick = { openFull(hit) },
+                                colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Color(0xFF1C1206)),
+                                contentPadding = PaddingValues(horizontal = 14.dp),
+                            ) { Text("ملء الشاشة", fontWeight = FontWeight.Bold) }
+                            TextButton(onClick = { previewing = null }) { Text("إيقاف") }
+                        }
+                    }
+                }
+                Column(Modifier.weight(1f).padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (showAccounts) AccountSwitcher()
+                    search(Modifier.fillMaxWidth())
+                    if (!searching) {
+                        CategoryChips(
+                            categories = vm.categories,
+                            favorites = favorites.count { it in byId },
+                            recent = recent.count { it in byId },
+                            selected = vm.category,
+                            onSelect = { vm.category = it },
+                        )
+                    }
+                    channelList(Modifier.fillMaxWidth().weight(1f).padding(bottom = 8.dp))
+                }
+            }
+        }
+    }
+}
+
+/** Categories as one scrolling row of chips (phones). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CategoryChips(categories: List<XtreamCategory>, favorites: Int, recent: Int, selected: String, onSelect: (String) -> Unit) {
+    val fixed = buildList {
+        add(ALL to "الكل")
+        if (favorites > 0) add(FAVORITES to "المفضلة")
+        if (recent > 0) add(RECENT to "شوهد مؤخراً")
+    }
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(fixed, key = { it.first }) { (id, name) ->
+            FilterChip(selected = selected == id, onClick = { onSelect(id) }, label = { Text(name, maxLines = 1) }, modifier = Modifier.focusFrame())
+        }
+        items(categories, key = { it.id }) { c ->
+            FilterChip(selected = selected == c.id, onClick = { onSelect(c.id) }, label = { Text(c.name, maxLines = 1) }, modifier = Modifier.focusFrame())
+        }
+    }
+}
+
+/**
+ * The small live picture. [hit] plays (null: shows [idle]'s logo). Tapping it opens the
+ * channel full screen.
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+@Composable
+private fun LivePicture(hit: LiveHit?, idle: LiveHit?, onOpen: () -> Unit, modifier: Modifier, rounded: Boolean = true) {
+    val context = LocalContext.current
+    val container = appContainer()
+    val player = remember {
+        val http = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(context, http)))
+            .build()
+    }
+    DisposableEffect(player) { onDispose { player.release() } }
+    var buffering by remember { mutableStateOf(false) }
+    var failed by remember { mutableStateOf(false) }
+    var quality by remember { mutableStateOf<String?>(null) }
+
+    val urls = remember(hit?.key) { hit?.let { container.xtream.playUrls(it.channel, it.account) }.orEmpty() }
+    /** Links that failed for this channel; the next one is tried. */
+    var errors by remember { mutableIntStateOf(0) }
+
+    fun start(url: String) {
+        player.setMediaItem(MediaItem.fromUri(url))
+        player.prepare()
+        player.playWhenReady = true
+    }
+
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                buffering = state == Player.STATE_BUFFERING
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                errors++
+            }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                quality = videoSize.height.takeIf { it > 0 }?.let { h -> if (h >= 2100) "4K" else "${minOf(h, videoSize.width)}p" }
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
+
+    LaunchedEffect(hit?.key) {
+        errors = 0
+        failed = false
+        quality = null
+        if (urls.isEmpty()) {
+            player.stop()
+            player.clearMediaItems()
+        } else {
+            start(urls[0])
+        }
+    }
+    LaunchedEffect(errors) {
+        if (errors == 0) return@LaunchedEffect
+        if (errors < urls.size) start(urls[errors]) else failed = true
+    }
+
+    val shape = if (rounded) RoundedCornerShape(14.dp) else RoundedCornerShape(0.dp)
+    Box(
+        modifier
+            .clip(shape)
+            .background(Brush.radialGradient(listOf(Gold.copy(alpha = 0.30f), Color(0xFF0B0907)))),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (hit != null) {
+            AndroidView(
+                factory = { ctx ->
+                    PlayerView(ctx).apply {
+                        useController = false
+                        this.player = player
+                        setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+            if (failed) Text("ما اشتغلت القناة", color = Color.White)
+            else if (buffering) CircularProgressIndicator(Modifier.size(36.dp), color = Gold, strokeWidth = 3.dp)
+        } else {
+            val img = idle?.channel?.image
+            if (img != null) {
+                AsyncImage(model = img, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize().padding(32.dp))
+            } else {
+                Text("📺", fontSize = 48.sp)
+            }
+            Box(Modifier.size(56.dp).clip(RoundedCornerShape(50)).background(Color.Black.copy(alpha = 0.55f)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(32.dp))
+            }
+        }
+        Row(
+            Modifier.align(Alignment.TopStart).padding(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                "● مباشر",
+                color = Color.White,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xFFE5484D)).padding(horizontal = 8.dp, vertical = 3.dp),
+            )
+            if (hit != null) quality?.let {
+                Text(
+                    it,
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(alpha = 0.55f)).padding(horizontal = 8.dp, vertical = 3.dp),
+                )
+            }
+        }
+        // Over the video view, which would otherwise take the touches.
+        Box(Modifier.matchParentSize().focusFrame(shape).clickable(onClick = onOpen))
+        if (hit != null) {
+            Text(
+                "اضغط للشاشة الكاملة",
+                color = Color.White,
+                fontSize = 12.sp,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(10.dp).clip(RoundedCornerShape(6.dp))
+                    .background(Color.Black.copy(alpha = 0.55f)).padding(horizontal = 8.dp, vertical = 3.dp),
+            )
         }
     }
 }
@@ -354,7 +682,9 @@ private fun CategoryRow(name: String, count: Int, selected: Boolean, onClick: ()
 private fun ChannelRow(
     number: Int,
     channel: XtreamItem,
+    accountLabel: String?,
     selected: Boolean,
+    playing: Boolean,
     favorite: Boolean,
     onFocus: () -> Unit,
     onClick: () -> Unit,
@@ -396,88 +726,42 @@ private fun ChannelRow(
                 Text("📺", fontSize = 16.sp)
             }
         }
-        Text(
-            channel.name,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                channel.name,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                color = if (playing) Gold else MaterialTheme.colorScheme.onSurface,
+            )
+            accountLabel?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = Gold, maxLines = 1) }
+        }
+        if (playing) Text("▶", color = Gold, fontWeight = FontWeight.Bold)
         if (favorite) Icon(Icons.Filled.Star, contentDescription = "مفضلة", tint = Gold, modifier = Modifier.size(16.dp))
     }
 }
 
 @Composable
-private fun PreviewPane(
-    channel: XtreamItem?,
-    categoryName: String?,
-    guide: List<XtreamProgram>?,
-    favorite: Boolean,
-    onPlay: () -> Unit,
-    onFavorite: () -> Unit,
-    modifier: Modifier,
-) {
-    Pane(modifier) {
-        if (channel == null) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("اختر قناة", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        } else {
-            PreviewBody(channel, categoryName, guide, favorite, onPlay, onFavorite)
-        }
-    }
-}
-
-@Composable
-private fun PreviewBody(
-    channel: XtreamItem,
+private fun ChannelInfo(
+    hit: LiveHit,
+    accountLabel: String?,
     categoryName: String?,
     guide: List<XtreamProgram>?,
     favorite: Boolean,
     onPlay: () -> Unit,
     onFavorite: () -> Unit,
 ) {
-    Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        // The channel logo on a warm glow, like a lit screen.
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 9f)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Brush.radialGradient(listOf(Gold.copy(alpha = 0.35f), Color(0xFF120F0C)))),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (channel.image != null) {
-                AsyncImage(
-                    model = channel.image,
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize().padding(28.dp),
-                )
-            } else {
-                Text("📺", fontSize = 48.sp)
-            }
-            Text(
-                "● مباشر",
-                color = Color.White,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(10.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color(0xFFE5484D))
-                    .padding(horizontal = 8.dp, vertical = 3.dp),
-            )
-        }
+    val channel = hit.channel
+    Column(Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(channel.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        categoryName?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        val meta = listOfNotNull(categoryName, accountLabel).joinToString(" · ")
+        if (meta.isNotEmpty()) Text(meta, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
         when {
             guide == null -> Text("…", color = MaterialTheme.colorScheme.onSurfaceVariant)
             guide.isEmpty() -> Text("ما فيه دليل برامج لهذي القناة", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             else -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                guide.take(2).forEachIndexed { i, p ->
+                guide.take(3).forEachIndexed { i, p ->
                     val time = listOfNotNull(p.start?.let { XtreamApi.formatTime(it) }, p.end?.let { XtreamApi.formatTime(it) }).joinToString(" - ")
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(
@@ -502,7 +786,7 @@ private fun PreviewBody(
             ) {
                 Icon(Icons.Filled.PlayArrow, contentDescription = null)
                 Spacer(Modifier.width(6.dp))
-                Text("تشغيل", fontWeight = FontWeight.Bold)
+                Text("ملء الشاشة", fontWeight = FontWeight.Bold)
             }
             OutlinedButton(onClick = onFavorite, modifier = Modifier.height(48.dp).focusFrame()) {
                 Icon(if (favorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = null, tint = Gold)
