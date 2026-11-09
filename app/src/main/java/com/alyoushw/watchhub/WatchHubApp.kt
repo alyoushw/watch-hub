@@ -30,7 +30,19 @@ class AppContainer(context: Context) {
     val history = WatchHistory(context).also { it.remapAccounts(settings.accountIdChanges) }
     val cloud = CloudSync(context, settings, history, store)
     val statusCache = StatusCache(context, api)
-    val youtube = com.alyoushw.watchhub.data.YouTube(context, settings).also { yt -> cloud.onProfileChange = { yt.unlink() } }
+
+
+    init {
+        // A new person on the device: the YouTube sign-in (kept by the in-app browser) goes too.
+        cloud.onProfileChange = {
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                runCatching {
+                    android.webkit.CookieManager.getInstance().removeAllCookies(null)
+                    android.webkit.WebStorage.getInstance().deleteAllData()
+                }
+            }
+        }
+    }
 
     private val navPrefs = context.getSharedPreferences("navigation", Context.MODE_PRIVATE)
     // RowSource has its own "type" field, so the subtype marker needs another name ("kind").

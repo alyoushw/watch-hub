@@ -1,8 +1,8 @@
 // Keeps Watch Hub's own files on the device, so the app opens at once even while the free
 // server is still waking up (instead of the host's loading page). Files are refreshed in the
 // background on every visit; a reply that is not ours (e.g. the host's wake-up page) is ignored.
-const CACHE = "watchhub-v9";
-const SHELL = ["./", "index.html", "styles.css", "js/app.js", "js/store.js", "js/tmdb.js", "js/xtream.js", "js/player.js", "js/cloud.js", "js/smart.js", "js/translate.js", "js/youtube.js",
+const CACHE = "watchhub-v10";
+const SHELL = ["./", "index.html", "styles.css", "js/app.js", "js/store.js", "js/tmdb.js", "js/xtream.js", "js/player.js", "js/cloud.js", "js/smart.js", "js/translate.js",
   "manifest.webmanifest", "icon.svg", "icon-180.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {
@@ -30,7 +30,7 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(req.url);
   if (req.method !== "GET" || url.origin !== location.origin) return;
   // Server routes (proxy, account settings, sign-in links) always go to the server.
-  if (/^\/(proxy|pair|auth|yt\/|config\.json|\.well-known)/.test(url.pathname)) return;
+  if (/^\/(proxy|pair|auth|config\.json|\.well-known)/.test(url.pathname)) return;
   if (req.mode === "navigate" && url.pathname !== "/" && !url.pathname.endsWith("/index.html")) return;
   const key = req.mode === "navigate" ? "index.html" : req;
   e.respondWith((async () => {

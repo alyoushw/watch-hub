@@ -73,7 +73,7 @@
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:theme="@style/Theme.WatchHub" />
         <activity
-            android:name=".player.YouTubePlayerActivity"
+            android:name=".player.YouTubeTvActivity"
             android:exported="false"
             android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"

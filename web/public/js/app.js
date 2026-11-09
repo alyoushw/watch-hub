@@ -1,5 +1,4 @@
 // Watch Hub on the web: the same hub as the Android app, for iPhone, iPad and computers.
-import * as yt from "./youtube.js";
 import * as tmdb from "./tmdb.js";
 import * as xt from "./xtream.js";
 import { play, fmt } from "./player.js";
@@ -111,7 +110,6 @@ const routes = [
   [/^#\/xtream(?:\/(movie|series))?$/, xtreamPage, "xtream"],
   [/^#\/xseries\/(.+)$/, xseriesPage, "xtream"],
   [/^#\/settings$/, settingsPage, "settings"],
-  [/^#\/youtube$/, youtubePage, "youtube"],
   [/^#\/pair\?s=(.*)$/, pairPage, null],
 ];
 
@@ -119,7 +117,6 @@ let renderId = 0;
 async function route() {
   const hash = location.hash || "#/";
   const id = ++renderId;
-  $("#yt-tab").hidden = !yt.linked();
   for (const [re, fn, tab] of routes) {
     const m = hash.match(re);
     if (!m) continue;
@@ -1531,8 +1528,6 @@ async function settingsPage() {
 
     <section class="card-box" id="account-box"></section>
 
-    <section class="card-box" id="yt-box"></section>
-
     <section class="card-box">
       <h3>المظهر</h3>
       <div class="chips">${[["dark", "🌙 داكن"], ["light", "☀️ نهاري"], ["system", "حسب الجهاز"]].map(([k, l]) =>
@@ -1614,7 +1609,6 @@ async function settingsPage() {
 
   renderAccounts();
   renderCloud();
-  renderYouTubeBox();
 
   $("#vlc").addEventListener("change", (e) => {
     settings.vlcOnIos = e.target.checked;
@@ -1640,132 +1634,4 @@ restoreHistory().finally(() => {
 // Open instantly from the device's copy, even while the free server wakes up.
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("sw.js").catch(() => {});
-}
-
-// ---------- YouTube ----------
-
-const YT_TABS = [["feed", "اشتراكاتي"], ["popular", "الرائج"], ["liked", "أعجبني"], ["playlists", "قوائمي"]];
-
-const ago = (t) => {
-  const m = Math.max(1, Math.round((Date.now() - t) / 60000));
-  if (m < 60) return `قبل ${m} د`;
-  if (m < 1440) return `قبل ${Math.floor(m / 60)} س`;
-  if (m < 43200) return `قبل ${Math.floor(m / 1440)} يوم`;
-  if (m < 525600) return `قبل ${Math.floor(m / 43200)} شهر`;
-  return `قبل ${Math.floor(m / 525600)} سنة`;
-};
-
-/** YouTube with the user's own account; videos open in /yt.html (official player + picture controls). */
-async function youtubePage(id) {
-  if (!yt.linked()) {
-    view.innerHTML = message("فعّل يوتيوب من الإعدادات عشان تطلع لك اشتراكاتك هنا", goSettings);
-    return;
-  }
-  let tab = sessionStorage.getItem("ytTab") || "feed";
-  view.innerHTML = `<div class="yt-page">
-      <form id="ytq-form"><label class="pill">${SEARCH_ICON}<input id="ytq" type="search" placeholder="ابحث في يوتيوب" autocomplete="off"></label></form>
-      <div class="chips scroll" id="yt-tabs" style="margin:12px 0"></div>
-      <h3 class="section-title" id="yt-head" hidden></h3>
-      <div id="yt-list"></div>
-    </div>`;
-  const listEl = $("#yt-list");
-  const head = $("#yt-head");
-  const drawTabs = (active) => {
-    $("#yt-tabs").innerHTML = YT_TABS.map(([k, label]) => `<button class="chip ${k === active ? "on" : ""}" data-t="${k}">${label}</button>`).join("");
-  };
-  const card = (img, title, meta, badge, attrs) => `<button class="yt-card" ${attrs}>
-      <span class="yt-thumb">${img ? `<img loading="lazy" src="${esc(img)}" alt="">` : ""}${badge ? `<span class="yt-dur">${esc(badge)}</span>` : ""}</span>
-      <b dir="auto">${esc(title)}</b>${meta ? `<small class="muted" dir="auto">${esc(meta)}</small>` : ""}</button>`;
-  let seq = 0;
-  async function show(load, heading, active) {
-    const mine = ++seq;
-    drawTabs(active);
-    head.hidden = !heading;
-    head.textContent = heading || "";
-    listEl.innerHTML = loading();
-    try {
-      const items = await load();
-      if (mine !== seq || stale(id)) return;
-      if (!items.length) {
-        listEl.innerHTML = `<p class="muted center">ما فيه شي هنا</p>`;
-        return;
-      }
-      listEl.innerHTML = `<div class="yt-grid">${items.map((v) => v.count !== undefined && !v.channel
-        ? card(v.thumbnail, v.title, v.count != null ? `${v.count} فيديو` : "", "", `data-pl="${esc(v.id)}" data-title="${esc(v.title)}"`)
-        : card(v.thumbnail, v.title, [v.channel, v.publishedAt && ago(v.publishedAt)].filter(Boolean).join(" · "), v.duration ? fmt(v.duration) : "", `data-v="${esc(v.id)}" data-title="${esc(v.title)}"`)).join("")}</div>`;
-    } catch (e) {
-      if (mine === seq) listEl.innerHTML = message(e.message, `<button class="btn" id="yt-retry">حاول مرة ثانية</button>`);
-      $("#yt-retry")?.addEventListener("click", () => openTab(active, true));
-    }
-  }
-  const openTab = (t, force = false) => {
-    tab = t;
-    sessionStorage.setItem("ytTab", t);
-    const load = { feed: () => yt.subscriptionsFeed(force), popular: yt.popular, liked: yt.liked, playlists: yt.playlists }[t];
-    show(load, null, t);
-  };
-  $("#yt-tabs").addEventListener("click", (e) => {
-    const b = e.target.closest("[data-t]");
-    if (b) openTab(b.dataset.t, b.dataset.t === tab);
-  });
-  $("#ytq-form").addEventListener("submit", (e) => {
-    e.preventDefault();
-    const q = $("#ytq").value.trim();
-    if (q) show(() => yt.search(q), `نتائج «${q}»`, null);
-  });
-  listEl.addEventListener("click", (e) => {
-    const v = e.target.closest("[data-v]");
-    if (v) {
-      location.href = `/yt.html?v=${encodeURIComponent(v.dataset.v)}&title=${encodeURIComponent(v.dataset.title || "")}`;
-      return;
-    }
-    const p = e.target.closest("[data-pl]");
-    if (p) show(() => yt.playlist(p.dataset.pl), p.dataset.title, null);
-  });
-  openTab(tab);
-}
-
-/** Settings › يوتيوب: link or unlink the user's YouTube. */
-function renderYouTubeBox() {
-  const box = $("#yt-box");
-  if (!box) return;
-  if (yt.linked()) {
-    box.innerHTML = `<h3>يوتيوب</h3>
-      <p style="margin:0;color:var(--gold)">✓ حساب يوتيوب مربوط. تبويب «يوتيوب» فيه اشتراكاتك والرائج واللي أعجبك وقوائمك، وتشغّلها مع أدوات «حجم الصورة».</p>
-      <div><button class="btn ghost" id="yt-unlink">إلغاء ربط يوتيوب</button></div>`;
-    $("#yt-unlink").addEventListener("click", () => {
-      yt.unlink();
-      $("#yt-tab").hidden = true;
-      renderYouTubeBox();
-    });
-    return;
-  }
-  box.innerHTML = `<h3>يوتيوب</h3>
-    <p class="muted" style="margin:0;line-height:1.8">فعّل يوتيوب بحساب قوقل حقك: تطلع لك اشتراكاتك وقوائمك هنا، وتشغّلها بمشغل يوتيوب الرسمي مع أدوات «حجم الصورة».</p>
-    <div><button class="btn" id="yt-link">فعّل يوتيوب</button></div>
-    <div id="yt-code"></div>`;
-  $("#yt-link").addEventListener("click", async () => {
-    const btn = $("#yt-link");
-    btn.disabled = true;
-    btn.textContent = "ننتظر موافقتك…";
-    const codeEl = $("#yt-code");
-    try {
-      const c = await yt.startLink();
-      const url = c.verificationUrl || "https://www.google.com/device";
-      codeEl.innerHTML = `<div class="card-box" style="margin-top:10px">
-          <div>1. افتح <a href="${esc(url)}" target="_blank" rel="noopener" style="color:var(--gold)">${esc(url.replace(/^https:\/\//, ""))}</a></div>
-          <div>2. اكتب هذا الرمز: <b style="font-size:26px;color:var(--gold);letter-spacing:2px">${esc(c.userCode)}</b></div>
-          <small class="muted">3. اختر حسابك ووافق على «عرض حساب يوتيوب». إذا طلع «التطبيق غير موثّق» اضغط «متقدم» ثم «متابعة».</small>
-        </div>`;
-      const ok = await yt.finishLink(c, () => document.body.contains(codeEl));
-      if (!document.body.contains(codeEl)) return;
-      toast(ok ? "✓ ربطنا يوتيوب" : "ما تم الربط، جرّب مرة ثانية");
-      $("#yt-tab").hidden = !yt.linked();
-      renderYouTubeBox();
-    } catch (e) {
-      codeEl.innerHTML = `<p class="msg">${esc(e.message)}</p>`;
-      btn.disabled = false;
-      btn.textContent = "فعّل يوتيوب";
-    }
-  });
 }

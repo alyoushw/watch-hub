@@ -77,8 +77,8 @@ fun WatchHubRoot() {
     CrashNotice()
     // The Xtream tab only shows once an account is saved in Settings.
     val xtream by appContainer().settings.xtream.collectAsStateWithLifecycle()
-    // The YouTube tab once a YouTube account is linked (Settings › يوتيوب).
-    val youtube by appContainer().youtube.linked.collectAsStateWithLifecycle()
+    // The YouTube tab once it is switched on (Settings › يوتيوب).
+    val youtube by appContainer().settings.youtubeEnabled.collectAsStateWithLifecycle()
     val tabs = Tab.entries.filter { (it != Tab.XTREAM || xtream.isComplete) && (it != Tab.YOUTUBE || youtube) }
     Scaffold(
         contentWindowInsets = WindowInsets(0),
@@ -157,7 +157,7 @@ fun WatchHubRoot() {
                 WatchlistScreen(onOpen = { type, id -> nav.openDetail(type, id) })
             }
             composable(Tab.SUBSCRIPTIONS.route) { SubscriptionsScreen() }
-            composable(Tab.YOUTUBE.route) { YouTubeScreen() }
+            composable(Tab.YOUTUBE.route) { YouTubeLauncher() }
             composable(Tab.SETTINGS.route) { SettingsScreen(onOpenXtream = { nav.switchTab(Tab.XTREAM.route) }) }
             composable(Tab.XTREAM.route) {
                 XtreamScreen(

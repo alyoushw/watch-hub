@@ -181,6 +181,18 @@ class SettingsStore(context: Context) {
         _xtreamRecent.value = now
     }
 
+    // ---------- YouTube (this device) ----------
+
+    private val _youtube = MutableStateFlow(prefs.getBoolean(KEY_YOUTUBE, false))
+
+    /** Show the "يوتيوب" tab: YouTube's own interface with Watch Hub's picture tools. */
+    val youtubeEnabled: StateFlow<Boolean> = _youtube.asStateFlow()
+
+    fun setYoutubeEnabled(on: Boolean) {
+        prefs.edit().putBoolean(KEY_YOUTUBE, on).apply()
+        _youtube.value = on
+    }
+
     // ---------- channel folders ("رياضة", "أخبار", …) ----------
 
     private val foldersSerializer = kotlinx.serialization.serializer<Map<String, List<String>>>()
@@ -324,5 +336,6 @@ class SettingsStore(context: Context) {
         const val KEY_XTREAM_FAV = "xtream_favorites"
         const val KEY_XTREAM_RECENT = "xtream_recent"
         const val KEY_XTREAM_FOLDERS = "xtream_folders"
+        const val KEY_YOUTUBE = "youtube_enabled"
     }
 }
