@@ -193,6 +193,77 @@ async function devicePoll(req: Request): Promise<Response> {
   return json({ status: map[data.error] || "error" });
 }
 
+// ---------- YouTube: the user's own Google account, read-only ----------
+//
+// POST /yt/device/start            → {deviceCode, userCode, verificationUrl, expiresIn, interval}
+// POST /yt/device/poll {deviceCode} → {status: ok|pending|slow_down|denied|expired, accessToken?, refreshToken?, expiresIn?}
+// POST /yt/refresh {refreshToken}   → {accessToken, expiresIn} | {error}
+// Same "TVs and limited input" client as the sign-in code; the client secret never leaves the
+// server. The refresh token stays on the device; YouTube Data API calls go straight to Google.
+
+const YT_SCOPE = "https://www.googleapis.com/auth/youtube.readonly";
+
+async function ytStart(): Promise<Response> {
+  const clientId = env("GOOGLE_TV_CLIENT_ID");
+  if (!clientId) return json({ error: "not_configured" }, 501);
+  const res = await fetch("https://oauth2.googleapis.com/device/code", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ client_id: clientId, scope: YT_SCOPE }),
+  });
+  const data = await res.json();
+  if (!res.ok) return json({ error: data.error || "google_error" }, 502);
+  return json({
+    deviceCode: data.device_code,
+    userCode: data.user_code,
+    verificationUrl: data.verification_url,
+    expiresIn: data.expires_in,
+    interval: data.interval,
+  });
+}
+
+async function ytToken(params: Record<string, string>): Promise<{ ok: boolean; data: Record<string, unknown> }> {
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ client_id: env("GOOGLE_TV_CLIENT_ID") || "", client_secret: env("GOOGLE_TV_CLIENT_SECRET") || "", ...params }),
+  });
+  return { ok: res.ok, data: await res.json() };
+}
+
+async function ytPoll(req: Request): Promise<Response> {
+  if (!env("GOOGLE_TV_CLIENT_ID") || !env("GOOGLE_TV_CLIENT_SECRET")) return json({ error: "not_configured" }, 501);
+  let deviceCode = "";
+  try {
+    deviceCode = String((await req.json()).deviceCode || "");
+  } catch { /* bad body */ }
+  if (!deviceCode) return json({ status: "error" }, 400);
+  const { ok, data } = await ytToken({ device_code: deviceCode, grant_type: "urn:ietf:params:oauth:grant-type:device_code" });
+  if (ok && data.access_token) {
+    return json({ status: "ok", accessToken: data.access_token, refreshToken: data.refresh_token, expiresIn: data.expires_in });
+  }
+  const map: Record<string, string> = {
+    authorization_pending: "pending",
+    slow_down: "slow_down",
+    access_denied: "denied",
+    expired_token: "expired",
+  };
+  return json({ status: map[String(data.error)] || "error", detail: data.error_description || data.error || null });
+}
+
+async function ytRefresh(req: Request): Promise<Response> {
+  if (!env("GOOGLE_TV_CLIENT_ID") || !env("GOOGLE_TV_CLIENT_SECRET")) return json({ error: "not_configured" }, 501);
+  let refreshToken = "";
+  try {
+    refreshToken = String((await req.json()).refreshToken || "");
+  } catch { /* bad body */ }
+  if (!refreshToken) return json({ error: "missing" }, 400);
+  const { ok, data } = await ytToken({ refresh_token: refreshToken, grant_type: "refresh_token" });
+  if (ok && data.access_token) return json({ accessToken: data.access_token, expiresIn: data.expires_in });
+  // invalid_grant: the user removed the access (or it expired): link again.
+  return json({ error: data.error || "error" }, data.error === "invalid_grant" ? 401 : 502);
+}
+
 // ---------- "scan to sign in": a TV shows a QR code, a signed-in phone approves ----------
 //
 // TV:    POST /pair/start {device}            → {id, secret, url, expiresIn}
@@ -359,5 +430,8 @@ Deno.serve({ port }, (req) => {
   if (req.method === "OPTIONS" && url.pathname.startsWith("/pair/")) return new Response(null, { status: 204, headers: CORS });
   if (url.pathname === "/auth/device/start" && req.method === "POST") return deviceStart();
   if (url.pathname === "/auth/device/poll" && req.method === "POST") return devicePoll(req);
+  if (url.pathname === "/yt/device/start" && req.method === "POST") return ytStart();
+  if (url.pathname === "/yt/device/poll" && req.method === "POST") return ytPoll(req);
+  if (url.pathname === "/yt/refresh" && req.method === "POST") return ytRefresh(req);
   return serveDir(req, { fsRoot: PUBLIC_DIR, quiet: true });
 });

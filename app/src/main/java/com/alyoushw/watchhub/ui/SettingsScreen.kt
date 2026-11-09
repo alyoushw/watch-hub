@@ -196,6 +196,10 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}) {
 
             HorizontalDivider()
 
+            YouTubeSection()
+
+            HorizontalDivider()
+
             SectionTitle("عن التطبيق")
             Text(
                 "Watch Hub ما يشغّل الفيديو بنفسه (إلا محتوى حساب Xtream Codes إذا أضفته) ولا يحفظ كلمات مرور حساباتك غير هذا الحساب. يجمع لك المحتوى في مكان واحد، " +
@@ -1072,6 +1076,95 @@ private fun ChannelFoldersSection() {
                 }) { Text("حفظ") }
             },
             dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = { renaming = null }) { Text("إلغاء") } },
+        )
+    }
+}
+
+/**
+ * "يوتيوب": link the user's YouTube (their Google account, read-only). Linking is Google's
+ * "enter a code" page, which works the same on a phone, a TV or a car screen.
+ */
+@Composable
+private fun YouTubeSection() {
+    val container = appContainer()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val yt = container.youtube
+    val linked by yt.linked.collectAsStateWithLifecycle()
+    var code by remember { mutableStateOf<com.alyoushw.watchhub.data.YtLinkCode?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var job by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionTitle("يوتيوب")
+        if (linked) {
+            Text(
+                "✓ حساب يوتيوب مربوط. تبويب «يوتيوب» فيه اشتراكاتك والرائج واللي أعجبك وقوائمك، وتشغّلها بمشغلنا مع «حجم الصورة».",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.secondary,
+            )
+            OutlinedButton(modifier = Modifier.focusFrame(), onClick = { yt.unlink() }) { Text("إلغاء ربط يوتيوب") }
+        } else {
+            Text(
+                "فعّل يوتيوب بحساب قوقل حقك: تطلع لك اشتراكاتك وقوائمك داخل التطبيق، وتشغّلها بمشغل يوتيوب الرسمي مع أدوات «حجم الصورة».",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Button(
+                modifier = Modifier.focusFrame(),
+                enabled = !busy,
+                onClick = {
+                    busy = true
+                    message = null
+                    job = scope.launch {
+                        try {
+                            val c = yt.startLink()
+                            code = c
+                            val ok = yt.finishLink(c)
+                            message = if (ok) "✓ ربطنا يوتيوب" else "ما تم الربط، جرّب مرة ثانية"
+                        } catch (e: com.alyoushw.watchhub.data.YouTubeException) {
+                            message = e.message
+                        }
+                        code = null
+                        busy = false
+                    }
+                },
+            ) { Text(if (busy) "ننتظر موافقتك…" else "فعّل يوتيوب") }
+        }
+        message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+    }
+
+    code?.let { c ->
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("ربط يوتيوب") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("1. افتح ${c.verificationUrl.removePrefix("https://")} من أي جهاز (الجوال أسهل)")
+                    Text("2. اكتب هذا الرمز:")
+                    Text(c.userCode, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Gold)
+                    Text("3. اختر حسابك ووافق على «عرض حساب يوتيوب». إذا طلع «التطبيق غير موثّق» اضغط «متقدم» ثم «متابعة».", style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                if (!isTv()) {
+                    TextButton(modifier = Modifier.focusFrame(), onClick = {
+                        val clip = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        clip.setPrimaryClip(android.content.ClipData.newPlainText("code", c.userCode))
+                        runCatching {
+                            context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(c.verificationUrl)))
+                        }
+                    }) { Text("انسخ الرمز وافتح الصفحة") }
+                }
+            },
+            dismissButton = {
+                TextButton(modifier = Modifier.focusFrame(), onClick = {
+                    job?.cancel()
+                    code = null
+                    busy = false
+                }) { Text("إلغاء") }
+            },
         )
     }
 }

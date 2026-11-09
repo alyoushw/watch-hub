@@ -186,9 +186,13 @@ class CloudSync(
 
     private val profile: String get() = prefs.getString(KEY_PROFILE, GUEST) ?: GUEST
 
+    /** Called when the device changes person (sign in / out): their own links (YouTube) go. */
+    var onProfileChange: (() -> Unit)? = null
+
     private suspend fun switchProfile(to: String, discardCurrent: Boolean) {
         val from = profile
         if (from == to) return
+        onProfileChange?.invoke()
         history.switchProfile(from, to, discardCurrent)
         store.switchWatchProfile(from, to, discardCurrent)
         settings.switchProfile(from, to, discardCurrent)

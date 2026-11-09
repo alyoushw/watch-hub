@@ -48,6 +48,7 @@ private enum class Tab(val route: String, val label: String, val icon: ImageVect
     WATCHLIST("watchlist", "قائمتي", Icons.AutoMirrored.Filled.List),
     SUBSCRIPTIONS("subscriptions", "اشتراكاتي", Icons.Filled.DateRange),
     XTREAM("xtream", "قنواتي", Icons.Filled.PlayArrow),
+    YOUTUBE("youtube", "يوتيوب", com.alyoushw.watchhub.player.PlayerIcons.YouTube),
     SETTINGS("settings", "الإعدادات", Icons.Filled.Settings),
 }
 
@@ -76,7 +77,9 @@ fun WatchHubRoot() {
     CrashNotice()
     // The Xtream tab only shows once an account is saved in Settings.
     val xtream by appContainer().settings.xtream.collectAsStateWithLifecycle()
-    val tabs = Tab.entries.filter { it != Tab.XTREAM || xtream.isComplete }
+    // The YouTube tab once a YouTube account is linked (Settings › يوتيوب).
+    val youtube by appContainer().youtube.linked.collectAsStateWithLifecycle()
+    val tabs = Tab.entries.filter { (it != Tab.XTREAM || xtream.isComplete) && (it != Tab.YOUTUBE || youtube) }
     Scaffold(
         contentWindowInsets = WindowInsets(0),
         bottomBar = {
@@ -154,6 +157,7 @@ fun WatchHubRoot() {
                 WatchlistScreen(onOpen = { type, id -> nav.openDetail(type, id) })
             }
             composable(Tab.SUBSCRIPTIONS.route) { SubscriptionsScreen() }
+            composable(Tab.YOUTUBE.route) { YouTubeScreen() }
             composable(Tab.SETTINGS.route) { SettingsScreen(onOpenXtream = { nav.switchTab(Tab.XTREAM.route) }) }
             composable(Tab.XTREAM.route) {
                 XtreamScreen(
