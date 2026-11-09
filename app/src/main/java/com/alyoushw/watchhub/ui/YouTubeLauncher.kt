@@ -12,7 +12,7 @@ fun YouTubeLauncher() {
     LaunchedEffect(Unit) { YouTubeTvActivity.start(context) }
     MessageBox(
         title = "يوتيوب",
-        body = "أدوات حجم الصورة في الزر الصغير ⛶ على يسار الشاشة (أو زر القائمة في الريموت). رجوع مرتين بسرعة يطلعك.",
+        body = "على يسار الشاشة: رجوع، والرئيسية، و⛶ حجم الصورة (أو زر القائمة في الريموت).",
         actionLabel = "افتح يوتيوب",
         onAction = { YouTubeTvActivity.start(context) },
     )
