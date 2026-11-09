@@ -49,6 +49,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
@@ -78,6 +80,7 @@ class YouTubeTvActivity : ComponentActivity() {
     private var railOpen: () -> Boolean = { false }
     private var closeRail: () -> Unit = {}
     private var lastBack = 0L
+    private var host: android.widget.FrameLayout? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -102,25 +105,33 @@ class YouTubeTvActivity : ComponentActivity() {
                 // YouTube's own "exit" closes the window: leave with it.
                 override fun onCloseWindow(window: WebView?) = finish()
             }
-            webViewClient = object : WebViewClient() {
-                override fun onPageFinished(view: WebView, url: String?) {
-                    view.evaluateJavascript(PictureScript, null)
-                }
-            }
+            webViewClient = WebViewClient()
             isFocusable = true
             isFocusableInTouchMode = true
         }
         web = view
-        view.loadUrl(Interfaces[prefs.getInt("ui", 0).coerceIn(0, Interfaces.lastIndex)].third)
+        // YouTube's TV interface is drawn for a 16:9 screen: it lives in a 16:9 frame, which the
+        // picture tools scale (Android maps touches through the scaling, so taps still land right).
+        val frame = android.widget.FrameLayout(this).apply {
+            clipChildren = false
+            setBackgroundColor(AndroidColor.BLACK)
+            addView(view, android.widget.FrameLayout.LayoutParams(1, 1, android.view.Gravity.CENTER))
+        }
+        host = frame
+        val ui = mutableIntStateOf(prefs.getInt("ui", 0).coerceIn(0, Interfaces.lastIndex))
+        view.loadUrl(Interfaces[ui.intValue].third)
 
         setContent {
             WatchHubTheme(forceDark = true) {
                 YouTubeTvScreen(
                     web = view,
+                    frame = frame,
+                    tvInterface = Interfaces[ui.intValue].third.endsWith("/tv"),
                     onExit = ::finish,
                     onNextInterface = {
-                        val next = (prefs.getInt("ui", 0) + 1) % Interfaces.size
+                        val next = (ui.intValue + 1) % Interfaces.size
                         prefs.edit().putInt("ui", next).apply()
+                        ui.intValue = next
                         view.settings.userAgentString = Interfaces[next].second
                         view.loadUrl(Interfaces[next].third)
                         Interfaces[next].first
@@ -208,32 +219,6 @@ class YouTubeTvActivity : ComponentActivity() {
             ),
         )
 
-        /**
-         * Installed in the page: `__wh.set({mode, ratio, zoom, widen})` scales the playing
-         * <video> (mode: orig | cover | stretch | ratio), re-applied while YouTube swaps videos.
-         */
-        private val PictureScript = """
-            (function(){
-              if (window.__wh) { window.__wh.apply(); return; }
-              var s = {mode:'orig', ratio:0, zoom:1, widen:1};
-              function apply(){
-                var vs = document.querySelectorAll('video');
-                for (var i = 0; i < vs.length; i++) {
-                  var v = vs[i], cw = v.clientWidth, ch = v.clientHeight;
-                  if (!cw || !ch) continue;
-                  var W = innerWidth, H = innerHeight, sx = 1, sy = 1;
-                  if (s.mode === 'cover') { sx = sy = Math.max(W / cw, H / ch); }
-                  else if (s.mode === 'stretch') { sx = W / cw; sy = H / ch; }
-                  else if (s.mode === 'ratio' && s.ratio > 0) { var h = Math.min(H, W / s.ratio); sx = h * s.ratio / cw; sy = h / ch; }
-                  sx *= s.zoom * s.widen; sy *= s.zoom;
-                  var t = (sx === 1 && sy === 1) ? '' : 'scale(' + sx + ',' + sy + ')';
-                  if (v.style.transform !== t) { v.style.transformOrigin = 'center center'; v.style.transform = t; }
-                }
-              }
-              window.__wh = { set: function(o){ for (var k in o) s[k] = o[k]; apply(); }, apply: apply };
-              setInterval(apply, 800);
-            })();
-        """.trimIndent()
     }
 }
 
@@ -252,6 +237,8 @@ private val Fits = listOf(
 @Composable
 private fun YouTubeTvScreen(
     web: WebView,
+    frame: android.widget.FrameLayout,
+    tvInterface: Boolean,
     onExit: () -> Unit,
     onNextInterface: () -> String,
     bind: (toggle: () -> Unit, isOpen: () -> Boolean, close: () -> Unit) -> Unit,
@@ -264,12 +251,39 @@ private fun YouTubeTvScreen(
     var note by remember { mutableStateOf<String?>(null) }
     val firstFocus = remember { FocusRequester() }
 
+    var screen by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
     fun push() {
-        web.evaluateJavascript(
-            "window.__wh && __wh.set({mode:'${fit.mode}',ratio:${fit.ratio},zoom:$zoom,widen:$widen})",
-            null,
-        )
         touchedAt = System.currentTimeMillis()
+    }
+
+    // Size the frame (16:9 for the TV interface, the whole screen otherwise) and scale it.
+    LaunchedEffect(screen, fit, zoom, widen, tvInterface) {
+        val w = screen.width.toFloat()
+        val h = screen.height.toFloat()
+        if (w <= 0 || h <= 0) return@LaunchedEffect
+        val bw = if (tvInterface) minOf(w, h * 16f / 9f) else w
+        val bh = if (tvInterface) bw * 9f / 16f else h
+        var sx = 1f
+        var sy = 1f
+        when (fit.mode) {
+            "cover" -> { sx = maxOf(w / bw, h / bh); sy = sx }
+            "stretch" -> { sx = w / bw; sy = h / bh }
+            "ratio" -> {
+                val th = minOf(h, w / fit.ratio)
+                sx = th * fit.ratio / bw
+                sy = th / bh
+            }
+        }
+        val lp = web.layoutParams as android.widget.FrameLayout.LayoutParams
+        if (lp.width != bw.toInt() || lp.height != bh.toInt()) {
+            lp.width = bw.toInt()
+            lp.height = bh.toInt()
+            web.layoutParams = lp
+        }
+        web.pivotX = bw / 2f
+        web.pivotY = bh / 2f
+        web.scaleX = sx * zoom * widen
+        web.scaleY = sy * zoom
     }
     bind({ open = !open; touchedAt = System.currentTimeMillis() }, { open }, { open = false })
 
@@ -293,7 +307,10 @@ private fun YouTubeTvScreen(
     // Laid out left to right: the rail sits on the left whatever the language.
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
         Box(Modifier.fillMaxSize().background(Color.Black)) {
-            AndroidView(factory = { web }, modifier = Modifier.fillMaxSize())
+            AndroidView(
+                factory = { frame },
+                modifier = Modifier.fillMaxSize().onSizeChanged { screen = it },
+            )
 
             // A small handle on the left edge opens the tools (touch screens).
             if (!open) {
