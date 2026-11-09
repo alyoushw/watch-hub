@@ -380,3 +380,15 @@ a.person:hover .face { box-shadow: 0 0 0 3px var(--gold); }
 .swatch i { width: 38px; height: 38px; border-radius: 50%; background: var(--c); display: block; box-shadow: 0 0 0 3px transparent; transition: box-shadow .15s; }
 .swatch.on i { box-shadow: 0 0 0 3px var(--bg), 0 0 0 6px var(--text); }
 .swatch small { font-size: 12px; color: var(--muted); }
+
+/* Player: quality, channel banner, skip intro, next episode */
+.pl-quality { background: rgba(255,255,255,.16); color: #fff; font-weight: 700; padding: 3px 8px; border-radius: 6px; font-size: 12px; white-space: nowrap; }
+.pl-banner { position: absolute; top: 20px; left: 20px; background: rgba(0,0,0,.72); color: #fff; padding: 10px 16px; border-radius: 14px; display: flex; gap: 12px; align-items: center; z-index: 6; }
+.pl-banner b.num { color: var(--gold); font-size: 26px; }
+.pl-banner small { display: block; opacity: .65; }
+.pl-skip { position: absolute; right: 24px; bottom: 110px; z-index: 6; background: rgba(0,0,0,.6); color: #fff; border: 1px solid rgba(255,255,255,.35); border-radius: 10px; padding: 11px 18px; font: inherit; font-weight: 700; cursor: pointer; }
+.pl-skip:hover, .pl-skip:focus-visible { background: var(--gold); color: #111; }
+.pl-upnext { position: absolute; right: 24px; bottom: 110px; z-index: 6; width: min(320px, calc(100% - 48px)); background: rgba(20,18,16,.95); color: #fff; border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+.pl-upnext small { color: var(--gold); font-weight: 700; }
+.pl-upnext .pl-level { width: 100%; }
+.pl-upnext-row { display: flex; gap: 8px; }

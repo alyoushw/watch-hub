@@ -278,7 +278,7 @@ class PlayerActivity : ComponentActivity() {
             val credits = marks.credits(key) ?: (dur * 0.035).toLong().coerceIn(30_000, 120_000)
             val remaining = dur - pos
             val next = queue.getOrNull(position + 1)
-            if (next != null && remaining in 1..credits && upNextDismissedFor != e.key) {
+            if (next != null && dur > 300_000 && remaining in 1..credits && upNextDismissedFor != e.key) {
                 if (session.upNext == null) countdownTicks = 0
                 session.upNext = next.entry.subtitle ?: next.entry.title
                 // Counts only while playing: a pause holds the countdown.

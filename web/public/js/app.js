@@ -826,7 +826,9 @@ async function live(id) {
   function start(c) {
     recent.add(c.id);
     renderCats();
-    play(xt.playUrls(c), xt.entryLive(c));
+    // The list it was opened from: ←/→ in the player go through it.
+    const list = (shown.length ? shown : [c]).map((x, i) => ({ urls: xt.playUrls(x), entry: xt.entryLive(x), number: x.num ?? i + 1 }));
+    play(xt.playUrls(c), xt.entryLive(c), list, Math.max(0, (shown.length ? shown : [c]).indexOf(c)));
   }
 
   catsEl.addEventListener("click", (e) => {
@@ -976,7 +978,12 @@ async function xseriesPage(id, seriesId) {
     return isFinished(last) ? s.episodes[i + 1] || null : s.episodes[i];
   };
   let season = resumeEp()?.season ?? seasons[0];
-  const playEp = (e) => play(xt.episodeUrls(e, acc), xt.entryEpisode(acc, seriesId, s.name, s.cover, e));
+  // The whole series as a queue: "الحلقة الجاية" goes on through the episodes.
+  const playEp = (e) => play(
+    xt.episodeUrls(e, acc), xt.entryEpisode(acc, seriesId, s.name, s.cover, e),
+    s.episodes.map((x) => ({ urls: xt.episodeUrls(x, acc), entry: xt.entryEpisode(acc, seriesId, s.name, s.cover, x) })),
+    s.episodes.findIndex((x) => x.id === e.id),
+  );
   const render = () => {
     const resume = resumeEp();
     view.innerHTML = `<section class="title-head"><div class="inner">
@@ -1062,15 +1069,33 @@ async function openEntryPage(e) {
   }
 }
 
+/** The title's page on the platform side (TMDB): its known id, else found by its name. */
+async function openPlatformPage(e) {
+  const type = e.kind === "episode" ? "tv" : "movie";
+  if (type === "movie" && e.tmdbId) {
+    location.hash = `#/title/movie/${e.tmdbId}`;
+    return;
+  }
+  const name = xt.normalizeTitle(e.title);
+  try {
+    const hit = (await tmdb.search(name)).find((r) => r.media_type === type);
+    if (hit) location.hash = `#/title/${type}/${hit.id}`;
+    else toast(`ما لقينا صفحة «${name}» في المنصة`);
+  } catch {
+    toast(`ما لقينا صفحة «${name}» في المنصة`);
+  }
+}
+
 /** Long press / right click / ⋯ on a card: open its page, or remove it from the row. */
 function entryMenu(e, card) {
   document.querySelector(".sheet-wrap")?.remove();
-  const label = e.kind === "episode" ? "افتح صفحة المسلسل" : e.kind === "movie" ? "افتح صفحة الفيلم" : "افتح القنوات المباشرة";
+  const label = e.kind === "episode" ? "حلقات المسلسل في الحساب" : e.kind === "movie" ? "معلومات الفيلم (المنصة)" : "افتح القنوات المباشرة";
   const wrap = document.createElement("div");
   wrap.className = "sheet-wrap";
   wrap.innerHTML = `<div class="sheet" role="dialog" aria-modal="true">
       <b class="sheet-title"></b>
       <button class="btn ghost" data-a="open"></button>
+      ${e.kind === "episode" ? '<button class="btn ghost" data-a="tmdb">معلومات المسلسل (المنصة)</button>' : ""}
       <button class="btn ghost danger" data-a="del">احذف من تابع المشاهدة</button>
       <button class="btn ghost" data-a="x">إلغاء</button>
     </div>`;
@@ -1082,6 +1107,9 @@ function entryMenu(e, card) {
     if (a === "open") {
       wrap.remove();
       openEntryPage(e);
+    } else if (a === "tmdb") {
+      wrap.remove();
+      openPlatformPage(e);
     } else if (a === "del") {
       wrap.remove();
       history.remove(e.key);

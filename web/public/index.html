@@ -45,12 +45,15 @@
         <button class="pl-btn" id="pl-full" title="ملء الشاشة (F)">⤢</button>
       </div>
       <div class="pl-mid">
+        <button class="pl-round" id="pl-prev" title="السابق" hidden>⏮</button>
         <button class="pl-round" id="pl-back10" title="رجوع 10 ثواني (←)">↺<small>10</small></button>
         <button class="pl-round big" id="pl-play" title="تشغيل / إيقاف (مسافة)">▶</button>
         <button class="pl-round" id="pl-fwd10" title="تقديم 10 ثواني (→)">↻<small>10</small></button>
+        <button class="pl-round" id="pl-next" title="التالي" hidden>⏭</button>
       </div>
       <div class="pl-bottom">
         <span class="pl-live" id="pl-live" hidden>● مباشر</span>
+        <span class="pl-quality" id="pl-quality" hidden></span>
         <span class="pl-time" id="pl-cur">00:00</span>
         <div class="pl-bar" id="pl-bar"><div class="pl-buf" id="pl-buf"></div><div class="pl-fill" id="pl-fill"></div><div class="pl-thumb" id="pl-thumb"></div><div class="pl-tip" id="pl-tip" hidden></div></div>
         <span class="pl-time" id="pl-dur">--:--</span>
@@ -58,6 +61,13 @@
         <input class="pl-vol" id="pl-vol" type="range" min="0" max="1" step="0.05" value="1" aria-label="الصوت">
       </div>
     </div>
+    <button class="pl-skip" id="pl-skip" dir="rtl" hidden>تخطي المقدمة +٨٥ث</button>
+    <div class="pl-upnext" id="pl-upnext" dir="rtl" hidden>
+      <small>الحلقة الجاية</small><b id="pl-upnext-name"></b>
+      <div class="pl-level"><i id="pl-upnext-bar"></i></div>
+      <div class="pl-upnext-row"><button class="btn small" id="pl-upnext-go">شغّلها الحين</button><button class="btn ghost small" id="pl-upnext-cancel">إلغاء</button></div>
+    </div>
+    <div class="pl-banner" id="pl-banner" dir="rtl" hidden></div>
     <div class="pl-menu" id="pl-menu" dir="rtl" hidden></div>
     <div id="player-error" class="player-error" dir="rtl" hidden></div>
   </div>

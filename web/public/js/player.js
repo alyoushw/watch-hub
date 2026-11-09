@@ -21,7 +21,14 @@ const ui = {
   live: $("pl-live"), speed: $("pl-speed"), aspect: $("pl-aspect"), menu: $("pl-menu"), spin: $("pl-spin"),
   ind: $("pl-ind"), indText: $("pl-ind-text"), indLevel: $("pl-ind-level"), vol: $("pl-vol"), mute: $("pl-mute"),
   gest: $("pl-gest"), back10: $("pl-back10"), fwd10: $("pl-fwd10"),
+  prev: $("pl-prev"), next: $("pl-next"), quality: $("pl-quality"), skip: $("pl-skip"), banner: $("pl-banner"),
+  upnext: $("pl-upnext"), upnextName: $("pl-upnext-name"), upnextBar: $("pl-upnext-bar"),
 };
+
+// What the player goes through: the channels of the list it was opened from (←/→ switch
+// channel) or a series' episodes ("الحلقة الجاية").
+let queue = [];
+let qIndex = 0;
 
 let engine = null; // { destroy, onFatal, hls? }
 let session = 0;
@@ -199,14 +206,123 @@ function saveProgress(important = false) {
   history.save({ ...current.entry, positionMs: Math.round(video.currentTime * 1000), durationMs: Math.round(d * 1000) }, important);
 }
 
-/** Plays [urls] (tried in order); [entry] names it and keeps its place in the watch history. */
-export function play(urls, entry) {
+/**
+ * Plays [urls] (tried in order); [entry] names it and keeps its place in the watch history.
+ * [list] (items of { urls, entry, number? }) and [index]: the channels or episodes around it.
+ */
+export function play(urls, entry, list = null, index = 0) {
   if (isIOS() && settings.vlcOnIos !== false) {
     history.save(entry, true);
     return openInVlc(urls, entry);
   }
-  return playHere(urls, entry);
+  queue = list && list.length ? list : [{ urls, entry }];
+  qIndex = list && list.length ? Math.max(0, Math.min(index, list.length - 1)) : 0;
+  return playAt(qIndex);
 }
+
+function playAt(i) {
+  if (i < 0 || i >= queue.length) return;
+  if (current?.started) saveProgress(true);
+  qIndex = i;
+  upNextDismissed = null;
+  upNextTicks = 0;
+  frames = { n: -1, t: 0, fps: 0 };
+  const item = queue[i];
+  const live = item.entry.kind === "live";
+  const many = queue.length > 1;
+  ui.prev.hidden = !many || i === 0;
+  ui.next.hidden = !many || i === queue.length - 1;
+  ui.prev.title = live ? "القناة السابقة" : "الحلقة السابقة";
+  ui.next.title = live ? "القناة الجاية" : "الحلقة الجاية";
+  ui.quality.hidden = true;
+  if (live && many) showBanner(item);
+  return playHere(item.urls, item.entry);
+}
+
+let bannerTimer;
+function showBanner(item) {
+  const num = item.number ?? item.entry.number;
+  ui.banner.innerHTML = `${num ? `<b class="num"></b>` : ""}<div><b class="name"></b><small>← → لتغيير القناة</small></div>`;
+  if (num) ui.banner.querySelector(".num").textContent = num;
+  ui.banner.querySelector(".name").textContent = item.entry.title || "";
+  ui.banner.hidden = false;
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(() => (ui.banner.hidden = true), 3000);
+}
+
+function step(delta) {
+  const i = qIndex + delta;
+  if (i < 0 || i >= queue.length) return;
+  playAt(i);
+}
+
+// ---------- "الحلقة الجاية" and "تخطي المقدمة" ----------
+
+let upNextDismissed = null;
+let upNextTicks = 0;
+let frames = { n: -1, t: 0, fps: 0 };
+
+setInterval(() => {
+  if (box.hidden || !current) return;
+  // Quality: picture size, and frames shown per second.
+  const h = video.videoHeight;
+  if (h > 0) {
+    const q = video.getVideoPlaybackQuality?.();
+    const now = performance.now();
+    if (q) {
+      if (frames.n >= 0 && now - frames.t >= 1500 && !video.paused) {
+        frames.fps = ((q.totalVideoFrames - frames.n) * 1000) / (now - frames.t);
+        frames.n = q.totalVideoFrames;
+        frames.t = now;
+      } else if (frames.n < 0 || q.totalVideoFrames < frames.n) {
+        frames = { n: q.totalVideoFrames, t: now, fps: frames.fps };
+      }
+    }
+    const lines = Math.min(h, video.videoWidth || h);
+    const name = video.videoWidth >= 3800 || lines >= 2100 ? "4K" : `${lines}p`;
+    ui.quality.textContent = frames.fps > 1 ? `${name} · ${Math.round(frames.fps)}fps` : name;
+    ui.quality.hidden = false;
+  }
+
+  const e = current.entry;
+  const d = video.duration;
+  const t = video.currentTime;
+  if (current.live || e.kind !== "episode" || !current.started || !isFinite(d) || d <= 0) {
+    ui.skip.hidden = true;
+    ui.upnext.hidden = true;
+    return;
+  }
+  // Intro: the first four minutes of an episode longer than ten.
+  ui.skip.hidden = !(t >= 5 && t <= 240 && d > 600) || !ui.upnext.hidden;
+  // End credits: the last ~3.5 % (between 30 s and 2 min), then a 10 s countdown.
+  const credits = Math.min(120, Math.max(30, d * 0.035));
+  const next = queue[qIndex + 1];
+  if (next && d > 300 && d - t <= credits && upNextDismissed !== e.key) {
+    if (ui.upnext.hidden) upNextTicks = 0;
+    ui.upnextName.textContent = next.entry.subtitle || next.entry.title || "";
+    ui.upnext.hidden = false;
+    if (!video.paused) upNextTicks++;
+    const left = Math.max(0, 10 - Math.floor(upNextTicks / 2));
+    $("pl-upnext-go").textContent = `شغّلها الحين (${left})`;
+    ui.upnextBar.style.width = `${((10 - left) / 10) * 100}%`;
+    if (left <= 0) step(1);
+  } else {
+    ui.upnext.hidden = true;
+  }
+}, 500);
+
+ui.skip.addEventListener("click", () => {
+  if (!isFinite(video.duration)) return;
+  video.currentTime = Math.min(video.duration - 1, video.currentTime + 85);
+  ui.skip.hidden = true;
+});
+$("pl-upnext-go").addEventListener("click", () => step(1));
+$("pl-upnext-cancel").addEventListener("click", () => {
+  upNextDismissed = current?.entry.key;
+  ui.upnext.hidden = true;
+});
+ui.prev.addEventListener("click", () => step(-1));
+ui.next.addEventListener("click", () => step(1));
 
 async function playHere(urls, entry) {
   const live = entry.kind === "live";
@@ -296,6 +412,9 @@ function openInVlc(urls, entry) {
 
 export function close() {
   saveProgress(true);
+  ui.skip.hidden = true;
+  ui.upnext.hidden = true;
+  ui.banner.hidden = true;
   clearInterval(saveTimer);
   session++;
   current = null;
@@ -374,7 +493,9 @@ video.addEventListener("pause", () => {
 });
 video.addEventListener("ended", () => {
   saveProgress(true);
-  close();
+  // A series goes on to the next episode; anything else closes.
+  if (current?.entry.kind === "episode" && qIndex < queue.length - 1) step(1);
+  else close();
 });
 
 // Timeline: click or drag.
@@ -531,7 +652,8 @@ document.addEventListener("keydown", (e) => {
   if (!ui.menu.hidden) return;
   const handled = {
     " ": togglePlay, k: togglePlay, K: togglePlay,
-    ArrowLeft: () => seekBy(-10), ArrowRight: () => seekBy(10),
+    ArrowLeft: () => (current?.live ? step(-1) : seekBy(-10)), ArrowRight: () => (current?.live ? step(1) : seekBy(10)),
+    PageUp: () => step(1), PageDown: () => step(-1), N: () => step(1), n: () => step(1),
     j: () => seekBy(-10), l: () => seekBy(10),
     ArrowUp: () => setVolume(video.volume + 0.05), ArrowDown: () => setVolume(video.volume - 0.05),
     f: toggleFullscreen, F: toggleFullscreen,
@@ -579,7 +701,7 @@ ui.gest.addEventListener("pointermove", (e) => {
   const dx = e.clientX - gesture.x;
   const dy = e.clientY - gesture.y;
   if (!gesture.mode && Math.hypot(dx, dy) > 12) {
-    gesture.mode = Math.abs(dx) > Math.abs(dy) ? (current?.live ? "none" : "seek") : gesture.x < w / 2 ? "bright" : "volume";
+    gesture.mode = Math.abs(dx) > Math.abs(dy) ? (current?.live ? "channel" : "seek") : gesture.x < w / 2 ? "bright" : "volume";
   }
   if (gesture.mode === "seek" && isFinite(video.duration)) {
     const span = Math.min(video.duration, 180);
@@ -602,6 +724,12 @@ function endPointer(e) {
   const g = gesture;
   gesture = null;
   if (!g) return;
+  // Live: a swipe of a fifth of the screen changes channel (to the left = next).
+  if (g.mode === "channel") {
+    const dx = e.clientX - g.x;
+    if (Math.abs(dx) > ui.gest.clientWidth / 5) step(dx < 0 ? 1 : -1);
+    return;
+  }
   if (g.mode === "seek" && g.target !== undefined) {
     video.currentTime = g.target;
     return;
