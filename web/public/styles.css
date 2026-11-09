@@ -392,3 +392,12 @@ a.person:hover .face { box-shadow: 0 0 0 3px var(--gold); }
 .pl-upnext small { color: var(--gold); font-weight: 700; }
 .pl-upnext .pl-level { width: 100%; }
 .pl-upnext-row { display: flex; gap: 8px; }
+.pl-sub-sm video::cue { font-size: 70%; }
+.pl-sub-lg video::cue { font-size: 130%; }
+.pl-sub-xl video::cue { font-size: 160%; }
+.pl-sub-bg video::cue { background: rgba(0,0,0,.6); }
+.pl-sub-nobg video::cue { background: transparent; text-shadow: 0 0 3px #000, 0 0 3px #000; }
+.pl-menu .pl-info-row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 4px; font-size: 14px; }
+.pl-menu .pl-info-row span:first-child { opacity: .6; }
+.pl-menu h4 { color: var(--gold); margin: 14px 4px 4px; font-size: 13px; }
+#pl-sleep.on { color: var(--gold); }

@@ -259,6 +259,77 @@ function step(delta) {
 // ---------- "الحلقة الجاية" and "تخطي المقدمة" ----------
 
 let upNextDismissed = null;
+let sleep = null; // { at } or { atEnd: true }
+
+function qualityText() {
+  const h = video.videoHeight;
+  if (!h) return "";
+  const lines = Math.min(h, video.videoWidth || h);
+  const name = video.videoWidth >= 3800 || lines >= 2100 ? "4K" : lines >= 1400 ? "1440p" : `${lines}p`;
+  return frames.fps > 1 ? `${name} · ${Math.round(frames.fps)}fps` : name;
+}
+
+// Subtitle size and background, kept on this device.
+const SUB_SIZES = [["sm", "صغير"], ["md", "متوسط"], ["lg", "كبير"], ["xl", "كبير جداً"]];
+let subSize = localStorage.getItem("pl.subSize") || "md";
+let subBg = localStorage.getItem("pl.subBg") === "1";
+function applySubs() {
+  box.classList.remove("pl-sub-sm", "pl-sub-lg", "pl-sub-xl", "pl-sub-bg", "pl-sub-nobg");
+  if (subSize !== "md") box.classList.add(`pl-sub-${subSize}`);
+  box.classList.add(subBg ? "pl-sub-bg" : "pl-sub-nobg");
+}
+applySubs();
+
+$("pl-sleep").addEventListener("click", () => {
+  const set = (v, text) => {
+    sleep = v;
+    $("pl-sleep").classList.toggle("on", !!v);
+    flash(text);
+  };
+  const live = current?.live;
+  openMenu("مؤقت النوم", [
+    ["بدون", !sleep, () => set(null, "انلغى مؤقت النوم")],
+    ...[15, 30, 45, 60, 90].map((m) => [`بعد ${m} دقيقة`, false, () => set({ at: Date.now() + m * 60000 }, `☾ يوقف بعد ${m} دقيقة`)]),
+    live ? ["بعد ساعتين", false, () => set({ at: Date.now() + 120 * 60000 }, "☾ يوقف بعد ساعتين")]
+      : ["نهاية الحلقة / الفيلم", !!sleep?.atEnd, () => set({ atEnd: true }, "☾ يوقف بنهاية الحلقة")],
+  ]);
+});
+
+$("pl-info").addEventListener("click", () => {
+  const rows = [];
+  if (video.videoHeight) {
+    rows.push(["الدقة", `${video.videoWidth}×${video.videoHeight}`]);
+    if (frames.fps > 1) rows.push(["الفريمات", `${Math.round(frames.fps)} fps`]);
+  }
+  const lvl = engine?.hls?.levels?.[engine.hls.currentLevel];
+  if (lvl) {
+    if (lvl.bitrate) rows.push(["معدل البث", `${(lvl.bitrate / 1e6).toFixed(1)} Mbps`]);
+    if (lvl.videoCodec) rows.push(["ترميز الصورة", /hvc|hev/.test(lvl.videoCodec) ? "HEVC" : /avc/.test(lvl.videoCodec) ? "H.264" : lvl.videoCodec]);
+    if (lvl.audioCodec) rows.push(["ترميز الصوت", /mp4a/.test(lvl.audioCodec) ? "AAC" : /ec-3/.test(lvl.audioCodec) ? "Dolby Digital+" : /ac-3/.test(lvl.audioCodec) ? "Dolby Digital" : lvl.audioCodec]);
+  }
+  const audio = engine?.hls?.audioTracks?.length || video.audioTracks?.length || 1;
+  rows.push(["أصوات معلّقة", String(audio)]);
+  rows.push(["ترجمات", String([...video.textTracks].filter((t) => t.kind === "subtitles" || t.kind === "captions").length)]);
+  if (current) {
+    const ext = new URL(fileUrl(current.urls)).pathname.split(".").pop();
+    if (ext && ext.length <= 5) rows.push(["صيغة الملف", ext.toUpperCase()]);
+  }
+  if (video.buffered.length) rows.push(["المحمّل مسبقاً", `${Math.max(0, Math.round(video.buffered.end(video.buffered.length - 1) - video.currentTime))} ث`]);
+  const q = video.getVideoPlaybackQuality?.();
+  if (q) rows.push(["فريمات ضايعة", String(q.droppedVideoFrames)]);
+  ui.menu.innerHTML = "<h3>معلومات التشغيل</h3>";
+  for (const [k, v] of rows) {
+    const r = document.createElement("div");
+    r.className = "pl-info-row";
+    r.innerHTML = "<span></span><span></span>";
+    r.children[0].textContent = k;
+    r.children[1].textContent = v;
+    ui.menu.appendChild(r);
+  }
+  if (!rows.length) ui.menu.insertAdjacentHTML("beforeend", "<p>ننتظر يبدأ التشغيل…</p>");
+  ui.menu.hidden = false;
+  box.classList.remove("idle");
+});
 let upNextTicks = 0;
 let frames = { n: -1, t: 0, fps: 0 };
 
@@ -278,10 +349,21 @@ setInterval(() => {
         frames = { n: q.totalVideoFrames, t: now, fps: frames.fps };
       }
     }
-    const lines = Math.min(h, video.videoWidth || h);
-    const name = video.videoWidth >= 3800 || lines >= 2100 ? "4K" : `${lines}p`;
-    ui.quality.textContent = frames.fps > 1 ? `${name} · ${Math.round(frames.fps)}fps` : name;
+    ui.quality.textContent = qualityText();
     ui.quality.hidden = false;
+  }
+  // Sleep timer.
+  if (sleep) {
+    const d0 = video.duration;
+    const due = sleep.at ? Date.now() >= sleep.at : isFinite(d0) && d0 - video.currentTime < 1.5;
+    if (sleep.atEnd && !ui.upnext.hidden) upNextDismissed = current.entry.key;
+    if (due) {
+      sleep = null;
+      $("pl-sleep").classList.remove("on");
+      video.pause();
+      close();
+      return;
+    }
   }
 
   const e = current.entry;
@@ -412,6 +494,8 @@ function openInVlc(urls, entry) {
 
 export function close() {
   saveProgress(true);
+  sleep = null;
+  $("pl-sleep").classList.remove("on");
   ui.skip.hidden = true;
   ui.upnext.hidden = true;
   ui.banner.hidden = true;
@@ -613,6 +697,16 @@ $("pl-subs").addEventListener("click", () => {
       tracks.forEach((x) => (x.mode = x === t ? "showing" : "disabled"));
       if (engine?.hls) engine.hls.subtitleTrack = i;
     }]),
+    ...SUB_SIZES.map(([k, label]) => [`الحجم: ${label}`, subSize === k, () => {
+      subSize = k;
+      try { localStorage.setItem("pl.subSize", k); } catch { /* private mode */ }
+      applySubs();
+    }]),
+    ["خلفية داكنة ورا الترجمة", subBg, () => {
+      subBg = !subBg;
+      try { localStorage.setItem("pl.subBg", subBg ? "1" : "0"); } catch { /* private mode */ }
+      applySubs();
+    }],
   ], tracks.length ? "" : "هذا الملف ما فيه ترجمات يقدر المتصفح يقراها");
 });
 

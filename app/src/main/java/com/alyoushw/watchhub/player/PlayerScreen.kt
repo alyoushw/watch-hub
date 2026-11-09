@@ -98,7 +98,7 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.hypot
 
-private enum class Menu { SUBTITLES, AUDIO, SPEED, SOURCES }
+private enum class Menu { SUBTITLES, AUDIO, SPEED, SOURCES, INFO, SLEEP }
 
 /** Picture modes for the "حجم الصورة" button. */
 private val ResizeModes = listOf(
@@ -108,6 +108,12 @@ private val ResizeModes = listOf(
 )
 
 private val Speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
+
+/** Subtitle sizes (fraction of the picture height). */
+private val SubSizes = listOf(0.05f to "صغير", 0.065f to "متوسط", 0.08f to "كبير", 0.1f to "كبير جداً")
+
+/** Sleep timer choices in minutes; -1 = at the end of this episode / film. */
+private val SleepChoices = listOf(15, 30, 45, 60, 90, -1)
 
 /** What a gesture or key is changing right now, shown in the middle of the screen. */
 private data class Indicator(val icon: ImageVector, val text: String, val level: Float? = null)
@@ -149,7 +155,16 @@ fun PlayerScreen(
     var tracks by remember { mutableStateOf(player.currentTracks) }
     var speed by remember { mutableFloatStateOf(1f) }
     var seekPreview by remember { mutableStateOf<Long?>(null) }
-    var quality by remember { mutableStateOf<String?>(null) }
+    var info by remember { mutableStateOf<MediaInfo?>(null) }
+    val quality = info?.quality
+    val prefs = remember { context.getSharedPreferences("player", Context.MODE_PRIVATE) }
+    var subSize by remember { mutableIntStateOf(prefs.getInt("subSize", 1).coerceIn(0, SubSizes.lastIndex)) }
+    var subBackground by remember { mutableStateOf(prefs.getBoolean("subBg", false)) }
+    var boost by remember { mutableStateOf(false) }
+    /** Sleep timer: when to stop (ms clock), or stop at the end of this item. */
+    var sleepAt by remember { mutableStateOf<Long?>(null) }
+    var sleepAtEnd by remember { mutableStateOf(false) }
+    var sleepLeft by remember { mutableStateOf<String?>(null) }
     var channelBanner by remember { mutableStateOf(false) }
 
     // Live: a channel change shows its number and name for a moment.
@@ -232,9 +247,52 @@ fun PlayerScreen(
                     framesAt = now
                 }
             }
-            quality = videoQuality(player.videoFormat, measured)
+            val t = player.currentTracks.groups
+            info = mediaInfo(
+                player,
+                measured,
+                audioTracks = t.filter { it.type == C.TRACK_TYPE_AUDIO }.sumOf { it.length },
+                textTracks = t.filter { it.type == C.TRACK_TYPE_TEXT }.sumOf { it.length },
+            )
+            // Sleep timer.
+            val stopAt = sleepAt
+            if (stopAt != null) {
+                val left = stopAt - now
+                sleepLeft = if (left > 0) "${(left + 59_999) / 60_000} د" else null
+                if (left <= 0) {
+                    sleepAt = null
+                    player.pause()
+                    onBack()
+                }
+            } else if (sleepAtEnd) {
+                sleepLeft = "نهاية"
+                val total = player.duration
+                if (session.upNext != null) onCancelUpNext()
+                if (total > 0 && total - player.currentPosition < 1_500) {
+                    sleepAtEnd = false
+                    player.pause()
+                    onBack()
+                }
+            } else {
+                sleepLeft = null
+            }
             delay(500)
         }
+    }
+
+    // "تعزيز الصوت": louder speech for quiet films (follows the player's audio session).
+    DisposableEffect(boost, player.audioSessionId) {
+        val enhancer = if (boost) {
+            runCatching {
+                android.media.audiofx.LoudnessEnhancer(player.audioSessionId).apply {
+                    setTargetGain(900)
+                    enabled = true
+                }
+            }.getOrNull()
+        } else {
+            null
+        }
+        onDispose { runCatching { enhancer?.release() } }
     }
 
     // Controls fade out after a few seconds of playing untouched.
@@ -361,7 +419,20 @@ fun PlayerScreen(
                         subtitleView?.setFractionalTextSize(0.065f)
                     }
                 },
-                update = { it.resizeMode = ResizeModes[resize].first },
+                update = { view ->
+                    view.resizeMode = ResizeModes[resize].first
+                    view.subtitleView?.setFractionalTextSize(SubSizes[subSize].first)
+                    view.subtitleView?.setStyle(
+                        CaptionStyleCompat(
+                            android.graphics.Color.WHITE,
+                            if (subBackground) 0x99000000.toInt() else android.graphics.Color.TRANSPARENT,
+                            android.graphics.Color.TRANSPARENT,
+                            if (subBackground) CaptionStyleCompat.EDGE_TYPE_NONE else CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                            android.graphics.Color.BLACK,
+                            null,
+                        ),
+                    )
+                },
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
@@ -524,7 +595,8 @@ fun PlayerScreen(
                         subtitle = subtitle,
                         live = live,
                         number = session.number,
-                        quality = quality,
+                        badges = info?.badges.orEmpty(),
+                        sleepLeft = sleepLeft,
                         hasPrevious = session.hasPrevious,
                         hasNext = session.hasNext,
                         onPrevious = { if (live) switchChannel(false) else onPrevious() },
@@ -571,11 +643,52 @@ fun PlayerScreen(
                         onPickSource(it)
                     },
                 )
+            } else if (menu == Menu.INFO) {
+                InfoPanel(info, onClose = { menu = null })
             } else menu?.let { m ->
                 MenuPanel(
                     menu = m,
                     tracks = tracks,
                     speed = speed,
+                    live = live,
+                    subSize = subSize,
+                    onSubSize = {
+                        subSize = it
+                        prefs.edit().putInt("subSize", it).apply()
+                    },
+                    subBackground = subBackground,
+                    onSubBackground = {
+                        subBackground = !subBackground
+                        prefs.edit().putBoolean("subBg", subBackground).apply()
+                    },
+                    boost = boost,
+                    onBoost = {
+                        boost = !boost
+                        flash(Indicator(PlayerIcons.Volume, if (boost) "تعزيز الصوت شغّال" else "تعزيز الصوت طافي"))
+                    },
+                    sleeping = sleepAt != null || sleepAtEnd,
+                    onSleep = { minutes ->
+                        when (minutes) {
+                            null -> {
+                                sleepAt = null
+                                sleepAtEnd = false
+                            }
+                            -1 -> {
+                                sleepAt = null
+                                sleepAtEnd = true
+                            }
+                            else -> {
+                                sleepAtEnd = false
+                                sleepAt = System.currentTimeMillis() + minutes * 60_000L
+                            }
+                        }
+                        flash(Indicator(PlayerIcons.Sleep, when (minutes) {
+                            null -> "انلغى مؤقت النوم"
+                            -1 -> "يوقف بنهاية ${if (live) "البث" else "الحلقة"}"
+                            else -> "يوقف بعد $minutes دقيقة"
+                        }))
+                        menu = null
+                    },
                     onClose = { menu = null },
                     onPickTrack = { group, i ->
                         val type = group.type
@@ -608,7 +721,8 @@ private fun Controls(
     subtitle: String?,
     live: Boolean,
     number: Int?,
-    quality: String?,
+    badges: List<String>,
+    sleepLeft: String?,
     hasPrevious: Boolean,
     hasNext: Boolean,
     onPrevious: () -> Unit,
@@ -651,6 +765,9 @@ private fun Controls(
             ToolButton(PlayerIcons.Audio, "الصوت المعلّق") { onMenu(Menu.AUDIO) }
             ToolButton(PlayerIcons.Aspect, resizeLabel, onResize)
             if (!live) ToolButton(PlayerIcons.Speed, if (speed == 1f) "السرعة" else "×$speed") { onMenu(Menu.SPEED) }
+            ToolButton(PlayerIcons.Sleep, sleepLeft?.let { "مؤقت النوم: $it" } ?: "مؤقت النوم") { onMenu(Menu.SLEEP) }
+            sleepLeft?.let { Text(it, color = Gold, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+            ToolButton(PlayerIcons.Info, "معلومات التشغيل") { onMenu(Menu.INFO) }
             ToolButton(PlayerIcons.Lock, "قفل الشاشة", onLock)
         }
 
@@ -689,7 +806,7 @@ private fun Controls(
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xFFE5484D)).padding(horizontal = 10.dp, vertical = 4.dp),
                     )
-                    quality?.let { QualityBadge(it) }
+                    badges.forEach { QualityBadge(it) }
                     Spacer(Modifier.weight(1f))
                     Text("◀ ▶ لتغيير القناة", color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
                 }
@@ -711,7 +828,7 @@ private fun Controls(
                 )
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(formatTime(dragging?.let { (it * duration).toLong() } ?: position), color = Color.White, fontSize = 13.sp)
-                    quality?.let { QualityBadge(it) }
+                    badges.forEach { QualityBadge(it) }
                     Spacer(Modifier.weight(1f))
                     if (hasPrevious) PillButton("⏮ السابقة", small = true, onClick = onPrevious)
                     if (hasNext) PillButton("الحلقة الجاية ⏭", small = true, onClick = onNext)
@@ -728,6 +845,15 @@ private fun MenuPanel(
     menu: Menu,
     tracks: Tracks,
     speed: Float,
+    live: Boolean,
+    subSize: Int,
+    onSubSize: (Int) -> Unit,
+    subBackground: Boolean,
+    onSubBackground: () -> Unit,
+    boost: Boolean,
+    onBoost: () -> Unit,
+    sleeping: Boolean,
+    onSleep: (Int?) -> Unit,
     onClose: () -> Unit,
     onPickTrack: (Tracks.Group, Int) -> Unit,
     onSubtitlesOff: () -> Unit,
@@ -758,7 +884,8 @@ private fun MenuPanel(
                     Menu.SUBTITLES -> "الترجمة"
                     Menu.AUDIO -> "الصوت المعلّق"
                     Menu.SPEED -> "سرعة التشغيل"
-                    Menu.SOURCES -> ""
+                    Menu.SLEEP -> "مؤقت النوم"
+                    Menu.SOURCES, Menu.INFO -> ""
                 },
                 color = Color.White,
                 fontSize = 19.sp,
@@ -778,8 +905,19 @@ private fun MenuPanel(
                         item { MenuRow("بدون ترجمة", selected = !anyText, modifier = Modifier.focusRequester(firstFocus), onClick = onSubtitlesOff) }
                         items(options) { (g, i, sel) -> MenuRow(trackName(g, i, "ترجمة"), selected = sel) { onPickTrack(g, i) } }
                         if (options.isEmpty()) item { Hint("هذا الملف ما فيه ترجمات") }
+                        item { SectionLabel("حجم الترجمة") }
+                        items(SubSizes.size) { n -> MenuRow(SubSizes[n].second, selected = n == subSize) { onSubSize(n) } }
+                        item { MenuRow("خلفية داكنة ورا الترجمة", selected = subBackground, onClick = onSubBackground) }
                     }
-                    Menu.SOURCES -> Unit
+                    Menu.SLEEP -> {
+                        item { MenuRow("بدون", selected = !sleeping, modifier = Modifier.focusRequester(firstFocus)) { onSleep(null) } }
+                        items(SleepChoices) { m ->
+                            MenuRow(if (m == -1) (if (live) "بعد ساعتين" else "نهاية الحلقة / الفيلم") else "بعد $m دقيقة", selected = false) {
+                                onSleep(if (m == -1 && live) 120 else m)
+                            }
+                        }
+                    }
+                    Menu.SOURCES, Menu.INFO -> Unit
                     Menu.AUDIO -> {
                         items(options.size) { n ->
                             val (g, i, sel) = options[n]
@@ -790,6 +928,52 @@ private fun MenuPanel(
                             ) { onPickTrack(g, i) }
                         }
                         if (options.size <= 1) item { Hint("هذا الملف فيه صوت واحد بس") }
+                        item { SectionLabel("خيارات") }
+                        item { MenuRow("تعزيز الصوت (للأفلام الهادية)", selected = boost, modifier = if (options.isEmpty()) Modifier.focusRequester(firstFocus) else Modifier, onClick = onBoost) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(text, color = Gold, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 4.dp))
+}
+
+/** "معلومات التشغيل": picture, sound and connection details of what is playing. */
+@Composable
+private fun InfoPanel(info: MediaInfo?, onClose: () -> Unit) {
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)).clickable(onClick = onClose)) {
+        Column(
+            Modifier
+                .align(Alignment.CenterEnd)
+                .fillMaxHeight()
+                .width(340.dp)
+                .background(Color(0xF2141210))
+                .pointerInput(Unit) { detectTapGestures { } }
+                .focusRequester(focus)
+                .focusable()
+                .padding(vertical = 18.dp),
+        ) {
+            Text("معلومات التشغيل", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+            if (info == null) {
+                Hint("ننتظر يبدأ التشغيل…")
+            } else {
+                if (info.badges.isNotEmpty()) {
+                    Row(Modifier.padding(horizontal = 20.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        info.badges.forEach { QualityBadge(it) }
+                    }
+                }
+                LazyColumn(contentPadding = PaddingValues(vertical = 6.dp)) {
+                    items(info.rows) { (k, v) ->
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)) {
+                            Text(k, color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp, modifier = Modifier.weight(1f))
+                            Text(v, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        }
                     }
                 }
             }
@@ -875,26 +1059,6 @@ private fun RoundButton(
         Icon(icon, contentDescription = description, tint = Color.White, modifier = Modifier.size(if (big) 46.dp else 34.dp))
         if (label != null) Text(label, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
     }
-}
-
-/** "1080p · 50fps", from what the stream says, else the frames counted while playing. */
-@OptIn(UnstableApi::class)
-private fun videoQuality(format: androidx.media3.common.Format?, measuredFps: Float): String? {
-    if (format == null || format.height <= 0) return null
-    val lines = minOf(format.width.takeIf { it > 0 } ?: format.height, format.height)
-    val name = when {
-        format.width >= 3800 || lines >= 2100 -> "4K"
-        else -> "${lines}p"
-    }
-    val fps = format.frameRate.takeIf { it > 1f } ?: measuredFps.takeIf { it > 1f }
-    return listOfNotNull(name, fps?.let { "${Math.round(it)}fps" }, format.codecs?.let(::codecName)).joinToString(" · ")
-}
-
-private fun codecName(codecs: String): String? = when {
-    codecs.startsWith("hvc1") || codecs.startsWith("hev1") -> "HEVC"
-    codecs.startsWith("avc") -> "H.264"
-    codecs.startsWith("av01") -> "AV1"
-    else -> null
 }
 
 @Composable
@@ -1044,6 +1208,8 @@ object PlayerIcons {
     val Brightness = icon("Brightness", "M20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12 20 8.69zM12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6zm0-10c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4z")
     val Volume = icon("Volume", "M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z")
     val Lock = Icons.Filled.Lock
+    val Info = icon("Info", "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z")
+    val Sleep = icon("Sleep", "M12.34 2.02C6.59 1.82 2 6.42 2 12c0 5.52 4.48 10 10 10 3.71 0 6.93-2.02 8.66-5.02-7.51-.25-12.09-8.43-8.32-14.96z")
     val Next = icon("Next", "M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z")
     val Previous = icon("Previous", "M6 6h2v12H6zm3.5 6l8.5 6V6z")
     val Sources = icon("Sources", "M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8 12.5v-9l6 4.5-6 4.5z")
