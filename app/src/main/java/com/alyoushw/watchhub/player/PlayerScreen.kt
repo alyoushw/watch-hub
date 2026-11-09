@@ -758,6 +758,7 @@ private fun MenuPanel(
                     Menu.SUBTITLES -> "الترجمة"
                     Menu.AUDIO -> "الصوت المعلّق"
                     Menu.SPEED -> "سرعة التشغيل"
+                    Menu.SOURCES -> ""
                 },
                 color = Color.White,
                 fontSize = 19.sp,
@@ -778,6 +779,7 @@ private fun MenuPanel(
                         items(options) { (g, i, sel) -> MenuRow(trackName(g, i, "ترجمة"), selected = sel) { onPickTrack(g, i) } }
                         if (options.isEmpty()) item { Hint("هذا الملف ما فيه ترجمات") }
                     }
+                    Menu.SOURCES -> Unit
                     Menu.AUDIO -> {
                         items(options.size) { n ->
                             val (g, i, sel) = options[n]
