@@ -1,7 +1,7 @@
 // Keeps Watch Hub's own files on the device, so the app opens at once even while the free
 // server is still waking up (instead of the host's loading page). Files are refreshed in the
 // background on every visit; a reply that is not ours (e.g. the host's wake-up page) is ignored.
-const CACHE = "watchhub-v6";
+const CACHE = "watchhub-v7";
 const SHELL = ["./", "index.html", "styles.css", "js/app.js", "js/store.js", "js/tmdb.js", "js/xtream.js", "js/player.js", "js/cloud.js", "js/smart.js", "js/translate.js",
   "manifest.webmanifest", "icon.svg", "icon-180.png", "icon-512.png"];
 

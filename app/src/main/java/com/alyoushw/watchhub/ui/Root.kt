@@ -69,6 +69,8 @@ fun WatchHubRoot() {
     val currentRoute = backStack?.destination?.route
 
     val tv = isTv()
+    // TVs and wide car screens: tabs in a side rail (a bottom bar eats a short screen's height).
+    val rail = tv || isWideShort()
     // A TV's "scan to sign in" link opened on this phone: ask to approve it, over any screen.
     PairApprovalDialog()
     // The Xtream tab only shows once an account is saved in Settings.
@@ -77,7 +79,7 @@ fun WatchHubRoot() {
     Scaffold(
         contentWindowInsets = WindowInsets(0),
         bottomBar = {
-            if (!tv) {
+            if (!rail) {
                 NavigationBar {
                     tabs.forEach { tab ->
                         NavigationBarItem(
@@ -93,7 +95,7 @@ fun WatchHubRoot() {
         },
     ) { padding ->
       Row(Modifier.fillMaxSize().padding(padding)) {
-        if (tv) {
+        if (rail) {
             // On TV the tabs sit in a rail on the side, easy to reach with the remote.
             NavigationRail {
                 tabs.forEach { tab ->

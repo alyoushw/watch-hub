@@ -35,10 +35,27 @@ let session = 0;
 let current = null; // { urls, entry, live }
 let saveTimer = null;
 
-const ASPECTS = [["contain", "ملاءمة الشاشة"], ["cover", "ملء وقص"], ["fill", "تمديد"]];
+const ASPECTS = [
+  ["contain", "ملاءمة الشاشة (بدون قص)"], ["cover", "ملء الشاشة مع قص الأطراف"], ["fill", "تمديد على كامل الشاشة"],
+  ["fill", "16:9", 16 / 9], ["fill", "18:9", 2], ["fill", "21:9", 21 / 9], ["fill", "2.35:1 (سينما)", 2.35], ["fill", "4:3", 4 / 3],
+];
+// Kept on this device (a car screen keeps its own).
+const savedPic = (() => {
+  try {
+    return JSON.parse(localStorage.getItem("pl.picture") || "{}");
+  } catch {
+    return {};
+  }
+})();
+let stretch = Number(savedPic.stretch) || 1;
+function savePicture() {
+  try {
+    localStorage.setItem("pl.picture", JSON.stringify({ aspect, zoom, stretch }));
+  } catch { /* private mode */ }
+}
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
-let aspect = 0;
-let zoom = 1;
+let aspect = Math.min(ASPECTS.length - 1, Number(savedPic.aspect) || 0);
+let zoom = Number(savedPic.zoom) || 1;
 let brightness = 1;
 
 // ---------- helpers ----------
@@ -193,7 +210,6 @@ function openOverlay(entry, live) {
   ui.live.hidden = !live;
   [ui.cur, ui.dur, ui.bar, ui.speed, ui.back10, ui.fwd10].forEach((el) => (el.hidden = live));
   document.body.style.overflow = "hidden";
-  zoom = 1;
   brightness = 1;
   applyPicture();
   wake();
@@ -531,8 +547,24 @@ function setVolume(v) {
 }
 
 function applyPicture() {
-  video.style.objectFit = ASPECTS[aspect][0];
-  video.style.transform = zoom !== 1 ? `scale(${zoom})` : "";
+  const [fit, , ratio] = ASPECTS[aspect];
+  video.style.objectFit = fit;
+  if (ratio) {
+    const bw = box.clientWidth || innerWidth;
+    const bh = box.clientHeight || innerHeight;
+    let w = bw;
+    let h = bw / ratio;
+    if (h > bh) {
+      h = bh;
+      w = bh * ratio;
+    }
+    video.style.width = `${w}px`;
+    video.style.height = `${h}px`;
+  } else {
+    video.style.width = "";
+    video.style.height = "";
+  }
+  video.style.transform = zoom !== 1 || stretch !== 1 ? `scale(${zoom * stretch}, ${zoom})` : "";
   video.style.filter = brightness !== 1 ? `brightness(${brightness})` : "";
   ui.aspect.title = `حجم الصورة: ${ASPECTS[aspect][1]}`;
 }
@@ -632,12 +664,63 @@ $("pl-pip").addEventListener("click", () => {
   else video.requestPictureInPicture?.().catch(() => {});
 });
 if (!document.pictureInPictureEnabled) $("pl-pip").hidden = true;
-ui.aspect.addEventListener("click", () => {
-  aspect = (aspect + 1) % ASPECTS.length;
-  zoom = 1;
-  applyPicture();
-  flash(`⛶ ${ASPECTS[aspect][1]}`);
-});
+addEventListener("resize", () => !box.hidden && applyPicture());
+
+/** "حجم الصورة": every fit and shape, plus zoom and width by steps; stays open while adjusting. */
+function pictureMenu() {
+  ui.menu.innerHTML = "<h3>حجم الصورة</h3>";
+  const step = (label, value, change) => {
+    const h = document.createElement("h4");
+    h.textContent = `${label}: ${Math.round(value * 100)}%`;
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;gap:8px;padding:0 4px";
+    for (const [t, d] of [["− تصغير", -0.05], ["+ تكبير", 0.05]]) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "btn ghost small";
+      b.style.flex = "1";
+      b.textContent = t;
+      b.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        change(d);
+        applyPicture();
+        savePicture();
+        pictureMenu();
+      });
+      row.appendChild(b);
+    }
+    ui.menu.append(h, row);
+  };
+  step("التكبير", zoom, (d) => (zoom = Math.max(0.5, Math.min(4, zoom + d))));
+  step("العرض (تمديد أفقي)", stretch, (d) => (stretch = Math.max(0.5, Math.min(2, stretch + d))));
+  const add = (label, on, pick) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = on ? "on" : "";
+    b.innerHTML = `<span></span>${on ? "<span>✓</span>" : ""}`;
+    b.firstElementChild.textContent = label;
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      pick();
+      applyPicture();
+      savePicture();
+      pictureMenu();
+    });
+    ui.menu.appendChild(b);
+  };
+  add("رجّع كل شي للأصل", false, () => {
+    aspect = 0;
+    zoom = 1;
+    stretch = 1;
+  });
+  const h = document.createElement("h4");
+  h.textContent = "طريقة العرض";
+  ui.menu.appendChild(h);
+  ASPECTS.forEach(([, label], i) => add(label, i === aspect, () => (aspect = i)));
+  ui.menu.hidden = false;
+  box.classList.remove("idle");
+}
+ui.aspect.addEventListener("click", pictureMenu);
 ui.vol.addEventListener("input", () => setVolume(Number(ui.vol.value)));
 ui.mute.addEventListener("click", () => {
   video.muted = !video.muted;
@@ -786,7 +869,7 @@ ui.gest.addEventListener("pointermove", (e) => {
   const h = ui.gest.clientHeight;
   if (gesture.mode === "pinch" && pointers.size === 2) {
     const [a, b] = [...pointers.values()];
-    zoom = Math.max(1, Math.min(4, (gesture.zoom * Math.hypot(a.x - b.x, a.y - b.y)) / gesture.dist));
+    zoom = Math.max(0.5, Math.min(4, (gesture.zoom * Math.hypot(a.x - b.x, a.y - b.y)) / gesture.dist));
     applyPicture();
     flash(`تكبير ×${zoom.toFixed(1)}`);
     return;

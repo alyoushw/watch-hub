@@ -126,7 +126,12 @@ fun HeroCarousel(
     val pager = rememberPagerState { slides.size }
     val screenHeight = LocalConfiguration.current.screenHeightDp.dp
     val tv = isTv()
-    val height = if (tv) screenHeight * 0.66f else (screenHeight * 0.58f).coerceAtMost(520.dp)
+    val wideShort = isWideShort()
+    val height = when {
+        tv -> screenHeight * 0.66f
+        wideShort -> screenHeight * 0.92f
+        else -> (screenHeight * 0.58f).coerceAtMost(520.dp)
+    }
 
     // Advance by itself every 7 seconds.
     LaunchedEffect(slides.size) {
@@ -170,6 +175,7 @@ fun HeroCarousel(
                     )
                     HeroText(
                         item = item,
+                        compact = wideShort,
                         saved = data.watchlist.any { w -> item.type?.let { WatchItem.keyOf(it, item.id) } == w.key },
                         onWatch = { onOpen(item) },
                         onAdd = {
@@ -220,12 +226,13 @@ fun HeroCarousel(
 @Composable
 private fun HeroText(
     item: SearchResult,
+    compact: Boolean,
     saved: Boolean,
     onWatch: () -> Unit,
     onAdd: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier.fillMaxWidth(0.82f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(modifier.fillMaxWidth(if (compact) 0.55f else 0.82f), verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp)) {
         Text(
             "🔥 رائج",
             color = Color.White,
@@ -238,8 +245,8 @@ private fun HeroText(
         Text(
             item.displayTitle,
             color = Color.White,
-            fontSize = 34.sp,
-            lineHeight = 40.sp,
+            fontSize = if (compact) 26.sp else 34.sp,
+            lineHeight = if (compact) 30.sp else 40.sp,
             fontWeight = FontWeight.ExtraBold,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
@@ -256,7 +263,7 @@ private fun HeroText(
                 item.overview,
                 color = Color.White.copy(alpha = 0.78f),
                 style = MaterialTheme.typography.bodyMedium,
-                maxLines = 3,
+                maxLines = if (compact) 2 else 3,
                 overflow = TextOverflow.Ellipsis,
             )
         }

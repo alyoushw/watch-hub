@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -98,13 +99,22 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.hypot
 
-private enum class Menu { SUBTITLES, AUDIO, SPEED, SOURCES, INFO, SLEEP }
+private enum class Menu { SUBTITLES, AUDIO, SPEED, SOURCES, INFO, SLEEP, PICTURE }
 
-/** Picture modes for the "حجم الصورة" button. */
-private val ResizeModes = listOf(
-    AspectRatioFrameLayout.RESIZE_MODE_FIT to "ملاءمة الشاشة",
-    AspectRatioFrameLayout.RESIZE_MODE_ZOOM to "ملء وقص",
-    AspectRatioFrameLayout.RESIZE_MODE_FILL to "تمديد",
+/** Picture modes for "حجم الصورة": how the video fits, or a fixed shape it is drawn in. */
+private data class PictureMode(val label: String, val resize: Int, val ratio: Float? = null)
+
+private val PictureModes = listOf(
+    PictureMode("ملاءمة الشاشة (بدون قص)", AspectRatioFrameLayout.RESIZE_MODE_FIT),
+    PictureMode("ملء الشاشة مع قص الأطراف", AspectRatioFrameLayout.RESIZE_MODE_ZOOM),
+    PictureMode("تمديد على كامل الشاشة", AspectRatioFrameLayout.RESIZE_MODE_FILL),
+    PictureMode("ملء العرض", AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH),
+    PictureMode("ملء الطول", AspectRatioFrameLayout.RESIZE_MODE_FIXED_HEIGHT),
+    PictureMode("16:9", AspectRatioFrameLayout.RESIZE_MODE_FILL, 16f / 9f),
+    PictureMode("18:9", AspectRatioFrameLayout.RESIZE_MODE_FILL, 2f),
+    PictureMode("21:9", AspectRatioFrameLayout.RESIZE_MODE_FILL, 21f / 9f),
+    PictureMode("2.35:1 (سينما)", AspectRatioFrameLayout.RESIZE_MODE_FILL, 2.35f),
+    PictureMode("4:3", AspectRatioFrameLayout.RESIZE_MODE_FILL, 4f / 3f),
 )
 
 private val Speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
@@ -137,14 +147,22 @@ fun PlayerScreen(
     val context = LocalContext.current
     val activity = context as Activity
     val tv = remember { context.isTvDevice }
+    val config = androidx.compose.ui.platform.LocalConfiguration.current
+    val screenRatio = config.screenWidthDp.toFloat() / config.screenHeightDp.coerceAtLeast(1)
     val audio = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     val maxVolume = remember { audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
 
     var controls by remember { mutableStateOf(true) }
     var locked by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf<Menu?>(null) }
-    var resize by remember { mutableIntStateOf(0) }
-    var zoom by remember { mutableFloatStateOf(1f) }
+    // Picture size, shape, zoom and stretch: kept on this device (a car screen keeps its own).
+    val picPrefs = remember { context.getSharedPreferences("player", Context.MODE_PRIVATE) }
+    var resize by remember { mutableIntStateOf(picPrefs.getInt("picture", 0).coerceIn(0, PictureModes.lastIndex)) }
+    var zoom by remember { mutableFloatStateOf(picPrefs.getFloat("zoom", 1f).coerceIn(0.5f, 4f)) }
+    var stretch by remember { mutableFloatStateOf(picPrefs.getFloat("stretch", 1f).coerceIn(0.5f, 2f)) }
+    fun savePicture() {
+        picPrefs.edit().putInt("picture", resize).putFloat("zoom", zoom).putFloat("stretch", stretch).apply()
+    }
     var indicator by remember { mutableStateOf<Indicator?>(null) }
     var touchedAt by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
@@ -420,7 +438,7 @@ fun PlayerScreen(
                     }
                 },
                 update = { view ->
-                    view.resizeMode = ResizeModes[resize].first
+                    view.resizeMode = PictureModes[resize].resize
                     view.subtitleView?.setFractionalTextSize(SubSizes[subSize].first)
                     view.subtitleView?.setStyle(
                         CaptionStyleCompat(
@@ -434,9 +452,14 @@ fun PlayerScreen(
                     )
                 },
                 modifier = Modifier
-                    .fillMaxSize()
+                    .align(Alignment.Center)
+                    .then(
+                        PictureModes[resize].ratio?.let { r ->
+                            Modifier.aspectRatio(r, matchHeightConstraintsFirst = screenRatio > r)
+                        } ?: Modifier.fillMaxSize(),
+                    )
                     .graphicsLayer {
-                        scaleX = zoom
+                        scaleX = zoom * stretch
                         scaleY = zoom
                     },
             )
@@ -485,7 +508,7 @@ fun PlayerScreen(
                                         startDist = d
                                         startZoom = zoom
                                     } else if (startDist > 0) {
-                                        zoom = (startZoom * d / startDist).coerceIn(1f, 4f)
+                                        zoom = (startZoom * d / startDist).coerceIn(0.5f, 4f)
                                         flash(Indicator(PlayerIcons.Aspect, "تكبير ×" + String.format(Locale.US, "%.1f", zoom)))
                                     }
                                     event.changes.forEach { it.consume() }
@@ -605,7 +628,7 @@ fun PlayerScreen(
                         position = seekPreview ?: position,
                         duration = duration,
                         speed = speed,
-                        resizeLabel = ResizeModes[resize].second,
+                        resizeLabel = PictureModes[resize].label,
                         playFocus = playFocus,
                         onBack = onBack,
                         onPlayPause = ::togglePlay,
@@ -619,9 +642,8 @@ fun PlayerScreen(
                             poke()
                         },
                         onResize = {
-                            resize = (resize + 1) % ResizeModes.size
-                            zoom = 1f
-                            flash(Indicator(PlayerIcons.Aspect, ResizeModes[resize].second))
+                            menu = Menu.PICTURE
+                            poke()
                         },
                         onLock = {
                             locked = true
@@ -645,6 +667,31 @@ fun PlayerScreen(
                 )
             } else if (menu == Menu.INFO) {
                 InfoPanel(info, onClose = { menu = null })
+            } else if (menu == Menu.PICTURE) {
+                PicturePanel(
+                    mode = resize,
+                    zoom = zoom,
+                    stretch = stretch,
+                    onMode = {
+                        resize = it
+                        savePicture()
+                    },
+                    onZoom = {
+                        zoom = it.coerceIn(0.5f, 4f)
+                        savePicture()
+                    },
+                    onStretch = {
+                        stretch = it.coerceIn(0.5f, 2f)
+                        savePicture()
+                    },
+                    onReset = {
+                        resize = 0
+                        zoom = 1f
+                        stretch = 1f
+                        savePicture()
+                    },
+                    onClose = { menu = null },
+                )
             } else menu?.let { m ->
                 MenuPanel(
                     menu = m,
@@ -885,7 +932,7 @@ private fun MenuPanel(
                     Menu.AUDIO -> "الصوت المعلّق"
                     Menu.SPEED -> "سرعة التشغيل"
                     Menu.SLEEP -> "مؤقت النوم"
-                    Menu.SOURCES, Menu.INFO -> ""
+                    Menu.SOURCES, Menu.INFO, Menu.PICTURE -> ""
                 },
                 color = Color.White,
                 fontSize = 19.sp,
@@ -917,7 +964,7 @@ private fun MenuPanel(
                             }
                         }
                     }
-                    Menu.SOURCES, Menu.INFO -> Unit
+                    Menu.SOURCES, Menu.INFO, Menu.PICTURE -> Unit
                     Menu.AUDIO -> {
                         items(options.size) { n ->
                             val (g, i, sel) = options[n]
@@ -934,6 +981,64 @@ private fun MenuPanel(
                 }
             }
         }
+    }
+}
+
+/**
+ * "حجم الصورة": every fit and shape, plus zoom and stretch by steps (buttons work on screens
+ * where pinching does not, like many car head units). Changes show at once; the panel stays open.
+ */
+@Composable
+private fun PicturePanel(
+    mode: Int,
+    zoom: Float,
+    stretch: Float,
+    onMode: (Int) -> Unit,
+    onZoom: (Float) -> Unit,
+    onStretch: (Float) -> Unit,
+    onReset: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val firstFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
+    // Light backdrop: the picture behind stays visible while adjusting.
+    Box(Modifier.fillMaxSize().clickable(onClick = onClose)) {
+        Column(
+            Modifier
+                .align(Alignment.CenterEnd)
+                .fillMaxHeight()
+                .width(320.dp)
+                .background(Color(0xE6141210))
+                .pointerInput(Unit) { detectTapGestures { } }
+                .padding(vertical = 14.dp),
+        ) {
+            Text("حجم الصورة", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
+            LazyColumn(contentPadding = PaddingValues(vertical = 4.dp)) {
+                item { SectionLabel("التكبير: ${Math.round(zoom * 100)}%") }
+                item {
+                    StepRow(
+                        onMinus = { onZoom(zoom - 0.05f) },
+                        onPlus = { onZoom(zoom + 0.05f) },
+                        firstFocus = firstFocus,
+                    )
+                }
+                item { SectionLabel("العرض (تمديد أفقي): ${Math.round(stretch * 100)}%") }
+                item { StepRow(onMinus = { onStretch(stretch - 0.05f) }, onPlus = { onStretch(stretch + 0.05f) }) }
+                item { MenuRow("رجّع كل شي للأصل", selected = false, onClick = onReset) }
+                item { SectionLabel("طريقة العرض") }
+                items(PictureModes.size) { n ->
+                    MenuRow(PictureModes[n].label, selected = n == mode) { onMode(n) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StepRow(onMinus: () -> Unit, onPlus: () -> Unit, firstFocus: FocusRequester? = null) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        PillButton("−  تصغير", Modifier.weight(1f).let { if (firstFocus != null) it.focusRequester(firstFocus) else it }, onClick = onMinus)
+        PillButton("+  تكبير", Modifier.weight(1f), onClick = onPlus)
     }
 }
 
@@ -1104,6 +1209,7 @@ private fun PillButton(text: String, modifier: Modifier = Modifier, small: Boole
         color = if (focused) Color.Black else Color.White,
         fontSize = if (small) 13.sp else 16.sp,
         fontWeight = FontWeight.Bold,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         modifier = modifier
             .onFocusChanged { focused = it.isFocused }
             .clip(RoundedCornerShape(10.dp))

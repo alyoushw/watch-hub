@@ -396,6 +396,48 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
                         }
                     }
                     var season by remember(series) { mutableStateOf(resume?.season ?: seasons.first()) }
+                    var markFor by remember { mutableStateOf<XtreamEpisode?>(null) }
+
+                    // Long press on an episode: watched / not watched (synced like any progress).
+                    markFor?.let { ep ->
+                        val key = WatchEntry.keyOf(account, WatchEntry.EPISODE, ep.id)
+                        val entry = history.firstOrNull { it.key == key }
+                        fun markWatched(e: XtreamEpisode) {
+                            val d = entry?.durationMs?.takeIf { it > 0 } ?: 1L
+                            val base = entry ?: WatchEntry.episode(account, seriesId, series.name, series.cover, e)
+                            container.history.save(base.copy(positionMs = d, durationMs = d, updatedAt = System.currentTimeMillis()), important = true)
+                        }
+                        AlertDialog(
+                            onDismissRequest = { markFor = null },
+                            title = { Text("الموسم ${ep.season} · الحلقة ${ep.number}") },
+                            text = {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    val state = when {
+                                        entry?.finished == true -> "حالتها: تم المشاهدة"
+                                        entry != null && entry.durationMs > 0 -> "حالتها: جاري المشاهدة"
+                                        else -> "حالتها: ما شفتها"
+                                    }
+                                    Text(state, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    OutlinedButton(
+                                        modifier = Modifier.fillMaxWidth().focusFrame(),
+                                        onClick = {
+                                            markWatched(ep)
+                                            markFor = null
+                                        },
+                                    ) { Text("✓ تم المشاهدة") }
+                                    OutlinedButton(
+                                        modifier = Modifier.fillMaxWidth().focusFrame(),
+                                        onClick = {
+                                            container.history.remove(key)
+                                            markFor = null
+                                        },
+                                    ) { Text("لم أشاهدها") }
+                                }
+                            },
+                            confirmButton = {},
+                            dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = { markFor = null }) { Text("إلغاء") } },
+                        )
+                    }
                     LazyColumn(
                         contentPadding = PaddingValues(12.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -449,7 +491,12 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
                         }
                         items(series.episodes.filter { it.season == season }, key = { it.id }) { ep ->
                             val watched = history.firstOrNull { it.key == WatchEntry.keyOf(account, WatchEntry.EPISODE, ep.id) }
-                            EpisodeRow(ep, watched, current = ep.id == resume?.id && watched?.finished != true) { playEpisode(ep) }
+                            EpisodeRow(
+                                ep,
+                                watched,
+                                current = ep.id == resume?.id && watched?.finished != true,
+                                onLongClick = { markFor = ep },
+                            ) { playEpisode(ep) }
                         }
                     }
                 }
@@ -529,8 +576,9 @@ fun XtreamWatchButton(
 }
 
 /** An episode in the list: gold frame and "تشاهدها" while in progress, faded with ✓ once finished. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun EpisodeRow(ep: XtreamEpisode, watched: WatchEntry?, current: Boolean, onClick: () -> Unit) {
+private fun EpisodeRow(ep: XtreamEpisode, watched: WatchEntry?, current: Boolean, onLongClick: () -> Unit, onClick: () -> Unit) {
     val finished = watched?.finished == true
     val shape = RoundedCornerShape(12.dp)
     Row(
@@ -540,7 +588,7 @@ private fun EpisodeRow(ep: XtreamEpisode, watched: WatchEntry?, current: Boolean
             .clip(shape)
             .background(if (current) Gold.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant)
             .border(if (current) 2.dp else 0.dp, if (current) Gold else Color.Transparent, shape)
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .graphicsLayer { alpha = if (finished) 0.55f else 1f }
             .padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,

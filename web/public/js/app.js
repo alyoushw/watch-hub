@@ -1010,10 +1010,66 @@ async function xseriesPage(id, seriesId) {
       season = Number(b.dataset.s);
       render();
     }));
-    view.querySelectorAll("[data-e]").forEach((b) => b.addEventListener("click", () => {
-      playEp(s.episodes.find((x) => x.id === b.dataset.e));
-    }));
+    view.querySelectorAll("[data-e]").forEach((b) => {
+      const ep = () => s.episodes.find((x) => x.id === b.dataset.e);
+      let pressTimer = null;
+      let pressed = false;
+      b.addEventListener("click", (ev) => {
+        if (pressed) {
+          pressed = false;
+          ev.preventDefault();
+          return;
+        }
+        playEp(ep());
+      });
+      // Long press (touch) or right click: watched / not watched.
+      b.addEventListener("contextmenu", (ev) => {
+        ev.preventDefault();
+        markMenu(ep());
+      });
+      b.addEventListener("pointerdown", (ev) => {
+        if (ev.pointerType === "mouse") return;
+        pressTimer = setTimeout(() => {
+          pressed = true;
+          markMenu(ep());
+        }, 550);
+      });
+      ["pointerup", "pointercancel", "pointerleave"].forEach((n) => b.addEventListener(n, () => clearTimeout(pressTimer)));
+    });
     $("#resume")?.addEventListener("click", () => playEp(resume));
+  };
+  const markMenu = (e) => {
+    if (!e) return;
+    document.querySelector(".sheet-wrap")?.remove();
+    const key = xt.episodeKey(acc, e);
+    const h = history.get(key);
+    const state = h && isFinished(h) ? "تم المشاهدة" : h && h.durationMs ? "جاري المشاهدة" : "ما شفتها";
+    const wrap = document.createElement("div");
+    wrap.className = "sheet-wrap";
+    wrap.innerHTML = `<div class="sheet" role="dialog" aria-modal="true">
+        <b class="sheet-title">الموسم ${e.season} · الحلقة ${e.number}</b>
+        <small class="muted">حالتها: ${state}</small>
+        <button class="btn ghost" data-a="done">✓ تم المشاهدة</button>
+        <button class="btn ghost" data-a="undo">لم أشاهدها</button>
+        <button class="btn ghost" data-a="x">إلغاء</button>
+      </div>`;
+    wrap.addEventListener("click", (ev) => {
+      const a = ev.target.closest("[data-a]")?.dataset.a;
+      if (ev.target !== wrap && !a) return;
+      wrap.remove();
+      if (a === "done") {
+        const d = h?.durationMs > 0 ? h.durationMs : 1;
+        history.save({ ...(h || xt.entryEpisode(acc, seriesId, s.name, s.cover, e)), positionMs: d, durationMs: d }, true);
+        toast("✓ تعلّمت كمشاهدة");
+        render();
+      } else if (a === "undo") {
+        history.remove(key);
+        toast("تعلّمت إنك ما شفتها");
+        render();
+      }
+    });
+    document.body.appendChild(wrap);
+    wrap.querySelector('[data-a="done"]').focus();
   };
   render();
   // Refresh the bars after the player closes.

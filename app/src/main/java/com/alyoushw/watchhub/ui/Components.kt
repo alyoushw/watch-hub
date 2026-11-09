@@ -400,3 +400,13 @@ fun Modifier.focusHighlight(shape: Shape = RoundedCornerShape(10.dp)): Modifier 
         .border(width = if (focused) 3.dp else 0.dp, color = if (focused) FocusColor else Color.Transparent, shape = shape)
         .padding(if (focused) 2.dp else 0.dp)
 }
+
+/**
+ * A very wide, short screen (car head units like 1920×720): the tabs move to a side rail and
+ * big banners get more of the height.
+ */
+@Composable
+fun isWideShort(): Boolean {
+    val c = androidx.compose.ui.platform.LocalConfiguration.current
+    return c.screenHeightDp < 560 && c.screenWidthDp >= c.screenHeightDp * 1.9f
+}
