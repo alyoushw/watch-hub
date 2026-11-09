@@ -110,6 +110,7 @@ const routes = [
   [/^#\/xtream(?:\/(movie|series))?$/, xtreamPage, "xtream"],
   [/^#\/xseries\/(.+)$/, xseriesPage, "xtream"],
   [/^#\/settings$/, settingsPage, "settings"],
+  [/^#\/pair\?s=(.*)$/, pairPage, null],
 ];
 
 let renderId = 0;
@@ -1274,6 +1275,55 @@ function renderCloud() {
   };
   draw(cloud.getState());
   const off = cloud.onStateChange((st) => (box.isConnected ? draw(st) : off()));
+}
+
+/** A TV's "scan to sign in" QR code opened on this phone: approve it with one tap. */
+async function pairPage(id, pairingId) {
+  view.innerHTML = loading();
+  const st = await cloud.ready();
+  if (stale(id)) return;
+  const device = await cloud.pairingDevice(pairingId);
+  if (stale(id)) return;
+  const box = (inner) => `<div class="settings" style="margin:30px auto"><section class="card-box" style="text-align:center">${inner}</section></div>`;
+  if (!device) {
+    view.innerHTML = box(`<h3>انتهت صلاحية الرمز</h3><p class="muted">اطلب رمز جديد من التلفاز وصوّره مرة ثانية.</p>`);
+    return;
+  }
+  if (st.status !== "signedIn") {
+    view.innerHTML = box(`<h3>«${esc(device)}» يبي يدخل حسابك</h3>
+      <p class="muted">سجّل دخولك أول بحساب Google، وبعدها وافق.</p>
+      <div><button class="btn" id="pr-in">سجّل دخول بـ Google</button></div><pre class="msg err" id="pr-msg"></pre>`);
+    $("#pr-in").addEventListener("click", async () => {
+      try {
+        await cloud.signInWithGoogle();
+        await new Promise((r) => setTimeout(r, 800));
+        route();
+      } catch (e) {
+        $("#pr-msg").textContent = e.message;
+      }
+    });
+    return;
+  }
+  view.innerHTML = box(`<h3>«${esc(device)}» يبي يدخل حسابك</h3>
+    <p style="color:var(--gold);margin:0">${esc(st.email || st.name || "")}</p>
+    <p class="muted" style="line-height:1.8">بيشوف قائمتك وتابع المشاهدة وحسابات Xtream. وافق بس إذا الجهاز قدامك.</p>
+    <div style="display:flex;gap:10px;justify-content:center">
+      <button class="btn" id="pr-yes">قبول</button><button class="btn ghost" id="pr-no">رفض</button>
+    </div><pre class="msg err" id="pr-msg"></pre>`);
+  $("#pr-yes").addEventListener("click", async () => {
+    $("#pr-yes").disabled = true;
+    try {
+      await cloud.answerPairing(pairingId, true);
+      view.innerHTML = box(`<h3>✓ وافقت</h3><p class="muted">التلفاز يدخل حسابك الحين. تقدر تسكّر هالصفحة.</p>`);
+    } catch (e) {
+      $("#pr-msg").textContent = e.message;
+      $("#pr-yes").disabled = false;
+    }
+  });
+  $("#pr-no").addEventListener("click", async () => {
+    await cloud.answerPairing(pairingId, false).catch(() => {});
+    view.innerHTML = box(`<h3>رفضت الدخول</h3><p class="muted">ما دخل أحد حسابك.</p>`);
+  });
 }
 
 /** Code sign-in: enter the code at google.com/device (works where the Google popup can't). */

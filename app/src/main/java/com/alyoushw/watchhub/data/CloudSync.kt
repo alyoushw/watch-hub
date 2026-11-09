@@ -47,6 +47,8 @@ data class CloudConfig(
     val firebase: FirebaseConfig? = null,
     val googleWebClientId: String = "",
     val deviceLogin: Boolean = false,
+    /** "Scan to sign in" (a signed-in phone approves a TV) is set up on the server. */
+    val qrLogin: Boolean = false,
 ) {
     @Serializable
     data class FirebaseConfig(
@@ -59,6 +61,9 @@ data class CloudConfig(
 
     val usable: Boolean get() = enabled && firebase != null && firebase.apiKey.isNotBlank() && firebase.projectId.isNotBlank()
 }
+
+/** "Scan to sign in": the TV shows [url] as a QR code; a signed-in phone opens it and approves. */
+data class Pairing(val id: String, val secret: String, val url: String, val expiresIn: Int)
 
 /** A sign-in code to show on a TV: enter [userCode] at [verificationUrl] from a phone or computer. */
 data class DeviceCode(val deviceCode: String, val userCode: String, val verificationUrl: String, val expiresIn: Int, val interval: Int)
@@ -294,6 +299,74 @@ class CloudSync(
         } catch (e: java.io.IOException) {
             throw CloudException("ما قدرنا نوصل لموقعك، تأكد من الرابط والإنترنت")
         }
+    }
+
+    // ---------- "scan to sign in" ----------
+
+    /** A link opened from a TV's QR code, waiting for this phone's answer (see MainActivity). */
+    private val _pendingPairing = MutableStateFlow<String?>(null)
+    val pendingPairing: StateFlow<String?> = _pendingPairing.asStateFlow()
+
+    fun openPairingLink(id: String?) {
+        if (!id.isNullOrBlank()) _pendingPairing.value = id
+    }
+
+    fun dismissPairing() {
+        _pendingPairing.value = null
+    }
+
+    /** TV: starts a sign-in to show as a QR code. */
+    suspend fun startPairing(): Pairing {
+        val o = parseObject(postJson("/pair/start", """{"device":${kotlinx.serialization.json.JsonPrimitive(deviceName)}}"""))
+            ?: throw CloudException("موقعك لسا يصحى، انتظر دقيقة وجرّب مرة ثانية")
+        fun str(k: String) = (o[k] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
+        if (str("id").isBlank()) throw CloudException("الدخول بالمسح غير مفعّل في موقعك (FIREBASE_SERVICE_ACCOUNT)")
+        return Pairing(str("id"), str("secret"), str("url"), str("expiresIn").toIntOrNull() ?: 600)
+    }
+
+    /** TV: waits for the phone. True once signed in; false when refused or expired. */
+    suspend fun finishPairing(p: Pairing): Boolean {
+        val until = System.currentTimeMillis() + p.expiresIn * 1000L
+        while (System.currentTimeMillis() < until) {
+            delay(2_000)
+            val body = runCatching { postJson("/pair/poll", """{"id":"${p.id}","secret":"${p.secret}"}""") }.getOrNull() ?: continue
+            val o = parseObject(body) ?: continue
+            when ((o["status"] as? kotlinx.serialization.json.JsonPrimitive)?.content) {
+                "approved" -> {
+                    val token = (o["token"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return false
+                    val a = auth ?: return false
+                    try {
+                        a.signInWithCustomToken(token).await()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "custom token sign-in failed", e)
+                        throw CloudException("ما قبل Firebase الدخول: ${e.message ?: "خطأ"}")
+                    }
+                    return true
+                }
+                "denied", "expired" -> return false
+            }
+        }
+        return false
+    }
+
+    /** Phone: which device is asking (null when the link expired). */
+    suspend fun pairingDevice(id: String): String? = withContext(Dispatchers.IO) {
+        runCatching {
+            http.newCall(Request.Builder().url(settings.webUrl.value.trimEnd('/') + "/pair/info?id=" + id).build()).execute().use { res ->
+                val o = parseObject(res.body?.string().orEmpty()) ?: return@use null
+                if ((o["status"] as? kotlinx.serialization.json.JsonPrimitive)?.content != "pending") null
+                else (o["device"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            }
+        }.getOrNull()
+    }
+
+    /** Phone: lets the device in to this account ([approve]) or refuses it. */
+    suspend fun answerPairing(id: String, approve: Boolean) {
+        val user = auth?.currentUser ?: throw CloudException("سجّل دخولك في هذا الجوال أول")
+        val idToken = user.getIdToken(false).await().token ?: throw CloudException("ما قدرنا نتأكد من حسابك")
+        val body = postJson("/pair/approve", """{"id":"$id","idToken":"$idToken","approve":$approve}""")
+        val status = (parseObject(body)?.get("status") as? kotlinx.serialization.json.JsonPrimitive)?.content
+        if (approve && status != "approved") throw CloudException("انتهت صلاحية الرمز، اطلب رمز جديد من التلفاز")
     }
 
     private suspend fun signInWithIdToken(idToken: String) {

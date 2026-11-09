@@ -68,7 +68,7 @@ export async function start() {
     }
     await au.setPersistence(auth, au.browserLocalPersistence).catch(() => {});
     fb = { auth, db, fs, au };
-    setState({ status: "signedOut" });
+    // Stays "loading" until Firebase says who is signed in (it restores the session first).
     au.onAuthStateChanged(auth, (user) => onUser(user));
     // A finished redirect sign-in (when the popup was blocked) lands here.
     au.getRedirectResult(auth).catch(() => {});
@@ -373,4 +373,45 @@ async function mergeXtream(snap) {
 
 function pushXtream(list, at) {
   fb.fs.setDoc(ref("meta", "xtream"), accountDoc(list, at)).then(synced).catch((e) => console.warn("xtream push", e));
+}
+
+
+// ---------- "scan to sign in": approving a TV from this browser ----------
+
+/** Which device is asking (null when the link expired). */
+export async function pairingDevice(id) {
+  try {
+    const res = await fetch(`/pair/info?id=${encodeURIComponent(id)}`, { cache: "no-store" });
+    const data = await res.json();
+    return data.status === "pending" ? data.device || "جهاز" : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Lets the device in to this account ([approve]) or refuses it. */
+export async function answerPairing(id, approve) {
+  const user = fb && fb.auth.currentUser;
+  if (!user) throw new Error("سجّل دخولك أول");
+  const idToken = await user.getIdToken();
+  const res = await fetch("/pair/approve", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id, idToken, approve }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (approve && data.status !== "approved") throw new Error("انتهت صلاحية الرمز، اطلب رمز جديد من التلفاز");
+}
+
+/** Resolves once the account state is known (after start). */
+export function ready() {
+  if (state.status !== "loading") return Promise.resolve(getState());
+  return new Promise((resolve) => {
+    const off = onStateChange((st) => {
+      if (st.status !== "loading") {
+        off();
+        resolve(st);
+      }
+    });
+  });
 }

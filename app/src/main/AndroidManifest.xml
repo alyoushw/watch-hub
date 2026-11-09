@@ -58,6 +58,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+            <!-- "Scan to sign in": a TV's QR code opens here on a phone that has the app. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="watch-hub-ddfg.onrender.com" android:pathPrefix="/pair" />
+            </intent-filter>
         </activity>
         <activity
             android:name=".player.PlayerActivity"

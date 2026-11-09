@@ -69,6 +69,8 @@ fun WatchHubRoot() {
     val currentRoute = backStack?.destination?.route
 
     val tv = isTv()
+    // A TV's "scan to sign in" link opened on this phone: ask to approve it, over any screen.
+    PairApprovalDialog()
     // The Xtream tab only shows once an account is saved in Settings.
     val xtream by appContainer().settings.xtream.collectAsStateWithLifecycle()
     val tabs = Tab.entries.filter { it != Tab.XTREAM || xtream.isComplete }

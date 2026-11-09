@@ -748,10 +748,17 @@ private fun AccountSection() {
         }
     }
 
-    if (showCode) DeviceLoginDialog(onDone = { ok ->
+    var googleCode by remember { mutableStateOf(false) }
+    val done: (Boolean) -> Unit = { ok ->
         showCode = false
+        googleCode = false
         if (ok) android.widget.Toast.makeText(context, "✓ دخلت، ونزامن الحين", android.widget.Toast.LENGTH_SHORT).show()
-    })
+    }
+    when {
+        // TV with "scan to sign in" set up: a QR code a signed-in phone approves.
+        showCode && !googleCode && cloud.config?.qrLogin == true && tv -> PairingDialog(onDone = done, onUseGoogleCode = { googleCode = true })
+        showCode -> DeviceLoginDialog(onDone = done)
+    }
 }
 
 /** TV sign-in: a short code to enter at google.com/device on a phone (with a QR code to get there). */
@@ -873,4 +880,138 @@ private fun GuestNote(onCleared: () -> Unit) {
             dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = { confirm = false }) { Text("إلغاء") } },
         )
     }
+}
+
+
+/**
+ * TV: "scan to sign in". A QR code that a phone signed in to Watch Hub opens (in the app, or the
+ * web app) and approves with one tap; the TV then signs in to the same account by itself.
+ */
+@Composable
+private fun PairingDialog(onDone: (Boolean) -> Unit, onUseGoogleCode: () -> Unit) {
+    val cloud = appContainer().cloud
+    var pairing by remember { mutableStateOf<com.alyoushw.watchhub.data.Pairing?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var attempt by remember { mutableStateOf(0) }
+
+    LaunchedEffect(attempt) {
+        error = null
+        pairing = null
+        try {
+            val p = cloud.startPairing()
+            pairing = p
+            if (cloud.finishPairing(p)) onDone(true) else error = "انتهت صلاحية الرمز أو انرفض. اطلب رمز جديد."
+        } catch (e: com.alyoushw.watchhub.data.CloudException) {
+            error = e.message
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = { onDone(false) },
+        title = { Text("سجّل دخول بجوالك") },
+        text = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                val p = pairing
+                when {
+                    error != null -> Text(error.orEmpty(), color = MaterialTheme.colorScheme.error)
+                    p == null -> CircularProgressIndicator()
+                    else -> {
+                        Text("صوّر الرمز بكاميرا جوالك:", style = MaterialTheme.typography.bodyMedium)
+                        Box(Modifier.clip(RoundedCornerShape(12.dp)).background(androidx.compose.ui.graphics.Color.White).padding(10.dp)) {
+                            QrCode(p.url, Modifier.size(210.dp))
+                        }
+                        Text(
+                            "بيفتح Watch Hub في جوالك (لازم تكون داخل حسابك فيه)، اضغط «قبول» وبس.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Text("ننتظر موافقتك…", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (error != null) TextButton(modifier = Modifier.focusFrame(), onClick = { attempt++ }) { Text("رمز جديد") }
+            else if (cloud.config?.deviceLogin == true) TextButton(modifier = Modifier.focusFrame(), onClick = onUseGoogleCode) { Text("أو بـ google.com/device") }
+        },
+        dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = { onDone(false) }) { Text("إلغاء") } },
+    )
+}
+
+/**
+ * Phone: a TV's QR code was opened here. Shows which device is asking, and lets it in to this
+ * account with one tap (or refuses it). Shown over any screen (see Root).
+ */
+@Composable
+fun PairApprovalDialog() {
+    val cloud = appContainer().cloud
+    val id by cloud.pendingPairing.collectAsStateWithLifecycle()
+    val state by cloud.state.collectAsStateWithLifecycle()
+    val pairingId = id ?: return
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var device by remember(pairingId) { mutableStateOf<String?>(null) }
+    var loaded by remember(pairingId) { mutableStateOf(false) }
+    var busy by remember(pairingId) { mutableStateOf(false) }
+    var error by remember(pairingId) { mutableStateOf<String?>(null) }
+    LaunchedEffect(pairingId) {
+        device = cloud.pairingDevice(pairingId)
+        loaded = true
+    }
+    val signedIn = state as? com.alyoushw.watchhub.data.CloudSync.State.SignedIn
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) cloud.dismissPairing() },
+        title = { Text("تسجيل دخول جهاز") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                when {
+                    !loaded -> CircularProgressIndicator()
+                    device == null -> Text("انتهت صلاحية الرمز. اطلب رمز جديد من التلفاز.")
+                    signedIn == null -> Text("سجّل دخولك في هذا الجوال أول (الإعدادات ← حسابك)، وبعدها صوّر الرمز مرة ثانية.")
+                    else -> {
+                        Text("«${device}» يبي يدخل حسابك:", fontWeight = FontWeight.Bold)
+                        Text(signedIn.email ?: signedIn.name.orEmpty(), color = Gold)
+                        Text(
+                            "بيشوف قائمتك وتابع المشاهدة وحسابات Xtream. وافق بس إذا الجهاز قدامك.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = {
+            if (loaded && device != null && signedIn != null) {
+                Button(
+                    modifier = Modifier.focusFrame(),
+                    enabled = !busy,
+                    onClick = {
+                        busy = true
+                        error = null
+                        scope.launch {
+                            try {
+                                cloud.answerPairing(pairingId, approve = true)
+                                cloud.dismissPairing()
+                                android.widget.Toast.makeText(context, "✓ وافقت، التلفاز يدخل الحين", android.widget.Toast.LENGTH_SHORT).show()
+                            } catch (e: com.alyoushw.watchhub.data.CloudException) {
+                                error = e.message
+                            }
+                            busy = false
+                        }
+                    },
+                ) { Text(if (busy) "لحظة…" else "قبول") }
+            }
+        },
+        dismissButton = {
+            TextButton(modifier = Modifier.focusFrame(), enabled = !busy, onClick = {
+                if (loaded && device != null && signedIn != null) scope.launch { runCatching { cloud.answerPairing(pairingId, approve = false) } }
+                cloud.dismissPairing()
+            }) { Text(if (loaded && device != null && signedIn != null) "رفض" else "إغلاق") }
+        },
+    )
 }
