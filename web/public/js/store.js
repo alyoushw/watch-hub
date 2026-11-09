@@ -235,7 +235,8 @@ function persistHistory() {
   const copy = data.watchHistory.slice();
   lastWrite = openIdb().then((db) => new Promise((resolve) => {
     const tx = db.transaction("kv", "readwrite", { durability: "strict" });
-    tx.objectStore("kv").put(copy, "watchHistory");
+    // Tagged with the profile, so a copy left from another profile is never merged in.
+    tx.objectStore("kv").put({ profile: currentProfile(), list: copy }, "watchHistory");
     tx.oncomplete = () => resolve(true);
     tx.onerror = tx.onabort = () => resolve(false);
   })).catch(() => false);
@@ -254,12 +255,14 @@ export async function restoreHistory() {
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => resolve(null);
     });
-    if (!Array.isArray(saved) || !saved.length) {
-      if (data.watchHistory.length) persistHistory();
+    // Older copies were a bare list (one profile only back then).
+    const list = Array.isArray(saved) ? saved : saved && saved.profile === currentProfile() ? saved.list : null;
+    if (!Array.isArray(list) || !list.length) {
+      persistHistory();
       return;
     }
     const byKey = new Map();
-    for (const e of [...saved, ...data.watchHistory]) {
+    for (const e of [...list, ...data.watchHistory]) {
       const old = byKey.get(e.key);
       if (!old || (e.updatedAt || 0) >= (old.updatedAt || 0)) byKey.set(e.key, e);
     }
@@ -338,3 +341,70 @@ export const history = {
 
 export const isFinished = (e) => e.durationMs > 0 && e.positionMs >= e.durationMs * 0.95;
 export const progressOf = (e) => (e.durationMs > 0 ? Math.min(1, e.positionMs / e.durationMs) : 0);
+
+
+// ---------- profiles: the device's guest, or the signed-in account ----------
+//
+// The personal data on screen (history, list, Xtream accounts, favourite and recent channels) is
+// always the current profile's. Signing in puts the guest's aside and shows the account's (the
+// guest's is never copied into the account); signing out deletes the account's copy from this
+// browser and brings the guest's back. Same rules as the Android app (CloudSync.switchProfile).
+
+export const currentProfile = () => data.profile || "guest";
+
+/** Versions before profiles kept no profile: label what's here as belonging to [p], without moving it. */
+export function labelProfileIfNew(p) {
+  if (data.profile) return;
+  data.profile = p;
+  save();
+}
+
+const sideKey = (p) => `${KEY}@${p}`;
+
+function personal() {
+  return {
+    watchlist: data.watchlist, removedWatch: data.removedWatch,
+    watchHistory: data.watchHistory, removedHistory: data.removedHistory,
+    favorites: data.favorites, recent: data.recent,
+    xAccounts: data.settings.xAccounts || [], xActive: data.settings.xActive || null,
+    xAccountsUpdatedAt: data.settings.xAccountsUpdatedAt || 0,
+  };
+}
+
+function apply(p) {
+  data.watchlist = p.watchlist || [];
+  data.removedWatch = p.removedWatch || {};
+  data.watchHistory = p.watchHistory || [];
+  data.removedHistory = p.removedHistory || {};
+  data.favorites = p.favorites || [];
+  data.recent = p.recent || [];
+  data.settings.xAccounts = p.xAccounts || [];
+  data.settings.xActive = p.xActive || null;
+  data.settings.xAccountsUpdatedAt = p.xAccountsUpdatedAt || 0;
+}
+
+/** Puts the current profile's data aside (or drops it when [discard]) and brings back [to]'s. */
+export async function switchProfile(to, discard) {
+  const from = currentProfile();
+  if (from === to) return;
+  try {
+    if (discard) localStorage.removeItem(sideKey(from));
+    else localStorage.setItem(sideKey(from), JSON.stringify(personal()));
+  } catch { /* storage full: the guest's copy is lost rather than shown to someone else */ }
+  let incoming = {};
+  try {
+    incoming = JSON.parse(localStorage.getItem(sideKey(to)) || "{}");
+    localStorage.removeItem(sideKey(to));
+  } catch { /* nothing kept for it */ }
+  apply(incoming);
+  data.profile = to;
+  save();
+  await persistHistory();
+}
+
+/** Forgets this profile's history, list, Xtream accounts and favourite channels. */
+export async function clearProfileData() {
+  apply({});
+  save();
+  await persistHistory();
+}

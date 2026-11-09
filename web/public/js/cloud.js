@@ -4,7 +4,7 @@
 // Same Firestore documents as the Android app (CloudSync.kt), under users/<uid>/:
 //   history/<entry key>, watchlist/<type:id>, meta/xtream — each with updatedAt (ms); the newest
 //   copy wins; removals are { deleted: true }. Settings come from the site's /config.json.
-import { history, watchlist, accounts, onLocalChange } from "./store.js";
+import { history, watchlist, accounts, onLocalChange, currentProfile, labelProfileIfNew, switchProfile, clearProfileData } from "./store.js";
 
 const SDK = "https://www.gstatic.com/firebasejs/10.14.1";
 const PROGRESS_EVERY_MS = 10000;
@@ -81,17 +81,33 @@ export async function start() {
 
 export const deviceLoginAvailable = () => Boolean(cfg && cfg.deviceLogin);
 
-function onUser(user) {
+function profileChanged() {
+  window.dispatchEvent(new Event("watchhub:profile"));
+}
+
+async function onUser(user) {
+  labelProfileIfNew(user ? `u:${user.uid}` : "guest");
   if (!user) {
     stop();
     uid = null;
     setState({ status: "signedOut" });
+    // Nothing of the account stays in this browser: back to the guest's own data.
+    if (currentProfile() !== "guest") {
+      await switchProfile("guest", true);
+      profileChanged();
+    }
     return;
   }
   setState({ status: "signedIn", name: user.displayName, email: user.email, photo: user.photoURL });
   if (uid === user.uid) return;
   uid = user.uid;
-  startSyncing();
+  const mine = `u:${user.uid}`;
+  if (currentProfile() !== mine) {
+    // The guest's data is put aside, never copied into the account.
+    await switchProfile(mine, currentProfile() !== "guest");
+    profileChanged();
+  }
+  if (uid === user.uid) startSyncing();
 }
 
 // ---------- sign in / out ----------
@@ -150,7 +166,18 @@ export async function finishDeviceLogin(code, isCancelled) {
 }
 
 export async function signOut() {
-  if (fb) await fb.au.signOut(fb.auth);
+  if (!fb) return;
+  await flush(); // positions still waiting go out first
+  await fb.au.signOut(fb.auth);
+}
+
+export const isGuest = () => currentProfile() === "guest";
+
+/** Clears the guest's history, list, Xtream accounts and favourite channels in this browser. */
+export async function clearGuestData() {
+  if (!isGuest()) return;
+  await clearProfileData();
+  profileChanged();
 }
 
 // ---------- syncing ----------

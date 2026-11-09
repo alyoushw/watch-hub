@@ -1129,6 +1129,12 @@ function bindContinue() {
   });
 }
 
+// Signing in or out changes whose data is shown: draw the page again.
+window.addEventListener("watchhub:profile", () => {
+  xt.clearCache();
+  route();
+});
+
 // Refresh the row after watching something.
 window.addEventListener("watchhub:history", () => {
   const root = $("#continue");
@@ -1232,7 +1238,10 @@ function renderCloud() {
     } else if (st.status === "off") {
       box.innerHTML = head + `<p class="muted" style="margin:0;line-height:1.8">الحساب يحتاج إعداد مرة وحدة في Render (خطوات «حساب Watch Hub» في ملف README). بعدها يطلع لك هنا زر تسجيل الدخول.</p>`;
     } else if (st.status === "signedOut") {
-      box.innerHTML = head + `<p class="muted" style="margin:0;line-height:1.8">سجّل دخولك بحساب Google، وكل أجهزتك (الجوال والتلفاز والموقع) تصير على نفس القائمة ونفس «تابع المشاهدة». توقف حلقة في الجوال، وتكملها في التلفاز من نفس الثانية.</p>
+      box.innerHTML = head + `<div class="acc-row"><span style="font-size:22px">👤</span>
+          <div><b>أنت الحين زائر</b><small style="white-space:normal">اللي تشوفه هنا خاص بهذا الجهاز. لما تسجّل دخول تطلع بياناتك أنت، ولما تطلع ترجع بيانات الزائر.</small></div>
+          <button class="btn ghost small danger" id="cl-clear">امسحها</button></div>
+        <p class="muted" style="margin:0;line-height:1.8">سجّل دخولك بحساب Google، وكل أجهزتك (الجوال والتلفاز والموقع) تصير على نفس القائمة ونفس «تابع المشاهدة». توقف حلقة في الجوال، وتكملها في التلفاز من نفس الثانية.</p>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <button class="btn" id="cl-google">سجّل دخول بـ Google</button>
           ${cloud.deviceLoginAvailable() ? `<button class="btn ghost" id="cl-code">دخول برمز</button>` : ""}
@@ -1246,6 +1255,11 @@ function renderCloud() {
         }
       });
       $("#cl-code")?.addEventListener("click", deviceLoginSheet);
+      $("#cl-clear").addEventListener("click", async () => {
+        if (!confirm("تمسح بيانات الزائر من هذا الجهاز؟ (تابع المشاهدة، قائمتي، حسابات Xtream، القنوات المفضلة). حسابك في Google ما يتأثر.")) return;
+        await cloud.clearGuestData();
+        toast("✓ انمسحت بيانات الزائر");
+      });
     } else {
       const time = st.lastSync ? new Date(st.lastSync).toLocaleTimeString("en-GB") : "";
       box.innerHTML = head + `<div class="acc-row">
