@@ -213,6 +213,37 @@ function bindTypeTabs() {
     }));
 }
 
+// A sideways swipe on empty space of the home page moves between مباشر · مسلسلات · أفلام
+// (like the Android app). Rows that scroll sideways keep their own swipe.
+(() => {
+  let start = null;
+  const tabs = ["live", "tv", "movie"];
+  const current = () => (location.hash === "#/live" ? 0 : tabs.indexOf(sessionStorage.getItem("homeType") || "tv"));
+  view.addEventListener("touchstart", (e) => {
+    const onHome = location.hash === "#/live" || /^#?\/?$/.test(location.hash);
+    const t = e.touches[0];
+    start = onHome && e.touches.length === 1 && !e.target.closest(".row, .chips, .typetabs, input, video") ? { x: t.clientX, y: t.clientY } : null;
+  }, { passive: true });
+  view.addEventListener("touchend", (e) => {
+    if (!start) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    start = null;
+    if (Math.abs(dx) < 90 || Math.abs(dx) < Math.abs(dy) * 2) return;
+    // Right-to-left tabs: a swipe to the right goes to the next one (on the left).
+    const next = Math.max(0, Math.min(tabs.length - 1, current() + (dx > 0 ? 1 : -1)));
+    if (next === current()) return;
+    if (next === 0) {
+      location.hash = "#/live";
+      return;
+    }
+    sessionStorage.setItem("homeType", tabs[next]);
+    if (location.hash === "#/live") location.hash = "#/";
+    else route();
+  }, { passive: true });
+})();
+
 // ---------- search ----------
 
 /** Saved filter presets ("أنماطي"), like the Android app. */

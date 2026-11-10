@@ -29,6 +29,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -424,7 +426,34 @@ fun HomeScreen(
             onLive = { live = true },
         )
     }
-    Box(Modifier.fillMaxSize()) {
+    // A sideways swipe on empty space moves to the next tab (مباشر · مسلسلات · أفلام · أنمي), so
+    // a car screen needs no aim at the small tab names. Rows that scroll sideways keep their swipe.
+    val order = listOf<MediaType?>(null, MediaType.TV, MediaType.MOVIE, MediaType.ANIME)
+    fun moveTab(step: Int) {
+        val now = if (live) 0 else order.indexOf(vm.type).coerceAtLeast(1)
+        val next = (now + step).coerceIn(0, order.lastIndex)
+        if (next == now) return
+        val t = order[next]
+        if (t == null) {
+            live = true
+        } else {
+            live = false
+            vm.selectType(t)
+        }
+    }
+    Box(
+        Modifier.fillMaxSize().pointerInput(Unit) {
+            var total = 0f
+            detectHorizontalDragGestures(
+                onDragStart = { total = 0f },
+                onDragEnd = {
+                    // Right-to-left tabs: a swipe to the right goes to the next one (on the left).
+                    if (kotlin.math.abs(total) > 110.dp.toPx()) moveTab(if (total > 0) 1 else -1)
+                },
+                onHorizontalDrag = { _, d -> total += d },
+            )
+        },
+    ) {
         when {
             live -> Column {
                 header()
