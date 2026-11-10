@@ -34,7 +34,6 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alyoushw.watchhub.data.AppUpdate
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -55,15 +54,17 @@ fun UpdateNotice() {
     val askNotify = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= 33) runCatching { askNotify.launch(Manifest.permission.POST_NOTIFICATIONS) }
-        while (true) {
-            updater.check()
-            delay(6 * 60 * 60_000L)
-        }
     }
-    // Back from Android's "install unknown apps" switch: look again.
+    // Each time the app comes to the front (opened, or back from the background): look for a
+    // new build, at most once every 10 minutes. Also back from "install unknown apps": look again.
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle) {
-        val observer = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) canInstall = updater.canInstall() }
+        val observer = LifecycleEventObserver { _, e ->
+            if (e == Lifecycle.Event.ON_RESUME) {
+                canInstall = updater.canInstall()
+                scope.launch { updater.checkIfDue() }
+            }
+        }
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer) }
     }

@@ -63,6 +63,14 @@ class Updater(private val context: Context) {
 
     val currentBuild: Int get() = BuildConfig.BUILD_NUMBER
 
+    private var lastCheck = 0L
+
+    /** Looks again when the app comes to the front, at most once every 10 minutes. */
+    suspend fun checkIfDue() {
+        if (System.currentTimeMillis() - lastCheck < 10 * 60_000L) return
+        check()
+    }
+
     /**
      * Asks GitHub for the newest release; sets [available] when it is newer than this app.
      * [manual] (the Settings button) shows the card again even after "لاحقاً".
@@ -85,6 +93,7 @@ class Updater(private val context: Context) {
                 AppUpdate(build, apk, o["body"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() })
             }
         }.getOrNull()
+        if (found != null) lastCheck = System.currentTimeMillis()
         val newer = found?.takeIf { currentBuild > 0 && it.build > currentBuild }
         _available.value = newer
         newer
