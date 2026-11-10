@@ -470,6 +470,7 @@ fun HomeScreen(
                         )
                     }
                     item(key = "continue") { ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true }) }
+                    item(key = "foryou") { ForYouRow(vm.type, onOpen) }
                     items(vm.sections.filter { !(it.wide && it.id == hero?.id) }, key = { it.id }) { section ->
                         TitleRow(
                             title = section.title,

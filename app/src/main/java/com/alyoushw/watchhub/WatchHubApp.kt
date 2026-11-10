@@ -31,6 +31,7 @@ class AppContainer(context: Context) {
     val cloud = CloudSync(context, settings, history, store)
     val statusCache = StatusCache(context, api)
     val updater = com.alyoushw.watchhub.data.Updater(context)
+    val recommender = com.alyoushw.watchhub.data.Recommender(context, api, history, store)
 
 
     init {
