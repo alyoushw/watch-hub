@@ -177,6 +177,7 @@ class YouTubeTvActivity : ComponentActivity() {
                         load(view, keepPage = true)
                     },
                     onBack = ::goBack,
+                    onKey = ::sendKey,
                     onHome = ::finish,
                     onInterface = {
                         switchTo((ui.intValue + 1) % Interfaces.size)
@@ -224,6 +225,15 @@ class YouTubeTvActivity : ComponentActivity() {
         fullscreenView = null
         fullscreenDone?.onCustomViewHidden()
         fullscreenDone = null
+    }
+
+    /** The on-screen remote: a key press as if from a TV remote. */
+    private fun sendKey(code: Int) {
+        val w = web ?: return
+        if (code == KeyEvent.KEYCODE_BACK) return goBack()
+        w.requestFocus()
+        w.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
+        w.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
     }
 
     /** One step back: out of full screen, then back in YouTube, then out of YouTube. */
@@ -374,6 +384,7 @@ private fun YouTubeScreen(
     pageSize: Float,
     onPageSize: (Float) -> Unit,
     onBack: () -> Unit,
+    onKey: (Int) -> Unit,
     onHome: () -> Unit,
     onInterface: () -> String,
     bind: (toggle: () -> Unit, isOpen: () -> Boolean, close: () -> Unit) -> Unit,
@@ -386,6 +397,9 @@ private fun YouTubeScreen(
     var note by remember { mutableStateOf<String?>(null) }
     var screen by remember { mutableStateOf(IntSize.Zero) }
     val firstFocus = remember { FocusRequester() }
+    // The on-screen remote for the TV interface: shown on touch screens (cars, phones), not on TVs.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var remote by remember { mutableStateOf(!context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)) }
     bind({ open = !open; touchedAt = System.currentTimeMillis() }, { open }, { open = false })
 
     // TV interface: a 16:9 frame (it is drawn for 16:9), scaled by the tools. Other interfaces:
@@ -470,7 +484,12 @@ private fun YouTubeScreen(
                         open = true
                         touched()
                     }
+                    if (tvInterface) EdgeButton("✥", "ريموت على الشاشة", highlight = remote) { remote = !remote }
                 }
+            }
+
+            if (tvInterface && remote && !open) {
+                ScreenRemote(onKey, Modifier.align(Alignment.BottomStart).padding(start = 56.dp, bottom = 12.dp))
             }
 
             AnimatedVisibility(
@@ -549,6 +568,41 @@ private fun YouTubeScreen(
 }
 
 private fun Float.round(): Float = String.format(Locale.US, "%.2f", this).toFloat()
+
+/**
+ * A remote control on the screen, for YouTube's TV interface on touch screens: arrows move
+ * (and during a video ◀ ▶ go back / forward), OK picks, ⏯ plays / pauses, ↩ goes back.
+ */
+@Composable
+private fun ScreenRemote(onKey: (Int) -> Unit, modifier: Modifier) {
+    @Composable
+    fun key(symbol: String, code: Int, big: Boolean = false) {
+        Box(
+            Modifier
+                .size(if (big) 58.dp else 50.dp)
+                .clip(RoundedCornerShape(if (big) 29.dp else 14.dp))
+                .background(if (big) Gold.copy(alpha = 0.55f) else Color.Black.copy(alpha = 0.5f))
+                .border(1.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(if (big) 29.dp else 14.dp))
+                .clickable { onKey(code) },
+            contentAlignment = Alignment.Center,
+        ) { Text(symbol, color = Color.White, fontSize = if (big) 16.sp else 20.sp, fontWeight = FontWeight.Bold) }
+    }
+    androidx.compose.foundation.layout.Row(modifier, horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Bottom) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            key("▲", KeyEvent.KEYCODE_DPAD_UP)
+            androidx.compose.foundation.layout.Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                key("◀", KeyEvent.KEYCODE_DPAD_LEFT)
+                key("OK", KeyEvent.KEYCODE_DPAD_CENTER, big = true)
+                key("▶", KeyEvent.KEYCODE_DPAD_RIGHT)
+            }
+            key("▼", KeyEvent.KEYCODE_DPAD_DOWN)
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            key("↩", KeyEvent.KEYCODE_BACK)
+            key("⏯", KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
+        }
+    }
+}
 
 /** A small see-through button on the left edge. */
 @Composable
