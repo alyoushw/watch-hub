@@ -210,6 +210,37 @@ private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind
         XtreamViewModel(container.xtream, kinds.first())
     }
     var filter by remember(vm.kind, vm.selected) { mutableStateOf("") }
+    var itemMenu by remember { mutableStateOf<XtreamItem?>(null) }
+    val scope = rememberCoroutineScope()
+
+    // Long press on a film or series: share it; films can also be saved for watching offline.
+    itemMenu?.let { item ->
+        AlertDialog(
+            onDismissRequest = { itemMenu = null },
+            title = { Text(item.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(modifier = Modifier.fillMaxWidth().focusFrame(), onClick = {
+                        itemMenu = null
+                        scope.launch {
+                            context.shareByName(container.api, item.name, if (item.kind == XtreamKind.SERIES) MediaType.TV else MediaType.MOVIE, item.tmdb?.toIntOrNull())
+                        }
+                    }) { Text("↗ مشاركة") }
+                    if (item.kind == XtreamKind.MOVIE) {
+                        val e = WatchEntry.movie(item, account)
+                        val saved = container.downloads.has(e.key)
+                        OutlinedButton(modifier = Modifier.fillMaxWidth().focusFrame(), onClick = {
+                            itemMenu = null
+                            if (saved) container.downloads.remove(e.key) else container.downloads.start(e, container.xtream.playUrls(item, account).first())
+                            android.widget.Toast.makeText(context, if (saved) "انحذف التنزيل" else "📥 بدأ تنزيل «${item.name}»", android.widget.Toast.LENGTH_SHORT).show()
+                        }) { Text(if (saved) "🗑 احذف التنزيل" else "📥 نزّله للمشاهدة بدون نت") }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = { itemMenu = null }) { Text("إلغاء") } },
+        )
+    }
 
     Column(Modifier.fillMaxSize()) {
         AccountSwitcher(Modifier.padding(vertical = 6.dp))
@@ -275,18 +306,7 @@ private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind
                             )
                         }
                         items(shown, key = { "${it.kind}:${it.id}" }) { item ->
-                            XtreamCard(item, onLongClick = {
-                                // Films: long press saves it for watching without internet.
-                                if (item.kind == XtreamKind.MOVIE) {
-                                    val e = WatchEntry.movie(item, account)
-                                    if (container.downloads.has(e.key)) {
-                                        android.widget.Toast.makeText(context, "«${item.name}» موجود في التنزيلات", android.widget.Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        container.downloads.start(e, container.xtream.playUrls(item, account).first())
-                                        android.widget.Toast.makeText(context, "📥 بدأ تنزيل «${item.name}»", android.widget.Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            }) {
+                            XtreamCard(item, onLongClick = { if (item.kind != XtreamKind.LIVE) itemMenu = item }) {
                                 if (item.kind == XtreamKind.SERIES) {
                                     onOpenSeries(item.id)
                                 } else {
@@ -418,6 +438,7 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
                     }
                     var season by remember(series) { mutableStateOf(resume?.season ?: seasons.first()) }
                     var markFor by remember { mutableStateOf<XtreamEpisode?>(null) }
+                    val shareScope = rememberCoroutineScope()
 
                     // Long press on an episode: watched / not watched (synced like any progress).
                     markFor?.let { ep ->
@@ -453,6 +474,13 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
                                             markFor = null
                                         },
                                     ) { Text("لم أشاهدها") }
+                                    OutlinedButton(
+                                        modifier = Modifier.fillMaxWidth().focusFrame(),
+                                        onClick = {
+                                            markFor = null
+                                            shareScope.launch { context.shareByName(container.api, series.name, MediaType.TV) }
+                                        },
+                                    ) { Text("↗ مشاركة المسلسل") }
                                     val epEntry = WatchEntry.episode(account, seriesId, series.name, series.cover, ep)
                                     val saved = container.downloads.has(epEntry.key)
                                     OutlinedButton(
@@ -780,6 +808,17 @@ fun ContinueWatchingRow(
                                 openPlatformPage(e)
                             },
                         ) { Text("معلومات المسلسل (المنصة)") }
+                    }
+                    if (e.kind != WatchEntry.LIVE) {
+                        OutlinedButton(
+                            modifier = Modifier.fillMaxWidth().focusFrame(),
+                            onClick = {
+                                menuFor = null
+                                scope.launch {
+                                    context.shareByName(container.api, e.title, if (e.kind == WatchEntry.EPISODE) MediaType.TV else MediaType.MOVIE, e.tmdbId)
+                                }
+                            },
+                        ) { Text("↗ مشاركة") }
                     }
                     OutlinedButton(
                         modifier = Modifier.fillMaxWidth().focusFrame(),

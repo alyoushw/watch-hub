@@ -2,6 +2,7 @@ package com.alyoushw.watchhub.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -83,6 +84,7 @@ fun ForYouRow(type: MediaType?, onOpen: (MediaType, Int) -> Unit) {
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun PickCard(p: Pick, onOpen: (MediaType, Int) -> Unit, onNope: () -> Unit) {
     val container = appContainer()
@@ -100,8 +102,12 @@ private fun PickCard(p: Pick, onOpen: (MediaType, Int) -> Unit, onNope: () -> Un
             }
         }
     }
+    val context = androidx.compose.ui.platform.LocalContext.current
     Column(
-        Modifier.width(150.dp).focusHighlight().clickable { item.type?.let { onOpen(it, item.id) } },
+        Modifier.width(150.dp).focusHighlight().combinedClickable(
+            onClick = { item.type?.let { onOpen(it, item.id) } },
+            onLongClick = { context.shareTitle(item.displayTitle, item.type, item.id) },
+        ),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Box {

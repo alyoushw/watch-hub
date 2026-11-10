@@ -14,6 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.alyoushw.watchhub.data.MediaType
+import androidx.compose.foundation.combinedClickable
 import com.alyoushw.watchhub.data.StatusCache
 import com.alyoushw.watchhub.data.countryFlag
 import androidx.compose.foundation.Image
@@ -200,9 +201,12 @@ fun RatingChip(value: Double?, modifier: Modifier = Modifier) {
 
 /** Poster with title; [rank] draws a large "top 10" number on it. */
 @Composable
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 fun PosterCard(item: SearchResult, rank: Int? = null, width: Dp = 120.dp, onClick: () -> Unit) {
+    val context = LocalContext.current
     Column(
-        Modifier.width(width).focusHighlight().clickable(onClick = onClick),
+        // Long press: share it.
+        Modifier.width(width).focusHighlight().combinedClickable(onClick = onClick, onLongClick = { context.shareTitle(item.displayTitle, item.type, item.id) }),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Box {
@@ -442,4 +446,39 @@ fun CrashNotice() {
             androidx.compose.material3.TextButton(modifier = Modifier.focusFrame(), onClick = ::done) { Text("تمام") }
         },
     )
+}
+
+/**
+ * Shares a film or series with the phone's share sheet: its name and its page on the user's
+ * Watch Hub site (never a stream link from the Xtream account, which carries the password).
+ */
+fun android.content.Context.shareTitle(title: String, type: MediaType?, id: Int?) {
+    val site = (applicationContext as com.alyoushw.watchhub.WatchHubApp).container.settings.webUrl.value.trimEnd('/')
+    val link = when {
+        id == null || type == null -> null
+        type == MediaType.ANIME -> "https://myanimelist.net/anime/$id"
+        else -> "$site/#/title/${type.path}/$id"
+    }
+    val kind = when (type) {
+        MediaType.MOVIE -> "فيلم"
+        MediaType.TV -> "مسلسل"
+        MediaType.ANIME -> "أنمي"
+        null -> "عمل"
+    }
+    val text = "🎬 أنصحك بـ$kind «$title»" + (link?.let { "\n$it" } ?: "\n$site")
+    val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+        .putExtra(android.content.Intent.EXTRA_SUBJECT, title)
+        .putExtra(android.content.Intent.EXTRA_TEXT, text)
+    try {
+        startActivity(android.content.Intent.createChooser(send, "مشاركة «$title»").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+    } catch (_: android.content.ActivityNotFoundException) {
+        android.widget.Toast.makeText(this, "المشاركة غير متوفرة على هذا الجهاز", android.widget.Toast.LENGTH_SHORT).show()
+    }
+}
+
+/** Shares a title from the Xtream account: finds its TMDB page by name first. */
+suspend fun android.content.Context.shareByName(api: com.alyoushw.watchhub.data.TmdbApi, name: String, type: MediaType, knownId: Int? = null) {
+    val clean = com.alyoushw.watchhub.data.XtreamApi.normalizeTitle(name)
+    val hit = if (knownId != null) null else runCatching { api.search(clean).firstOrNull { it.type == type } }.getOrNull()
+    shareTitle(hit?.displayTitle ?: name, type, knownId ?: hit?.id)
 }

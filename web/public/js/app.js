@@ -1244,6 +1244,84 @@ async function openPlatformPage(e) {
   }
 }
 
+/**
+ * Shares a film or series: its name and its page on this site (never a stream link from the
+ * Xtream account, which carries the password). The phone's share sheet, else the link is copied.
+ */
+async function shareTitle(title, type, id) {
+  const url = id ? `${location.origin}/#/title/${type}/${id}` : location.origin;
+  const text = `🎬 أنصحك بـ${type === "movie" ? "فيلم" : "مسلسل"} «${title}»`;
+  try {
+    if (navigator.share) {
+      await navigator.share({ title, text, url });
+      return;
+    }
+  } catch (e) {
+    if (e?.name === "AbortError") return;
+  }
+  try {
+    await navigator.clipboard.writeText(`${text}\n${url}`);
+    toast("✓ نسخنا الرابط، الصقه وين ما تبي");
+  } catch {
+    prompt("انسخ الرابط:", url);
+  }
+}
+
+async function shareEntry(e) {
+  const type = e.kind === "episode" ? "tv" : "movie";
+  let id = type === "movie" ? e.tmdbId : null;
+  let title = e.title;
+  if (!id) {
+    try {
+      const hit = (await tmdb.search(xt.normalizeTitle(e.title))).find((r) => r.media_type === type);
+      if (hit) {
+        id = hit.id;
+        title = titleOf(hit);
+      }
+    } catch { /* share the name only */ }
+  }
+  shareTitle(title, type, id);
+}
+
+// Long press on any poster (or right click on a computer): share it.
+(() => {
+  const cardOf = (e) => e.target.closest?.("a.card[href^='#/title/']");
+  const share = (a) => {
+    const [, , type, id] = a.getAttribute("href").split("/");
+    shareTitle(a.querySelector(".name")?.textContent || "", type, Number(id));
+  };
+  let timer = null;
+  let fired = false;
+  document.addEventListener("pointerdown", (e) => {
+    const a = cardOf(e);
+    fired = false;
+    clearTimeout(timer);
+    if (!a || e.pointerType === "mouse") return;
+    timer = setTimeout(() => {
+      fired = true;
+      share(a);
+    }, 550);
+  });
+  ["pointerup", "pointercancel", "pointermove"].forEach((t) => document.addEventListener(t, (e) => {
+    if (t === "pointermove" && Math.abs(e.movementX) + Math.abs(e.movementY) < 4) return;
+    clearTimeout(timer);
+  }));
+  // The press that shared does not also open the page, nor the browser's own link menu.
+  document.addEventListener("click", (e) => {
+    if (fired && cardOf(e)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      fired = false;
+    }
+  }, true);
+  document.addEventListener("contextmenu", (e) => {
+    const a = cardOf(e);
+    if (!a) return;
+    e.preventDefault();
+    if (!fired) share(a);
+  });
+})();
+
 /** Long press / right click / ⋯ on a card: open its page, or remove it from the row. */
 function entryMenu(e, card) {
   document.querySelector(".sheet-wrap")?.remove();
@@ -1254,6 +1332,7 @@ function entryMenu(e, card) {
       <b class="sheet-title"></b>
       <button class="btn ghost" data-a="open"></button>
       ${e.kind === "episode" ? '<button class="btn ghost" data-a="tmdb">معلومات المسلسل (المنصة)</button>' : ""}
+      ${e.kind !== "live" ? '<button class="btn ghost" data-a="share">↗ مشاركة</button>' : ""}
       <button class="btn ghost danger" data-a="del">احذف من تابع المشاهدة</button>
       <button class="btn ghost" data-a="x">إلغاء</button>
     </div>`;
@@ -1265,6 +1344,9 @@ function entryMenu(e, card) {
     if (a === "open") {
       wrap.remove();
       openEntryPage(e);
+    } else if (a === "share") {
+      wrap.remove();
+      shareEntry(e);
     } else if (a === "tmdb") {
       wrap.remove();
       openPlatformPage(e);
