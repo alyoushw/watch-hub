@@ -44,7 +44,7 @@ class Recommender(
         private set
 
     /** One title the user watched, with how much it tells about their taste. */
-    private class Seed(val type: MediaType, val id: Int, val title: String, val weight: Double, val finishedAt: Long?)
+    private class Seed(val type: MediaType, val id: Int, var title: String, val weight: Double, val finishedAt: Long?)
 
     /** Builds (or reuses) the suggestions; [force] rebuilds even if nothing changed. */
     suspend fun refresh(force: Boolean = false) = lock.withLock {
@@ -101,6 +101,8 @@ class Recommender(
         val countryW = mutableMapOf<String, Double>()
         val disliked = dislikedGenres()
         for ((s, d) in details) {
+            // Its proper name ("Dear X"), not the account's ("AR-AS-S: Dear X (2025) (KR)").
+            d.displayTitle.takeIf { it.isNotBlank() }?.let { s.title = it }
             d.genres.forEach { g -> genreW[g.id] = (genreW[g.id] ?: 0.0) + s.weight }
             (d.originCountry.firstOrNull() ?: d.productionCountries.firstOrNull()?.code)?.let { c -> countryW[c] = (countryW[c] ?: 0.0) + s.weight }
         }

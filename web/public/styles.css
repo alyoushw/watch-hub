@@ -401,3 +401,10 @@ a.person:hover .face { box-shadow: 0 0 0 3px var(--gold); }
 .pl-menu .pl-info-row span:first-child { opacity: .6; }
 .pl-menu h4 { color: var(--gold); margin: 14px 4px 4px; font-size: 13px; }
 #pl-sleep.on { color: var(--gold); }
+
+/* ✨ مختار لك */
+.pick { display: grid; gap: 4px; align-content: start; }
+.pick .card { width: 100%; }
+.pick-why { color: var(--gold); font-size: 12px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.pick-nope { all: unset; cursor: pointer; font-size: 12px; opacity: .65; }
+.pick-nope:hover, .pick-nope:focus-visible { opacity: 1; color: var(--gold); }

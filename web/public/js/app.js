@@ -1,5 +1,6 @@
 // Watch Hub on the web: the same hub as the Android app, for iPhone, iPad and computers.
 import * as tmdb from "./tmdb.js";
+import * as foryou from "./foryou.js";
 import * as xt from "./xtream.js";
 import { play, fmt } from "./player.js";
 import * as smart from "./smart.js";
@@ -171,6 +172,7 @@ async function home(id) {
 
   view.innerHTML = `${tabs}
     ${continueRow(type)}
+    <div id="foryou"></div>
     ${hero ? `<section class="hero">
       ${hero.backdrop_path ? `<img class="bg" src="${tmdb.image(hero.backdrop_path, "w1280")}" alt="">` : ""}
       <div class="info">
@@ -184,6 +186,7 @@ async function home(id) {
     <div id="rows">${loading()}</div>`;
   bindTypeTabs();
   bindContinue();
+  renderForYou(type, id);
 
   const services = tmdb.SERVICES
     .map((s) => ({ ...s, all: [...new Set([...s.ids, ...(ids[s.key] || [])])] }))
@@ -1634,4 +1637,37 @@ restoreHistory().finally(() => {
 // Open instantly from the device's copy, even while the free server wakes up.
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+
+// ---------- ✨ مختار لك ----------
+
+async function renderForYou(type, id) {
+  let list;
+  try {
+    list = await foryou.picks();
+  } catch {
+    return;
+  }
+  const box = $("#foryou");
+  if (!box || stale(id)) return;
+  const shown = list.filter((p) => p.r.media_type === type).slice(0, 15);
+  if (!shown.length) {
+    box.innerHTML = "";
+    return;
+  }
+  box.innerHTML = `<h2 class="section-title">✨ مختار لك</h2>
+    <p class="muted" style="margin:-6px 0 10px;font-size:13px">مبني على اللي تشوفه، وتحت كل واحد ليش يناسبك</p>
+    <div class="row">${shown.map((p) => `<div class="pick">
+        ${card(p.r)}
+        <small class="pick-why">${esc(p.reason)}</small>
+        <button class="pick-nope" data-nope="${p.r.media_type}:${p.r.id}">مو لي ✕</button>
+      </div>`).join("")}</div>`;
+  box.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-nope]");
+    if (!b) return;
+    const p = shown.find((x) => `${x.r.media_type}:${x.r.id}` === b.dataset.nope);
+    if (p) foryou.notForMe(p.r);
+    b.closest(".pick")?.remove();
+    toast("تمام، بنقلل من هالنوع");
+  }, { once: false });
 }
