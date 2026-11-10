@@ -56,6 +56,7 @@ class PlayerActivity : ComponentActivity() {
     private var queue: List<QueueItem> = emptyList()
     private var position = 0
     private var urlIndex = 0
+    private var retries = 0
     private var started = false
     private var loadJob: Job? = null
 
@@ -85,8 +86,9 @@ class PlayerActivity : ComponentActivity() {
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
 
-        // Providers often redirect a stream to another server, sometimes from https to http.
-        val http = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
+        // Providers often redirect a stream to another server, sometimes from https to http
+        // (OkHttp follows both). Its pool is dropped when the network changes (see Net).
+        val http = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(com.alyoushw.watchhub.data.Net.streams)
         player = ExoPlayer.Builder(this)
             .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http)))
             .setSeekBackIncrementMs(10_000)
@@ -100,6 +102,17 @@ class PlayerActivity : ComponentActivity() {
         player.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
                 val urls = current?.urls.orEmpty()
+                val at = if (entry?.isLive == true) 0L else player.currentPosition
+                // A dropped connection (network change, a busy server) often comes back: try the
+                // same link again a few times, waiting a little longer each time.
+                if (retries < RetryDelays.size) {
+                    val wait = RetryDelays[retries]
+                    retries++
+                    if (retries == 1) Toast.makeText(this@PlayerActivity, "انقطع الاتصال، نعيد المحاولة…", Toast.LENGTH_SHORT).show()
+                    handler.postDelayed({ if (!isFinishing) setMedia(at) }, wait)
+                    return
+                }
+                retries = 0
                 if (urlIndex < urls.lastIndex) {
                     val at = player.currentPosition
                     urlIndex++
@@ -110,6 +123,7 @@ class PlayerActivity : ComponentActivity() {
             }
 
             override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_READY) retries = 0
                 if (state == Player.STATE_ENDED) {
                     saveProgress(important = true)
                     // A series goes on to the next episode; anything else closes.
@@ -125,6 +139,18 @@ class PlayerActivity : ComponentActivity() {
 
         playAt(position)
         loadSeriesQueue()
+        // Wi-Fi ↔ mobile data: the old connection is dead; reconnect at once on the new network.
+        lifecycleScope.launch {
+            var seen = com.alyoushw.watchhub.data.Net.changes.value
+            com.alyoushw.watchhub.data.Net.changes.collect { n ->
+                if (n == seen) return@collect
+                seen = n
+                if (!started) return@collect
+                delay(1_000)
+                retries = 0
+                setMedia(if (entry?.isLive == true) 0L else player.currentPosition)
+            }
+        }
         lifecycleScope.launch { watchMarkers() }
 
         // Back while going through one channel's sources: return to the list it came from.
@@ -152,6 +178,7 @@ class PlayerActivity : ComponentActivity() {
     /** Starts queue item [i]: saves where the current one stopped, then resumes the new one. */
     private fun playAt(i: Int) {
         if (i !in queue.indices) return
+        retries = 0
         if (started) saveProgress(important = true)
         position = i
         urlIndex = 0
@@ -421,6 +448,8 @@ class PlayerActivity : ComponentActivity() {
     }
 
     companion object {
+        private val RetryDelays = longArrayOf(1_500, 3_000, 6_000, 10_000)
+
         /** Plays [urls] (tried in order); [entry] names it and keeps its place in the watch history. */
         fun start(context: Context, urls: List<String>, entry: WatchEntry) =
             start(context, listOf(QueueItem(urls, entry)), 0)

@@ -85,6 +85,8 @@ class YouTubeTvActivity : ComponentActivity() {
     private var fullscreenView: View? = null
     private var fullscreenDone: WebChromeClient.CustomViewCallback? = null
     private val ui: MutableIntState = mutableIntStateOf(0)
+    private val signInBlocked = mutableStateOf(false)
+    private lateinit var prefs: android.content.SharedPreferences
     private var railToggle: (() -> Unit)? = null
     private var railOpen: () -> Boolean = { false }
     private var closeRail: () -> Unit = {}
@@ -101,8 +103,9 @@ class YouTubeTvActivity : ComponentActivity() {
             hide(WindowInsetsCompat.Type.systemBars())
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
-        val prefs = getSharedPreferences("youtube", Context.MODE_PRIVATE)
+        prefs = getSharedPreferences("youtube", Context.MODE_PRIVATE)
         ui.intValue = prefs.getInt("ui2", 0).coerceIn(0, Interfaces.lastIndex)
+        pageFactor.value = prefs.getFloat("page", 0.75f)
 
         val frame = FrameLayout(this).apply {
             clipChildren = false
@@ -114,8 +117,6 @@ class YouTubeTvActivity : ComponentActivity() {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
-            settings.useWideViewPort = true
-            settings.loadWithOverviewMode = true
             settings.setSupportZoom(false)
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
@@ -137,6 +138,16 @@ class YouTubeTvActivity : ComponentActivity() {
                 override fun onPageFinished(view: WebView, url: String?) {
                     view.evaluateJavascript(PictureScript, null)
                 }
+
+                // Google does not allow signing in inside apps on YouTube's site: offer the TV
+                // interface instead, which signs in by scanning a code with the phone.
+                override fun shouldOverrideUrlLoading(view: WebView, request: android.webkit.WebResourceRequest): Boolean {
+                    if (request.isForMainFrame && request.url.host == "accounts.google.com" && !tvInterface) {
+                        signInBlocked.value = true
+                        return true
+                    }
+                    return false
+                }
             }
             isFocusable = true
             isFocusableInTouchMode = true
@@ -152,14 +163,24 @@ class YouTubeTvActivity : ComponentActivity() {
                     frame = frame,
                     tvInterface = tvInterface,
                     interfaceName = Interfaces[ui.intValue].name,
+                    signInBlocked = signInBlocked.value,
+                    onUseTv = {
+                        signInBlocked.value = false
+                        switchTo(1)
+                    },
+                    onDismissSignIn = { signInBlocked.value = false },
+                    pageSize = pageFactor.value,
+                    onPageSize = { delta ->
+                        val f = (pageFactor.value + delta).coerceIn(0.4f, 1.6f).let { Math.round(it * 100) / 100f }
+                        pageFactor.value = f
+                        prefs.edit().putFloat("page", f).apply()
+                        load(view, keepPage = true)
+                    },
                     onBack = ::goBack,
                     onHome = ::finish,
                     onInterface = {
-                        val next = (ui.intValue + 1) % Interfaces.size
-                        prefs.edit().putInt("ui2", next).apply()
-                        ui.intValue = next
-                        load(view)
-                        Interfaces[next].name
+                        switchTo((ui.intValue + 1) % Interfaces.size)
+                        Interfaces[ui.intValue].name
                     },
                     bind = { toggle, isOpen, close ->
                         railToggle = toggle
@@ -172,10 +193,30 @@ class YouTubeTvActivity : ComponentActivity() {
         view.requestFocus()
     }
 
-    private fun load(view: WebView) {
+    /** Page size for the regular and phone interfaces (1 = Android's normal size). */
+    private val pageFactor = androidx.compose.runtime.mutableFloatStateOf(0.75f)
+
+    private fun switchTo(i: Int) {
+        prefs.edit().putInt("ui2", i).apply()
+        ui.intValue = i
+        web?.let { load(it) }
+    }
+
+    private fun load(view: WebView, keepPage: Boolean = false) {
         val i = Interfaces[ui.intValue]
         view.settings.userAgentString = i.agent
-        view.loadUrl(i.url)
+        if (tvInterface) {
+            view.settings.useWideViewPort = true
+            view.settings.loadWithOverviewMode = true
+            view.setInitialScale(0)
+        } else {
+            // The page is laid out for the screen's width at this scale: smaller = more fits.
+            view.settings.useWideViewPort = false
+            view.settings.loadWithOverviewMode = false
+            view.setInitialScale(Math.round(resources.displayMetrics.density * 100 * pageFactor.value))
+        }
+        val here = view.url
+        if (keepPage && here != null && here.startsWith("http")) view.loadUrl(here) else view.loadUrl(i.url)
     }
 
     private fun leaveFullscreen() {
@@ -327,6 +368,11 @@ private fun YouTubeScreen(
     frame: FrameLayout,
     tvInterface: Boolean,
     interfaceName: String,
+    signInBlocked: Boolean,
+    onUseTv: () -> Unit,
+    onDismissSignIn: () -> Unit,
+    pageSize: Float,
+    onPageSize: (Float) -> Unit,
     onBack: () -> Unit,
     onHome: () -> Unit,
     onInterface: () -> String,
@@ -464,10 +510,30 @@ private fun YouTubeScreen(
                     RailButton("تصغير −") { zoom = (zoom - 0.05f).coerceAtLeast(0.5f).round(); touched() }
                     RailButton("أعرض ↔") { widen = (widen + 0.05f).coerceAtMost(2f).round(); touched() }
                     RailButton("أضيق →←") { widen = (widen - 0.05f).coerceAtLeast(0.5f).round(); touched() }
+                    if (!tvInterface) {
+                        Text("حجم الصفحة ${Math.round(pageSize * 100)}%", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                        RailButton("الصفحة أصغر") { onPageSize(-0.05f); touched() }
+                        RailButton("الصفحة أكبر") { onPageSize(0.05f); touched() }
+                    }
                     Text("الواجهة: $interfaceName", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                     RailButton("واجهة ثانية") { note = "فتحنا ${onInterface()}" }
                     RailButton("إغلاق الأدوات") { open = false }
                 }
+            }
+
+            if (signInBlocked) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = onDismissSignIn,
+                    title = { Text("تسجيل الدخول") },
+                    text = {
+                        Text(
+                            "قوقل ما تسمح بتسجيل الدخول داخل التطبيقات في هذي الواجهة. " +
+                                "سجّل دخولك من «واجهة التلفاز»: يطلع لك باركود، تصوّره بجوالك وتوافق، ويصير يوتيوب بحسابك (واشتراك بريميوم يشتغل).",
+                        )
+                    },
+                    confirmButton = { androidx.compose.material3.TextButton(onClick = onUseTv) { Text("افتح واجهة التلفاز") } },
+                    dismissButton = { androidx.compose.material3.TextButton(onClick = onDismissSignIn) { Text("إلغاء") } },
+                )
             }
 
             note?.let {

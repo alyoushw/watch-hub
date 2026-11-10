@@ -597,7 +597,7 @@ private fun LivePicture(hit: LiveHit?, idle: LiveHit?, onOpen: () -> Unit, modif
     val context = LocalContext.current
     val container = appContainer()
     val player = remember {
-        val http = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
+        val http = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(com.alyoushw.watchhub.data.Net.streams)
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(context, http)))
             .build()

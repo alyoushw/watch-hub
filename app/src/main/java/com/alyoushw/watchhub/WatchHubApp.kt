@@ -98,6 +98,7 @@ class WatchHubApp : Application() {
             previous?.uncaughtException(thread, error)
         }
         container = AppContainer(this)
+        com.alyoushw.watchhub.data.Net.watch(this)
         container.cloud.start()
         runCatching { container.updater.scheduleBackgroundChecks() }
     }

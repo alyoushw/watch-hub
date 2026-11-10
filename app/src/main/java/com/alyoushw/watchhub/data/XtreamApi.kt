@@ -110,7 +110,8 @@ class XtreamException(message: String) : ApiException(message)
 
 /** Minimal client for the Xtream Codes player API: checks the login and lists the account's content. */
 class XtreamApi(private val settings: SettingsStore) {
-    private val client = OkHttpClient.Builder()
+    // Shares Net's pool, which is dropped when the phone changes network.
+    private val client = Net.streams.newBuilder()
         .callTimeout(60, TimeUnit.SECONDS)
         .build()
 
