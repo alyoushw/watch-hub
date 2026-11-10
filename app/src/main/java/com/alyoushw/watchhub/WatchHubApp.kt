@@ -30,6 +30,7 @@ class AppContainer(context: Context) {
     val history = WatchHistory(context).also { it.remapAccounts(settings.accountIdChanges) }
     val cloud = CloudSync(context, settings, history, store)
     val statusCache = StatusCache(context, api)
+    val updater = com.alyoushw.watchhub.data.Updater(context)
 
 
     init {
@@ -98,5 +99,6 @@ class WatchHubApp : Application() {
         }
         container = AppContainer(this)
         container.cloud.start()
+        runCatching { container.updater.scheduleBackgroundChecks() }
     }
 }

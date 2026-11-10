@@ -17,8 +17,10 @@ firebaseBom = "33.5.1"
 credentials = "1.3.0"
 googleId = "1.1.1"
 zxing = "3.5.3"
+work = "2.9.1"
 
 [libraries]
+androidx-work = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }

@@ -75,6 +75,7 @@ fun WatchHubRoot() {
     // A TV's "scan to sign in" link opened on this phone: ask to approve it, over any screen.
     PairApprovalDialog()
     CrashNotice()
+    UpdateNotice()
     // The Xtream tab only shows once an account is saved in Settings.
     val xtream by appContainer().settings.xtream.collectAsStateWithLifecycle()
     // The YouTube tab once it is switched on (Settings › يوتيوب).

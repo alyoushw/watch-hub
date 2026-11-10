@@ -13,8 +13,12 @@ android {
         applicationId = "com.alyoushw.watchhub"
         minSdk = 26
         targetSdk = 35
-        versionCode = 29
-        versionName = "0.21.0"
+        // The CI run number is the build number ("build-84"): the app compares it with the newest
+        // release to offer updates. Local builds count as 0 (always older).
+        val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0
+        versionCode = 100 + build
+        versionName = "0.22.$build"
+        buildConfigField("int", "BUILD_NUMBER", "$build")
     }
 
     // A fixed release key (from CI secrets) lets new APKs install over old ones and keep the data.
@@ -57,6 +61,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {
@@ -92,6 +97,7 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.anthropic.java)
     implementation(libs.mlkit.translate)
+    implementation(libs.androidx.work)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.exoplayer.hls)
     implementation(libs.media3.ui)

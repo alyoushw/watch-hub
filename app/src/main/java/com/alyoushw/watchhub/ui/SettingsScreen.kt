@@ -201,6 +201,7 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}) {
             HorizontalDivider()
 
             SectionTitle("عن التطبيق")
+            AppVersionRow()
             Text(
                 "Watch Hub ما يشغّل الفيديو بنفسه (إلا محتوى حساب Xtream Codes إذا أضفته) ولا يحفظ كلمات مرور حساباتك غير هذا الحساب. يجمع لك المحتوى في مكان واحد، " +
                     "ولما تضغط «شاهد» يفتح العمل في تطبيق المنصة الرسمي.\n\n" +
@@ -1100,5 +1101,26 @@ private fun YouTubeSection() {
             Text("تفعيل يوتيوب", modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
             androidx.compose.material3.Switch(checked = on, onCheckedChange = settings::setYoutubeEnabled, modifier = Modifier.focusFrame())
         }
+    }
+}
+
+/** This build's number, and a button to look for a newer one now. */
+@Composable
+private fun AppVersionRow() {
+    val updater = appContainer().updater
+    val scope = rememberCoroutineScope()
+    var status by remember { mutableStateOf<String?>(null) }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.weight(1f)) {
+            Text("النسخة ${updater.currentBuild}", fontWeight = FontWeight.Medium)
+            status?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+        OutlinedButton(modifier = Modifier.focusFrame(), onClick = {
+            status = "نتحقق…"
+            scope.launch {
+                val u = updater.check(manual = true)
+                status = if (u != null) "فيه نسخة جديدة: ${u.build}" else "عندك آخر نسخة ✓"
+            }
+        }) { Text("تحقق من التحديثات") }
     }
 }
