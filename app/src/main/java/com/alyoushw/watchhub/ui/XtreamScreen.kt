@@ -211,6 +211,8 @@ private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind
     }
     var filter by remember(vm.kind, vm.selected) { mutableStateOf("") }
     var itemMenu by remember { mutableStateOf<XtreamItem?>(null) }
+    var streamShare by remember { mutableStateOf<Pair<String, String>?>(null) }
+    streamShare?.let { (t, u) -> StreamShareDialog(t, u) { streamShare = null } }
     val scope = rememberCoroutineScope()
 
     // Long press on a film or series: share it; films can also be saved for watching offline.
@@ -227,6 +229,10 @@ private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind
                         }
                     }) { Text("↗ مشاركة") }
                     if (item.kind == XtreamKind.MOVIE) {
+                        OutlinedButton(modifier = Modifier.fillMaxWidth().focusFrame(), onClick = {
+                            itemMenu = null
+                            streamShare = item.name to container.xtream.playUrls(item, account).first()
+                        }) { Text("▶ مشاركة رابط التشغيل") }
                         val e = WatchEntry.movie(item, account)
                         val saved = container.downloads.has(e.key)
                         OutlinedButton(modifier = Modifier.fillMaxWidth().focusFrame(), onClick = {
@@ -439,6 +445,8 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
                     var season by remember(series) { mutableStateOf(resume?.season ?: seasons.first()) }
                     var markFor by remember { mutableStateOf<XtreamEpisode?>(null) }
                     val shareScope = rememberCoroutineScope()
+                    var epShare by remember { mutableStateOf<Pair<String, String>?>(null) }
+                    epShare?.let { (t, u) -> StreamShareDialog(t, u) { epShare = null } }
 
                     // Long press on an episode: watched / not watched (synced like any progress).
                     markFor?.let { ep ->
@@ -481,6 +489,13 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
                                             shareScope.launch { context.shareByName(container.api, series.name, MediaType.TV) }
                                         },
                                     ) { Text("↗ مشاركة المسلسل") }
+                                    OutlinedButton(
+                                        modifier = Modifier.fillMaxWidth().focusFrame(),
+                                        onClick = {
+                                            markFor = null
+                                            epShare = "${series.name} · الموسم ${ep.season} · الحلقة ${ep.number}" to container.xtream.playUrls(ep, account).first()
+                                        },
+                                    ) { Text("▶ مشاركة رابط الحلقة") }
                                     val epEntry = WatchEntry.episode(account, seriesId, series.name, series.cover, ep)
                                     val saved = container.downloads.has(epEntry.key)
                                     OutlinedButton(
@@ -743,6 +758,8 @@ fun ContinueWatchingRow(
     val accounts by container.settings.xtreamAccounts.collectAsStateWithLifecycle()
     val entries by container.history.entries.collectAsStateWithLifecycle()
     var menuFor by remember { mutableStateOf<WatchEntry?>(null) }
+    var streamShare by remember { mutableStateOf<Pair<String, String>?>(null) }
+    streamShare?.let { (t, u) -> StreamShareDialog(t, u) { streamShare = null } }
     if (accounts.isEmpty()) return
     val list = remember(entries, accounts, kinds) {
         val ids = accounts.map { it.id }.toSet()
@@ -809,6 +826,13 @@ fun ContinueWatchingRow(
                             },
                         ) { Text("معلومات المسلسل (المنصة)") }
                     }
+                    OutlinedButton(
+                        modifier = Modifier.fillMaxWidth().focusFrame(),
+                        onClick = {
+                            menuFor = null
+                            container.xtream.playUrls(e).firstOrNull()?.let { streamShare = e.title to it }
+                        },
+                    ) { Text("▶ مشاركة رابط التشغيل") }
                     if (e.kind != WatchEntry.LIVE) {
                         OutlinedButton(
                             modifier = Modifier.fillMaxWidth().focusFrame(),

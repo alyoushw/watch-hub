@@ -1333,6 +1333,7 @@ function entryMenu(e, card) {
       <button class="btn ghost" data-a="open"></button>
       ${e.kind === "episode" ? '<button class="btn ghost" data-a="tmdb">معلومات المسلسل (المنصة)</button>' : ""}
       ${e.kind !== "live" ? '<button class="btn ghost" data-a="share">↗ مشاركة</button>' : ""}
+      <button class="btn ghost" data-a="link">▶ مشاركة رابط التشغيل</button>
       <button class="btn ghost danger" data-a="del">احذف من تابع المشاهدة</button>
       <button class="btn ghost" data-a="x">إلغاء</button>
     </div>`;
@@ -1347,6 +1348,16 @@ function entryMenu(e, card) {
     } else if (a === "share") {
       wrap.remove();
       shareEntry(e);
+    } else if (a === "link") {
+      wrap.remove();
+      // Plays at once in any player, but carries the account's user name and password.
+      const url = xt.urlsFor(e)[0];
+      if (!url || !confirm("الرابط يشغّل الفيديو على طول في أي مشغل (مثل VLC)، بس فيه اسم المستخدم وكلمة المرور حق حسابك: أي أحد يوصله يقدر يستخدم حسابك. تشاركه؟")) return;
+      (navigator.share ? navigator.share({ title: e.title, text: `▶ ${e.title}`, url }) : Promise.reject(new Error("no share")))
+        .catch((err) => {
+          if (err?.name === "AbortError") return;
+          return navigator.clipboard.writeText(url).then(() => toast("✓ نسخنا رابط التشغيل"), () => prompt("انسخ الرابط:", url));
+        });
     } else if (a === "tmdb") {
       wrap.remove();
       openPlatformPage(e);

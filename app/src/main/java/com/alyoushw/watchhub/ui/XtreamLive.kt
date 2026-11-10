@@ -271,6 +271,8 @@ fun LiveChannels(showAccounts: Boolean = true) {
             .sortedByDescending { it.updatedAt }.map { it.itemId }.distinct()
     }
     var folderFor by remember { mutableStateOf<LiveHit?>(null) }
+    var liveShare by remember { mutableStateOf<Pair<String, String>?>(null) }
+    liveShare?.let { (t, u) -> StreamShareDialog(t, u) { liveShare = null } }
     var showGuide by remember { mutableStateOf(false) }
     val vm: LiveViewModel = viewModel(key = "live:${account.host}:${account.username}") { LiveViewModel(container.xtream) }
     var query by remember { mutableStateOf("") }
@@ -365,6 +367,10 @@ fun LiveChannels(showAccounts: Boolean = true) {
             folders = folders,
             onFavorite = { container.settings.toggleXtreamFavorite(hit.channel.id) },
             onFolder = { name, inside -> container.settings.setInFolder(name, hit.channel.id, inside) },
+            onShareLink = {
+                folderFor = null
+                liveShare = hit.channel.name to container.xtream.playUrls(hit.channel, hit.account).first()
+            },
             onClose = { folderFor = null },
         )
     }
@@ -529,6 +535,7 @@ private fun FolderDialog(
     folders: Map<String, List<String>>,
     onFavorite: () -> Unit,
     onFolder: (String, Boolean) -> Unit,
+    onShareLink: () -> Unit,
     onClose: () -> Unit,
 ) {
     val id = hit.channel.id
@@ -539,6 +546,7 @@ private fun FolderDialog(
         title = { Text(hit.channel.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         text = {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                item { FolderRow("▶ مشاركة رابط القناة", false, onShareLink) }
                 item { FolderRow("⭐ المفضلة", favorite, onFavorite) }
                 items(folders.keys.toList(), key = { it }) { name ->
                     val inside = id in folders[name].orEmpty()

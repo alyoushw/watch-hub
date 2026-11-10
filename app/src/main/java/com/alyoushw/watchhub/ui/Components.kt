@@ -482,3 +482,57 @@ suspend fun android.content.Context.shareByName(api: com.alyoushw.watchhub.data.
     val hit = if (knownId != null) null else runCatching { api.search(clean).firstOrNull { it.type == type } }.getOrNull()
     shareTitle(hit?.displayTitle ?: name, type, knownId ?: hit?.id)
 }
+
+/**
+ * How lists scroll to the item the remote moves to: only when it is not fully on screen, and
+ * only as far as needed (with a little room around it). Compose's TV default keeps the focused
+ * item at a fixed point instead, scrolling rows and the page on every press, which made the
+ * screen shake on TVs (worse with right-to-left rows).
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+class CalmBringIntoView(private val margin: Float) : androidx.compose.foundation.gestures.BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+        val end = offset + size
+        return when {
+            // Fully visible (with room around it): stay still.
+            offset >= margin && end <= containerSize - margin -> 0f
+            // Bigger than the space: line up its start.
+            size > containerSize - 2 * margin -> offset - margin
+            offset < margin -> offset - margin
+            else -> end - (containerSize - margin)
+        }
+    }
+}
+
+/**
+ * Before sharing a play link from the Xtream account: it starts playing at once in any player
+ * (VLC…), but it carries the account's user name and password. Shared only after this warning.
+ */
+@Composable
+fun StreamShareDialog(title: String, url: String, onDone: () -> Unit) {
+    val context = LocalContext.current
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDone,
+        title = { Text("مشاركة رابط التشغيل") },
+        text = {
+            Text(
+                "الرابط يشغّل «$title» على طول في أي مشغل (مثل VLC). بس انتبه: الرابط فيه اسم المستخدم وكلمة المرور حق حسابك، " +
+                    "فأي أحد يوصله يقدر يستخدم حسابك، وبعض المزودين يسمحون بجهاز واحد بس في نفس الوقت. شاركه مع ناس تثق فيهم.",
+            )
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(modifier = Modifier.focusFrame(), onClick = {
+                val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                    .putExtra(android.content.Intent.EXTRA_SUBJECT, title)
+                    .putExtra(android.content.Intent.EXTRA_TEXT, "▶ $title\n$url")
+                try {
+                    context.startActivity(android.content.Intent.createChooser(send, "مشاركة «$title»").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                } catch (_: android.content.ActivityNotFoundException) {
+                    android.widget.Toast.makeText(context, "المشاركة غير متوفرة على هذا الجهاز", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                onDone()
+            }) { Text("شارك الرابط") }
+        },
+        dismissButton = { androidx.compose.material3.TextButton(modifier = Modifier.focusFrame(), onClick = onDone) { Text("إلغاء") } },
+    )
+}

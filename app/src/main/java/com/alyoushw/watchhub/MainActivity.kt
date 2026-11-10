@@ -7,15 +7,23 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import com.alyoushw.watchhub.ui.WatchHubRoot
 import com.alyoushw.watchhub.ui.WatchHubTheme
+import androidx.compose.ui.unit.dp
 
 class MainActivity : ComponentActivity() {
+    @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         handleLink(intent)
         setContent {
             WatchHubTheme {
-                WatchHubRoot()
+                // Lists scroll only as far as needed to show what the remote moved to (see CalmBringIntoView).
+                val margin = with(androidx.compose.ui.platform.LocalDensity.current) { 24.dp.toPx() }
+                androidx.compose.runtime.CompositionLocalProvider(
+                    androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides androidx.compose.runtime.remember(margin) { com.alyoushw.watchhub.ui.CalmBringIntoView(margin) },
+                ) {
+                    WatchHubRoot()
+                }
             }
         }
     }
