@@ -205,12 +205,36 @@ class XtreamApi(private val settings: SettingsStore) {
         year: String?,
         account: XtreamAccount = active,
     ): XtreamItem? {
-        val list = all(kind, account)
-        list.firstOrNull { it.tmdb == tmdbId.toString() }?.let { return it }
+        val index = matchIndex(kind, account)
+        index.byTmdb[tmdbId.toString()]?.let { return it }
         val wanted = titles.map { normalizeTitle(it) }.filter { it.length >= 2 }.toSet()
         if (wanted.isEmpty()) return null
-        val hits = list.filter { normalizeTitle(it.name) in wanted }
+        val hits = wanted.flatMap { index.byName[it].orEmpty() }
         return hits.firstOrNull { year != null && (it.year == year || it.name.contains(year)) } ?: hits.firstOrNull()
+    }
+
+    /** An account's films or series by TMDB id and by cleaned-up name. */
+    private class MatchIndex(val byTmdb: Map<String, XtreamItem>, val byName: Map<String, List<XtreamItem>>)
+
+    private val matchIndexes = mutableMapOf<String, MatchIndex>()
+    private val matchLock = Mutex()
+
+    /**
+     * Built once per account and kind, off the main thread: cleaning tens of thousands of names
+     * for every lookup froze TVs.
+     */
+    private suspend fun matchIndex(kind: XtreamKind, account: XtreamAccount): MatchIndex {
+        val key = "${account.host}|${account.username}|$kind"
+        matchLock.withLock { matchIndexes[key]?.let { return it } }
+        val list = all(kind, account)
+        val index = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            MatchIndex(
+                list.filter { !it.tmdb.isNullOrBlank() }.associateBy { it.tmdb!! },
+                list.groupBy { normalizeTitle(it.name) },
+            )
+        }
+        matchLock.withLock { matchIndexes[key] = index }
+        return index
     }
 
     suspend fun series(seriesId: String, account: XtreamAccount = active): XtreamSeries {

@@ -441,8 +441,10 @@ fun HomeScreen(
             vm.selectType(t)
         }
     }
+    val tv = isTv()
     Box(
-        Modifier.fillMaxSize().pointerInput(Unit) {
+        // TVs have no touch screen: no swipe handling there at all.
+        Modifier.fillMaxSize().then(if (tv) Modifier else Modifier.pointerInput(Unit) {
             var total = 0f
             detectHorizontalDragGestures(
                 onDragStart = { total = 0f },
@@ -452,7 +454,7 @@ fun HomeScreen(
                 },
                 onHorizontalDrag = { _, d -> total += d },
             )
-        },
+        }),
     ) {
         when {
             live -> Column {
