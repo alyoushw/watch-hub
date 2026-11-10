@@ -81,6 +81,7 @@
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:hardwareAccelerated="true"
             android:theme="@style/Theme.WatchHub" />
+        <receiver android:name=".data.ReminderReceiver" android:exported="false" />
         <!-- Hands a downloaded update to Android's installer. -->
         <provider
             android:name="androidx.core.content.FileProvider"

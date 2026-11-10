@@ -271,6 +271,7 @@ fun LiveChannels(showAccounts: Boolean = true) {
             .sortedByDescending { it.updatedAt }.map { it.itemId }.distinct()
     }
     var folderFor by remember { mutableStateOf<LiveHit?>(null) }
+    var showGuide by remember { mutableStateOf(false) }
     val vm: LiveViewModel = viewModel(key = "live:${account.host}:${account.username}") { LiveViewModel(container.xtream) }
     var query by remember { mutableStateOf("") }
     /** The channel playing in the small picture, if any. */
@@ -337,6 +338,23 @@ fun LiveChannels(showAccounts: Boolean = true) {
             vm.select(hit)
             previewing = hit
         }
+    }
+
+    if (showGuide) {
+        val hit = previewing ?: vm.selected
+        AlertDialog(
+            onDismissRequest = { showGuide = false },
+            title = { Text(hit?.channel?.name ?: "دليل البرامج") },
+            text = {
+                val g = vm.guide.takeIf { vm.selected?.key == hit?.key }
+                when {
+                    hit == null || g == null -> Text("…")
+                    g.isEmpty() -> Text("ما فيه دليل برامج لهذي القناة")
+                    else -> GuideList(hit, g.take(6))
+                }
+            },
+            confirmButton = { TextButton(onClick = { showGuide = false }) { Text("تم") } },
+        )
     }
 
     folderFor?.let { hit ->
@@ -474,6 +492,7 @@ fun LiveChannels(showAccounts: Boolean = true) {
                                 colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Color(0xFF1C1206)),
                                 contentPadding = PaddingValues(horizontal = 14.dp),
                             ) { Text("ملء الشاشة", fontWeight = FontWeight.Bold) }
+                            TextButton(onClick = { showGuide = true }) { Text("📅") }
                             TextButton(onClick = { previewing = null }) { Text("إيقاف") }
                         }
                     }
@@ -564,6 +583,43 @@ private fun FolderRow(text: String, checked: Boolean, onClick: () -> Unit) {
     ) {
         Text(text, modifier = Modifier.weight(1f), color = if (checked) Gold else MaterialTheme.colorScheme.onSurface, fontWeight = if (checked) FontWeight.Bold else FontWeight.Normal)
         if (checked) Text("✓", color = Gold, fontWeight = FontWeight.Bold)
+    }
+}
+
+/**
+ * Now / next on a channel, with 🔔 on what is still to come: a notification shortly before it
+ * starts, which opens the channel.
+ */
+@Composable
+private fun GuideList(hit: LiveHit, guide: List<XtreamProgram>) {
+    val context = LocalContext.current
+    var version by remember { mutableIntStateOf(0) }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        guide.forEachIndexed { i, p ->
+            val time = listOfNotNull(p.start?.let { XtreamApi.formatTime(it) }, p.end?.let { XtreamApi.formatTime(it) }).joinToString(" - ")
+            val start = p.start?.time
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (i == 0) "الحين" else "بعده",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (i == 0) Gold else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(p.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                if (time.isNotEmpty()) Text(time, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (start != null && start > System.currentTimeMillis()) {
+                    val on = remember(version) { com.alyoushw.watchhub.data.Reminders.isSet(context, hit.account.id, hit.channel.id, start) }
+                    Text(
+                        if (on) "🔔" else "🔕",
+                        modifier = Modifier.focusFrame(RoundedCornerShape(8.dp)).clip(RoundedCornerShape(8.dp)).clickable {
+                            val set = com.alyoushw.watchhub.data.Reminders.toggle(context, hit.account.id, hit.channel.id, hit.channel.name, p.title, start)
+                            version++
+                            Toast.makeText(context, if (set) "بنذكرك قبل «${p.title}» بـ 5 دقايق" else "انلغى التذكير", Toast.LENGTH_SHORT).show()
+                        }.padding(4.dp),
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -904,21 +960,7 @@ private fun ChannelInfo(
         when {
             guide == null -> Text("…", color = MaterialTheme.colorScheme.onSurfaceVariant)
             guide.isEmpty() -> Text("ما فيه دليل برامج لهذي القناة", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            else -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                guide.take(3).forEachIndexed { i, p ->
-                    val time = listOfNotNull(p.start?.let { XtreamApi.formatTime(it) }, p.end?.let { XtreamApi.formatTime(it) }).joinToString(" - ")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            if (i == 0) "الحين" else "بعده",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (i == 0) Gold else MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Text(p.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                        if (time.isNotEmpty()) Text(time, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            }
+            else -> GuideList(hit, guide.take(4))
         }
 
         Spacer(Modifier.weight(1f))

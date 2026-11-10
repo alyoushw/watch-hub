@@ -107,6 +107,10 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}) {
 
             HorizontalDivider()
 
+            StatsSection()
+
+            HorizontalDivider()
+
             SectionTitle("مفتاح TMDB")
             Text(
                 "TMDB قاعدة بيانات مجانية للأفلام والمسلسلات، ومنها نعرف وين متوفر كل عمل. سوّ حساب مجاني، " +
@@ -1122,5 +1126,36 @@ private fun AppVersionRow() {
                 status = if (u != null) "فيه نسخة جديدة: ${u.build}" else "عندك آخر نسخة ✓"
             }
         }) { Text("تحقق من التحديثات") }
+    }
+}
+
+/** "📊 ملخص مشاهداتك": this month's watch time, what was finished, favourite genres. */
+@Composable
+private fun StatsSection() {
+    val container = appContainer()
+    val st = remember { container.stats.thisMonth() }
+    val genres = container.recommender.topGenres
+    fun hours(ms: Long): String {
+        val m = ms / 60_000
+        return if (m >= 60) "${m / 60} س ${m % 60} د" else "$m د"
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        SectionTitle("📊 ملخص مشاهداتك هالشهر")
+        if (st.totalMs < 60_000) {
+            Text("ما شفت شي هالشهر لين الحين (العدّ بدأ من هالنسخة).", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            Text("⏱ ${hours(st.totalMs)} مشاهدة", fontWeight = FontWeight.Bold, color = Gold)
+            val parts = listOfNotNull(
+                st.byKind["episode"]?.takeIf { it > 0 }?.let { "مسلسلات ${hours(it)}" },
+                st.byKind["movie"]?.takeIf { it > 0 }?.let { "أفلام ${hours(it)}" },
+                st.byKind["live"]?.takeIf { it > 0 }?.let { "مباشر ${hours(it)}" },
+            )
+            if (parts.isNotEmpty()) Text(parts.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+            Text("✅ خلصت ${st.finished} حلقة وفيلم", style = MaterialTheme.typography.bodySmall)
+            if (st.topTitles.isNotEmpty()) {
+                Text("🏆 أكثر شي شفته: " + st.topTitles.joinToString("، ") { "${it.first} (${hours(it.second)})" }, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        if (genres.isNotEmpty()) Text("🎭 ذوقك: " + genres.joinToString("، "), style = MaterialTheme.typography.bodySmall)
     }
 }

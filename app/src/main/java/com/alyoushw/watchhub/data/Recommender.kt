@@ -39,6 +39,10 @@ class Recommender(
 
     private var builtFor = ""
 
+    /** The user's favourite genres, strongest first (for "ملخص مشاهداتك"). */
+    var topGenres: List<String> = emptyList()
+        private set
+
     /** One title the user watched, with how much it tells about their taste. */
     private class Seed(val type: MediaType, val id: Int, val title: String, val weight: Double, val finishedAt: Long?)
 
@@ -101,6 +105,7 @@ class Recommender(
             (d.originCountry.firstOrNull() ?: d.productionCountries.firstOrNull()?.code)?.let { c -> countryW[c] = (countryW[c] ?: 0.0) + s.weight }
         }
         val genreTotal = genreW.values.sum().coerceAtLeast(1.0)
+        topGenres = genreW.entries.sortedByDescending { it.value }.mapNotNull { GenreNames[it.key] }.distinct().take(4)
         val countryTotal = countryW.values.sum().coerceAtLeast(1.0)
 
         val seen = (unique.map { "${it.type.path}:${it.id}" } + watchlist.map { "${it.type.path}:${it.id}" }).toSet()
@@ -184,6 +189,8 @@ class Recommender(
     }
 
     /** TMDB id for a title from the account (by its cleaned-up name); remembered. */
+    suspend fun tmdbIdFor(type: MediaType, title: String): Int? = resolve(type, title)
+
     private suspend fun resolve(type: MediaType, title: String): Int? {
         val name = XtreamApi.normalizeTitle(title)
         if (name.isBlank()) return null

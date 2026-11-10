@@ -32,6 +32,8 @@ class AppContainer(context: Context) {
     val statusCache = StatusCache(context, api)
     val updater = com.alyoushw.watchhub.data.Updater(context)
     val recommender = com.alyoushw.watchhub.data.Recommender(context, api, history, store)
+    val stats = com.alyoushw.watchhub.data.WatchStats(context)
+    val downloads = com.alyoushw.watchhub.data.Downloads(context)
 
 
     init {
@@ -102,5 +104,6 @@ class WatchHubApp : Application() {
         com.alyoushw.watchhub.data.Net.watch(this)
         container.cloud.start()
         runCatching { container.updater.scheduleBackgroundChecks() }
+        runCatching { com.alyoushw.watchhub.data.NewEpisodesWorker.schedule(this) }
     }
 }

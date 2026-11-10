@@ -65,6 +65,8 @@ class PlayerActivity : ComponentActivity() {
 
     private val saver = object : Runnable {
         override fun run() {
+            // Time watched, for "ملخص مشاهداتك".
+            entry?.let { e -> if (::player.isInitialized && player.isPlaying) container.stats.record(e.kind, e.title, 5_000) }
             saveProgress()
             handler.postDelayed(this, 5_000)
         }
@@ -179,6 +181,10 @@ class PlayerActivity : ComponentActivity() {
     private fun playAt(i: Int) {
         if (i !in queue.indices) return
         retries = 0
+        // Saved on the device: play the file (no internet needed), the link stays as a fallback.
+        container.downloads.localUrl(queue[i].entry.key)?.let { local ->
+            if (queue[i].urls.firstOrNull() != local) queue = queue.toMutableList().also { it[i] = it[i].copy(urls = listOf(local) + it[i].urls) }
+        }
         if (started) saveProgress(important = true)
         position = i
         urlIndex = 0
@@ -422,7 +428,9 @@ class PlayerActivity : ComponentActivity() {
         val e = entry ?: return
         if (e.isLive || !started) return
         val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: return
-        history.save(e.copy(positionMs = player.currentPosition.coerceAtLeast(0), durationMs = duration), important)
+        val saved = e.copy(positionMs = player.currentPosition.coerceAtLeast(0), durationMs = duration)
+        if (saved.finished) container.stats.recordFinished(e.key)
+        history.save(saved, important)
     }
 
     override fun onStart() {
