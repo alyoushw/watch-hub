@@ -234,6 +234,8 @@ fun PosterCard(item: SearchResult, rank: Int? = null, width: Dp = 120.dp, onClic
         Text(
             item.displayTitle,
             style = MaterialTheme.typography.bodySmall,
+            // Always two lines high: a row's height must not change while moving along it.
+            minLines = 2,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
@@ -397,8 +399,9 @@ fun Modifier.focusHighlight(shape: Shape = RoundedCornerShape(10.dp)): Modifier 
             ambientColor = Gold,
             spotColor = Gold,
         )
+        // Drawn on top, never changing the card's size: a size change on focus made rows shift
+        // and the screen shake while moving with the remote.
         .border(width = if (focused) 3.dp else 0.dp, color = if (focused) FocusColor else Color.Transparent, shape = shape)
-        .padding(if (focused) 2.dp else 0.dp)
 }
 
 /**

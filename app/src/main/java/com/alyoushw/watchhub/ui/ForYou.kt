@@ -117,8 +117,9 @@ private fun PickCard(p: Pick, onOpen: (MediaType, Int) -> Unit, onNope: () -> Un
                 )
             }
         }
+        // Fixed heights: cards of one row stay the same size, so the page does not jump while moving.
         Text(item.displayTitle, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(p.reason, style = MaterialTheme.typography.labelSmall, color = Gold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+        Text(p.reason, style = MaterialTheme.typography.labelSmall, color = Gold, minLines = 3, maxLines = 3, overflow = TextOverflow.Ellipsis)
         Text(
             "مو لي ✕",
             style = MaterialTheme.typography.labelSmall,

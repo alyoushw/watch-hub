@@ -851,7 +851,8 @@ fun ContinueWatchingRow(
                         e.durationMs > 0 -> "باقي ${com.alyoushw.watchhub.player.formatTime(e.durationMs - e.positionMs)}"
                         else -> null
                     }
-                    sub?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    // Same height for every card (empty line when there is nothing to say).
+                    Text(sub ?: " ", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (accounts.size > 1) {
                         accounts.firstOrNull { it.id == e.accountId }?.let {
                             Text(it.label, style = MaterialTheme.typography.labelSmall, color = Gold, maxLines = 1)
