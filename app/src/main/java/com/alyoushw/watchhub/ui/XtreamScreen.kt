@@ -292,7 +292,7 @@ private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind
                     onValueChange = { filter = it },
                     placeholder = { Text("ابحث في هذا القسم") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).tvTextField(), keyboardOptions = tvKeyboard(),
                 )
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {

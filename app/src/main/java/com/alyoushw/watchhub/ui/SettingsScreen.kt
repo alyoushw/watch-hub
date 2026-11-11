@@ -134,8 +134,10 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}) {
                 trailingIcon = {
                     TextButton(modifier = Modifier.focusFrame(), onClick = { showKey = !showKey }) { Text(if (showKey) "إخفاء" else "إظهار") }
                 },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(),
             )
+            // TV: the remote cannot reach a button inside the box; this one is below it.
+            if (isTv()) TextButton(modifier = Modifier.focusFrame(), onClick = { showKey = !showKey }) { Text(if (showKey) "إخفاء" else "إظهار") }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Button(
                     modifier = Modifier.focusFrame(),
@@ -311,7 +313,7 @@ private fun AppPickerDialog(exclude: Set<String>, onDismiss: () -> Unit, onPick:
                     onValueChange = { filter = it },
                     placeholder = { Text("ابحث باسم التطبيق") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(),
                 )
                 val list = all
                 if (list == null) {
@@ -373,8 +375,10 @@ private fun ClaudeSection() {
             singleLine = true,
             visualTransformation = if (show) VisualTransformation.None else PasswordVisualTransformation(),
             trailingIcon = { TextButton(modifier = Modifier.focusFrame(), onClick = { show = !show }) { Text(if (show) "إخفاء" else "إظهار") } },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(),
         )
+        // TV: the remote cannot reach a button inside the box; this one is below it.
+        if (isTv()) TextButton(modifier = Modifier.focusFrame(), onClick = { show = !show }) { Text(if (show) "إخفاء" else "إظهار") }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                     modifier = Modifier.focusFrame(),
@@ -492,7 +496,7 @@ private fun XtreamAccountForm(initial: XtreamAccount, onDone: () -> Unit) {
             onValueChange = { name = it },
             label = { Text("اسم الحساب (مثلاً: البيت، الرياضة)") },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(),
         )
         OutlinedTextField(
             value = host,
@@ -503,7 +507,7 @@ private fun XtreamAccountForm(initial: XtreamAccount, onDone: () -> Unit) {
             label = { Text("الهوست (الرابط)") },
             placeholder = { Text("http://example.com:8080") },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(),
         )
         OutlinedTextField(
             value = username,
@@ -513,7 +517,7 @@ private fun XtreamAccountForm(initial: XtreamAccount, onDone: () -> Unit) {
             },
             label = { Text("اسم المستخدم") },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(),
         )
         OutlinedTextField(
             value = password,
@@ -525,13 +529,24 @@ private fun XtreamAccountForm(initial: XtreamAccount, onDone: () -> Unit) {
             singleLine = true,
             visualTransformation = if (show) VisualTransformation.None else PasswordVisualTransformation(),
             trailingIcon = { TextButton(modifier = Modifier.focusFrame(), onClick = { show = !show }) { Text(if (show) "إخفاء" else "إظهار") } },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(),
         )
+        // TV: the remote cannot reach a button inside the box; this one is below it.
+        if (isTv()) TextButton(modifier = Modifier.focusFrame(), onClick = { show = !show }) { Text(if (show) "إخفاء" else "إظهار") }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 modifier = Modifier.focusFrame(),
-                enabled = !testing && draft.isComplete,
+                // Never disabled: a disabled button is skipped by the TV remote.
+                enabled = !testing,
                 onClick = {
+                    if (!draft.isComplete) {
+                        result = "كمّل البيانات: " + listOfNotNull(
+                            "الهوست".takeIf { host.isBlank() },
+                            "اسم المستخدم".takeIf { username.isBlank() },
+                            "كلمة المرور".takeIf { password.isBlank() },
+                        ).joinToString("، ")
+                        return@Button
+                    }
                     testing = true
                     result = null
                     scope.launch {
@@ -748,7 +763,7 @@ private fun AccountSection() {
                     onValueChange = { editUrl = it },
                     label = { Text("رابط موقع Watch Hub") },
                     singleLine = true,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).tvTextField(), keyboardOptions = tvKeyboard(),
                 )
                 Button(modifier = Modifier.focusFrame(), onClick = {
                     container.settings.setWebUrl(editUrl)
@@ -1057,7 +1072,7 @@ private fun ChannelFoldersSection() {
                 onValueChange = { newName = it.take(30) },
                 singleLine = true,
                 placeholder = { Text("اسم مجلد جديد") },
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).tvTextField(), keyboardOptions = tvKeyboard(),
             )
             Button(
                 modifier = Modifier.focusFrame(),
@@ -1074,7 +1089,7 @@ private fun ChannelFoldersSection() {
         AlertDialog(
             onDismissRequest = { renaming = null },
             title = { Text("اسم المجلد") },
-            text = { OutlinedTextField(value = text, onValueChange = { text = it.take(30) }, singleLine = true) },
+            text = { OutlinedTextField(value = text, onValueChange = { text = it.take(30) }, singleLine = true, modifier = Modifier.tvTextField(), keyboardOptions = tvKeyboard()) },
             confirmButton = {
                 TextButton(modifier = Modifier.focusFrame(), onClick = {
                     settings.renameFolder(old, text)

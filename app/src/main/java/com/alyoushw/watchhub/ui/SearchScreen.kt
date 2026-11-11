@@ -388,7 +388,7 @@ fun SearchScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, o
             OutlinedTextField(
                 value = vm.query,
                 onValueChange = vm::onQueryChange,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).tvTextField(),
                 placeholder = { Text("اكتب أو تكلّم: «فيلم رعب إندونيسي»") },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 trailingIcon = {
@@ -408,7 +408,7 @@ fun SearchScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, o
                     }
                 },
                 singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardOptions = tvKeyboard(KeyboardOptions(imeAction = ImeAction.Search)),
                 keyboardActions = KeyboardActions(onSearch = { vm.submit() }),
             )
 
@@ -722,7 +722,7 @@ private fun SaveFilterDialog(suggestedName: String, onDismiss: () -> Unit, onSav
                     onValueChange = { name = it },
                     label = { Text("اسم النمط") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(),
                 )
             }
         },

@@ -584,3 +584,39 @@ fun Modifier.remoteLongPress(onLongPress: () -> Unit): Modifier = composed {
         }
     }
 }
+
+/**
+ * Text boxes on TV: the remote can pass through them. Up / down go to the next control (the box
+ * does not grab them); the keyboard opens only when OK is pressed on the box, not when the remote
+ * merely lands on it (see [tvKeyboard]).
+ */
+fun Modifier.tvTextField(): Modifier = composed {
+    if (!isTv()) return@composed Modifier
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    Modifier.onPreviewKeyEvent { e ->
+        if (e.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) return@onPreviewKeyEvent false
+        when (e.key) {
+            androidx.compose.ui.input.key.Key.DirectionDown -> {
+                keyboard?.hide()
+                focus.moveFocus(androidx.compose.ui.focus.FocusDirection.Down)
+                true
+            }
+            androidx.compose.ui.input.key.Key.DirectionUp -> {
+                keyboard?.hide()
+                focus.moveFocus(androidx.compose.ui.focus.FocusDirection.Up)
+                true
+            }
+            androidx.compose.ui.input.key.Key.DirectionCenter, androidx.compose.ui.input.key.Key.Enter, androidx.compose.ui.input.key.Key.NumPadEnter -> {
+                keyboard?.show()
+                true
+            }
+            else -> false
+        }
+    }
+}
+
+/** On TV the keyboard waits for OK on the box (see [tvTextField]); elsewhere as usual. */
+@Composable
+fun tvKeyboard(base: androidx.compose.foundation.text.KeyboardOptions = androidx.compose.foundation.text.KeyboardOptions.Default): androidx.compose.foundation.text.KeyboardOptions =
+    if (isTv()) base.copy(showKeyboardOnFocus = false) else base

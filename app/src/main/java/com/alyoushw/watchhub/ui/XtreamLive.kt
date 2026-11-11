@@ -811,7 +811,7 @@ private fun PillSearch(value: String, onChange: (String) -> Unit, hint: String, 
                 singleLine = true,
                 textStyle = TextStyle(color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp),
                 cursorBrush = SolidColor(Gold),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(),
             )
         }
     }
