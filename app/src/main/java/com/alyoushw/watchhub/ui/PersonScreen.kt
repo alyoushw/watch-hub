@@ -45,6 +45,7 @@ import com.alyoushw.watchhub.AppContainer
 import com.alyoushw.watchhub.data.ApiException
 import com.alyoushw.watchhub.data.MediaType
 import com.alyoushw.watchhub.data.PersonDetails
+import com.alyoushw.watchhub.data.Wikipedia
 import com.alyoushw.watchhub.data.SearchResult
 import com.alyoushw.watchhub.data.TmdbApi
 import kotlinx.coroutines.async
@@ -57,6 +58,8 @@ class PersonViewModel(private val container: AppContainer, private val id: Int) 
     var person by mutableStateOf<PersonDetails?>(null)
         private set
     var englishBio by mutableStateOf<String?>(null)
+        private set
+    var wiki by mutableStateOf<com.alyoushw.watchhub.data.WikiBio?>(null)
         private set
     var error by mutableStateOf<String?>(null)
         private set
@@ -73,7 +76,16 @@ class PersonViewModel(private val container: AppContainer, private val id: Int) 
                     val ar = async { container.api.person(id) }
                     val en = async { runCatching { container.api.personEnglish(id) }.getOrNull() }
                     person = ar.await()
-                    englishBio = en.await()?.biography?.takeIf { it.isNotBlank() }
+                    val enPerson = en.await()
+                    englishBio = enPerson?.biography?.takeIf { it.isNotBlank() }
+                    // Little or nothing on TMDB (common for Arab actors): the Wikipedia article.
+                    val tmdbBio = person?.biography?.takeIf { it.isNotBlank() } ?: englishBio
+                    if ((tmdbBio?.length ?: 0) < 400) {
+                        val p = person
+                        val arabicNames = (listOfNotNull(p?.name) + p?.alsoKnownAs.orEmpty()).filter { n -> n.any { it in '\u0600'..'\u06FF' } }
+                        val englishNames = listOfNotNull(enPerson?.name, p?.name).filter { n -> n.none { it in '\u0600'..'\u06FF' } }
+                        wiki = Wikipedia.bio(arabicNames, englishNames)
+                    }
                 }
             } catch (e: ApiException) {
                 error = e.message
@@ -127,7 +139,7 @@ fun PersonScreen(id: Int, onBack: () -> Unit, onOpen: (MediaType, Int) -> Unit) 
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
-                        item(span = { GridItemSpan(maxLineSpan) }) { PersonHeader(person, vm.englishBio) }
+                        item(span = { GridItemSpan(maxLineSpan) }) { PersonHeader(person, vm.englishBio, vm.wiki) }
                         item(span = { GridItemSpan(maxLineSpan) }) {
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 SectionTitle("أعماله (${works.size})")
@@ -167,7 +179,7 @@ fun PersonScreen(id: Int, onBack: () -> Unit, onOpen: (MediaType, Int) -> Unit) 
 }
 
 @Composable
-private fun PersonHeader(person: PersonDetails, englishBio: String?) {
+private fun PersonHeader(person: PersonDetails, englishBio: String?, wiki: com.alyoushw.watchhub.data.WikiBio?) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -212,9 +224,17 @@ private fun PersonHeader(person: PersonDetails, englishBio: String?) {
         }
         val arabicBio = person.biography?.trim().orEmpty()
         val bio = arabicBio.ifBlank { englishBio.orEmpty() }
-        if (bio.isNotBlank()) {
+        val w = wiki
+        if (w != null && w.text.length > bio.length) {
+            // TMDB has little: the full Wikipedia article.
+            SectionTitle("السيرة")
+            TranslatedText(w.text, isEnglish = !w.arabic, style = MaterialTheme.typography.bodyMedium)
+            Text("المصدر: ويكيبيديا", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else if (bio.isNotBlank()) {
             SectionTitle("السيرة")
             TranslatedText(bio, isEnglish = arabicBio.isBlank(), style = MaterialTheme.typography.bodyMedium)
+        } else if (w == null) {
+            Text("ما لقينا سيرة لهذا الشخص في TMDB ولا ويكيبيديا.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

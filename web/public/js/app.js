@@ -543,7 +543,9 @@ async function titlePage(id, type, tmdbId) {
   const key = `${type}:${tmdbId}`;
   const saved = watchlist.get(key);
   const trailers = ((d.videos || {}).results || []).filter((v) => v.site === "YouTube" && /Trailer|Teaser/.test(v.type)).slice(0, 4);
-  const cast = ((d.credits || {}).cast || []).slice(0, 14);
+  const aggregate = ((d.aggregate_credits || {}).cast || []).slice().sort((a, b) => (a.order ?? 999) - (b.order ?? 999))
+    .map((c) => ({ ...c, character: (c.roles || []).find((r) => r.character)?.character || "" }));
+  const cast = (aggregate.length ? aggregate : ((d.credits || {}).cast || [])).slice(0, 25);
   const recs = ((d.recommendations || {}).results || []).map((r) => ({ ...r, media_type: r.media_type || type }));
   const overview = d.overview || (en && en.overview) || "";
 
@@ -631,6 +633,23 @@ async function xtreamWatchButton(slot, type, tmdbId, titles, year) {
 
 // ---------- actor page ----------
 
+/** A person's Wikipedia article (Arabic first, then English), as plain text. */
+async function wikiBio(arabic, english) {
+  const tries = [...[...new Set(arabic)].map((n) => ["ar", n]), ...[...new Set(english)].map((n) => ["en", n])];
+  for (const [lang, title] of tries) {
+    try {
+      const u = `https://${lang}.wikipedia.org/w/api.php?action=query&prop=extracts|pageprops&explaintext=1&redirects=1&format=json&origin=*&titles=${encodeURIComponent(title)}`;
+      const o = await (await fetch(u)).json();
+      const page = Object.values(o.query?.pages || {})[0];
+      if (!page || page.pageprops?.disambiguation !== undefined) continue;
+      const text = (page.extract || "").trim();
+      if (text.length < 80) continue;
+      return { text: text.replace(/\n{3,}/g, "\n\n").slice(0, 6000), url: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(page.title.replace(/ /g, "_"))}` };
+    } catch { /* next */ }
+  }
+  return null;
+}
+
 async function personPage(id, personId) {
   const [p, en] = await Promise.all([tmdb.person(personId), tmdb.personEnglish(personId)]);
   if (stale(id)) return;
@@ -638,7 +657,19 @@ async function personPage(id, personId) {
     .filter((c) => (c.media_type === "movie" || c.media_type === "tv") && c.poster_path)
     .reduce((acc, c) => (acc.some((x) => x.id === c.id && x.media_type === c.media_type) ? acc : [...acc, c]), [])
     .sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
-  const bio = p.biography || (en && en.biography) || "";
+  let bio = p.biography || (en && en.biography) || "";
+  let wikiUrl = null;
+  // Little or nothing on TMDB (common for Arab actors): the Wikipedia article.
+  if (bio.length < 400) {
+    const arabic = [p.name, ...(p.also_known_as || [])].filter((n) => /[\u0600-\u06FF]/.test(n));
+    const english = [en?.name, p.name].filter((n) => n && !/[\u0600-\u06FF]/.test(n));
+    const w = await wikiBio(arabic, english);
+    if (stale(id)) return;
+    if (w && w.text.length > bio.length) {
+      bio = w.text;
+      wikiUrl = w.url;
+    }
+  }
   const born = [p.birthday, p.place_of_birth].filter(Boolean).join(" · ");
   let tab = "all";
   const render = () => {
@@ -654,7 +685,7 @@ async function personPage(id, personId) {
         ${born ? `<div class="muted">${esc(born)}</div>` : ""}
         <div class="muted">${credits.length} عمل</div>
       </div></div></section>
-    ${bio ? `<h2 class="section-title">نبذة</h2><p class="overview" id="bio"></p>` : ""}
+    ${bio ? `<h2 class="section-title">نبذة</h2><p class="overview" id="bio" style="white-space:pre-line"></p>${wikiUrl ? `<p class="muted" style="font-size:12px">المصدر: <a href="${esc(wikiUrl)}" target="_blank" rel="noopener" style="color:var(--gold)">ويكيبيديا</a></p>` : ""}` : `<p class="muted">ما لقينا سيرة لهذا الشخص في TMDB ولا ويكيبيديا.</p>`}
     <h2 class="section-title">أعماله</h2>
     <div class="chips" style="margin-bottom:14px">
       <button class="chip" data-t="all">الكل</button><button class="chip" data-t="movie">أفلام</button><button class="chip" data-t="tv">مسلسلات</button>

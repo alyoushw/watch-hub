@@ -86,7 +86,8 @@ export const search = (q) =>
 export const details = (type, id) =>
   get(`${type}/${id}`, {
     language: "ar",
-    append_to_response: "watch/providers,credits,videos,recommendations",
+    // Series: the cast of all seasons too ("credits" only has the latest one).
+    append_to_response: "watch/providers,credits,videos,recommendations" + (type === "tv" ? ",aggregate_credits" : ""),
     include_video_language: "ar,en",
   });
 

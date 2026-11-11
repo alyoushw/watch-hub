@@ -223,7 +223,9 @@ data class DetailInfo(
                 overviewIsEnglish = arOverview.isBlank() && enOverview.isNotBlank(),
                 originalLanguage = ar.originalLanguage,
                 genreIds = ar.genres.map { it.id }.filter { it > 0 },
-                cast = ar.credits?.cast.orEmpty().take(15).map { CastMember(it.id, it.name, it.character, it.profilePath) },
+                cast = ar.aggregateCredits?.cast.orEmpty().sortedBy { it.order }.take(25)
+                    .map { CastMember(it.id, it.name, it.roles.firstOrNull { r -> !r.character.isNullOrBlank() }?.character, it.profilePath) }
+                    .ifEmpty { ar.credits?.cast.orEmpty().take(25).map { CastMember(it.id, it.name, it.character, it.profilePath) } },
                 countries = ar.originCountry.ifEmpty { ar.productionCountries.map { it.code } }.filter { it.isNotBlank() }.distinct(),
                 trailers = trailers,
                 reviews = reviews,
