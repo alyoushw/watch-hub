@@ -80,7 +80,7 @@ fun DownloadsButton() {
     LaunchedEffect(list) {
         while (true) {
             val states = list.map { container.downloads.state(it) }
-            val active = states.filter { !it.done && !it.failed }
+            val active = states.filter { !it.done && !it.failed && !it.paused }
             progress = if (active.isEmpty()) null else active.sumOf { it.bytes }.toFloat() / active.sumOf { it.total }.coerceAtLeast(1)
             delay(1_500)
         }
@@ -101,10 +101,8 @@ fun DownloadsPage(onClose: () -> Unit) {
     val container = appContainer()
     val context = LocalContext.current
     val saved by container.downloads.items.collectAsStateWithLifecycle()
+    val live by container.downloads.live.collectAsStateWithLifecycle()
     var tick by remember { mutableIntStateOf(0) }
-    // Last reading of each download, to tell its speed.
-    val last = remember { mutableMapOf<String, Pair<Long, Long>>() }
-    val speeds = remember { mutableMapOf<String, Long>() }
     LaunchedEffect(Unit) {
         while (true) {
             delay(1_000)
@@ -123,14 +121,9 @@ fun DownloadsPage(onClose: () -> Unit) {
                 } else {
                     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                         items(saved, key = { it.key }) { d ->
-                            val st = remember(tick, d.key) {
-                                container.downloads.state(d).also { s ->
-                                    val now = System.currentTimeMillis()
-                                    last[d.key]?.let { (b, t) -> if (now > t) speeds[d.key] = ((s.bytes - b) * 1000 / (now - t)).coerceAtLeast(0) }
-                                    last[d.key] = s.bytes to now
-                                }
-                            }
-                            DownloadRow(d, st, speeds[d.key] ?: 0, onPlay = {
+                            // Running ones report live (with a steady speed); the rest are read every second.
+                            val st = live[d.key] ?: remember(tick, d.key) { container.downloads.state(d) }
+                            DownloadRow(d, st, container.downloads.canPause(d), onPause = { container.downloads.pause(d.key) }, onResume = { container.downloads.resume(d.key) }, onPlay = {
                                 val e = container.downloads.entryOf(d)
                                 val url = container.downloads.localUrl(d.key)
                                 if (e != null && url != null) {
@@ -147,7 +140,16 @@ fun DownloadsPage(onClose: () -> Unit) {
 }
 
 @Composable
-private fun DownloadRow(d: Download, st: DownloadState, speed: Long, onPlay: () -> Unit, onDelete: () -> Unit) {
+private fun DownloadRow(
+    d: Download,
+    st: DownloadState,
+    canPause: Boolean,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
+    onPlay: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val speed = st.speed
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Box(Modifier.size(width = 96.dp, height = 60.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
             if (d.image != null) AsyncImage(model = d.image, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
@@ -156,7 +158,11 @@ private fun DownloadRow(d: Download, st: DownloadState, speed: Long, onPlay: () 
             Text(d.title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             d.subtitle?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1) }
             when {
-                st.failed -> Text("⚠️ فشل التنزيل، احذفه ونزّله من جديد", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                st.failed -> Text(
+                    if (canPause) "⚠️ وقف التنزيل (انقطع الاتصال). اضغط ▶ يكمل من وين وقف" else "⚠️ فشل التنزيل، احذفه ونزّله من جديد",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
                 st.done -> Text("✓ جاهز للمشاهدة بدون نت · ${sizeText(st.total.takeIf { it > 0 } ?: st.bytes)}", style = MaterialTheme.typography.labelSmall, color = Gold)
                 else -> {
                     LinearProgressIndicator(
@@ -164,12 +170,16 @@ private fun DownloadRow(d: Download, st: DownloadState, speed: Long, onPlay: () 
                         modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
                         color = Gold,
                     )
-                    val left = if (speed > 0 && st.total > 0) (st.total - st.bytes) / speed else null
+                    val left = if (speed > 0 && st.total > 0 && !st.paused) (st.total - st.bytes) / speed else null
                     Text(
                         listOfNotNull(
                             "${Math.round(st.progress * 100)}%",
                             if (st.total > 0) "${sizeText(st.bytes)} من ${sizeText(st.total)}" else sizeText(st.bytes),
-                            if (st.paused) "بانتظار الشبكة…" else "${sizeText(speed)}/ث",
+                            when {
+                                st.paused -> "⏸ متوقف"
+                                st.waiting -> "بالانتظار…"
+                                else -> "${sizeText(speed)}/ث"
+                            },
                             left?.let { s -> if (s >= 3600) "باقي ${s / 3600} س ${s % 3600 / 60} د" else "باقي ${s / 60} د ${s % 60} ث" },
                         ).joinToString(" · "),
                         style = MaterialTheme.typography.labelSmall,
@@ -177,7 +187,16 @@ private fun DownloadRow(d: Download, st: DownloadState, speed: Long, onPlay: () 
                 }
             }
         }
-        if (st.done) TextButton(modifier = Modifier.focusFrame(), onClick = onPlay) { Text("▶") }
+        if (st.done) {
+            TextButton(modifier = Modifier.focusFrame(), onClick = onPlay) { Text("▶ شغّل") }
+        } else if (canPause) {
+            // Pause now, continue later from the same point.
+            if (st.paused || st.failed) {
+                TextButton(modifier = Modifier.focusFrame(), onClick = onResume) { Text("▶ كمّل") }
+            } else {
+                TextButton(modifier = Modifier.focusFrame(), onClick = onPause) { Text("⏸ إيقاف") }
+            }
+        }
         TextButton(modifier = Modifier.focusFrame(), onClick = onDelete) { Text("🗑") }
     }
 }
