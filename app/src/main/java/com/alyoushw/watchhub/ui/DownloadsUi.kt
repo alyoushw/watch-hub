@@ -59,12 +59,15 @@ import com.alyoushw.watchhub.player.PlayerActivity
 import kotlinx.coroutines.delay
 import java.util.Locale
 
-/** "1.4 GB", "350 MB". */
-fun sizeText(bytes: Long): String = when {
+/**
+ * "1.4 GB", "350 MB" — kept as one left-to-right piece (Unicode isolate), so inside an Arabic
+ * line the number and its unit never swap places or drift apart.
+ */
+fun sizeText(bytes: Long): String = "\u2066" + when {
     bytes >= 1L shl 30 -> String.format(Locale.US, "%.2f GB", bytes / (1L shl 30).toDouble())
     bytes >= 1L shl 20 -> String.format(Locale.US, "%.1f MB", bytes / (1L shl 20).toDouble())
     else -> "${bytes / 1024} KB"
-}
+} + "\u2069"
 
 /**
  * "⬇" in the home bar: shows only when there are downloads, with a ring of progress while one
@@ -173,12 +176,12 @@ private fun DownloadRow(
                     val left = if (speed > 0 && st.total > 0 && !st.paused) (st.total - st.bytes) / speed else null
                     Text(
                         listOfNotNull(
-                            "${Math.round(st.progress * 100)}%",
+                            "\u2066${Math.round(st.progress * 100)}%\u2069",
                             if (st.total > 0) "${sizeText(st.bytes)} من ${sizeText(st.total)}" else sizeText(st.bytes),
                             when {
                                 st.paused -> "⏸ متوقف"
                                 st.waiting -> "بالانتظار…"
-                                else -> "${sizeText(speed)}/ث"
+                                else -> "${sizeText(speed)} بالثانية"
                             },
                             left?.let { s -> if (s >= 3600) "باقي ${s / 3600} س ${s % 3600 / 60} د" else "باقي ${s / 60} د ${s % 60} ث" },
                         ).joinToString(" · "),
