@@ -350,7 +350,8 @@ class XtreamApi(private val settings: SettingsStore) {
 
         fun formatTime(date: Date): String = SimpleDateFormat("HH:mm", Locale.US).format(date)
 
-        private val tagPrefix = Regex("""^\s*(\[[^\]]*\]|\|[^|]{1,6}\||[A-Z]{2,3}\s*[|:]\s*|[A-Z]{2,3}\s+-\s+)""")
+        // Provider labels in front of the name: "[AR]", "|AR|", "AR:", "AR - ", "AR-AS-S:", "4K-AR|".
+        private val tagPrefix = Regex("""^\s*(\[[^\]]*\]|\|[^|]{1,6}\||[A-Z0-9]{1,6}(-[A-Z0-9]{1,6}){1,4}\s*[|:]\s*|[A-Z]{2,3}\s*[|:]\s*|[A-Z]{2,3}\s+-\s+)""")
         private val bracketed = Regex("""[(\[{][^)\]}]*[)\]}]""")
         private val qualityWords = Regex("""\b(4k|uhd|fhd|hd|sd|hevc|multi[- ]?sub|vip)\b""")
         private val yearWord = Regex("""\b(19|20)\d{2}\b""")

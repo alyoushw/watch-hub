@@ -214,7 +214,8 @@ function vodUrls(acc, type, id, ext) {
 /** "AR| The Batman (2022) 4K" → "the batman"; folds Arabic letter variants. Same rules as the Android app. */
 export function normalizeTitle(raw) {
   let t = raw || "";
-  const tag = /^\s*(\[[^\]]*\]|\|[^|]{1,6}\||[A-Z]{2,3}\s*[|:]\s*|[A-Z]{2,3}\s+-\s+)/;
+  // Provider labels in front of the name: "[AR]", "|AR|", "AR:", "AR - ", "AR-AS-S:", "4K-AR|".
+  const tag = /^\s*(\[[^\]]*\]|\|[^|]{1,6}\||[A-Z0-9]{1,6}(-[A-Z0-9]{1,6}){1,4}\s*[|:]\s*|[A-Z]{2,3}\s*[|:]\s*|[A-Z]{2,3}\s+-\s+)/;
   t = t.replace(tag, "").replace(tag, "");
   return t.toLowerCase()
     .replace(/[([{][^)\]}]*[)\]}]/g, " ")

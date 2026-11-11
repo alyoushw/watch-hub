@@ -341,6 +341,7 @@ private fun XtreamCard(item: XtreamItem, onLongClick: () -> Unit = {}, onClick: 
         Modifier
             .focusHighlight(shape)
             .clip(shape)
+            .remoteLongPress(onLongClick)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -675,6 +676,7 @@ private fun EpisodeRow(ep: XtreamEpisode, watched: WatchEntry?, current: Boolean
             .clip(shape)
             .background(if (current) Gold.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant)
             .border(if (current) 2.dp else 0.dp, if (current) Gold else Color.Transparent, shape)
+            .remoteLongPress(onLongClick)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .graphicsLayer { alpha = if (finished) 0.55f else 1f }
             .padding(10.dp),
@@ -882,6 +884,7 @@ fun ContinueWatchingRow(
                         .width(220.dp)
                         .focusHighlight(shape)
                         .clip(shape)
+                        .remoteLongPress { menuFor = e }
                         .combinedClickable(
                             onClick = {
                                 if (e.kind == WatchEntry.EPISODE && e.finished && e.seriesId != null) {

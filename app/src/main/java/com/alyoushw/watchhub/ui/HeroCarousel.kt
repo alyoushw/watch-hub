@@ -143,7 +143,8 @@ fun HeroCarousel(
     // under the focused button made TVs stutter), nor while the user swipes.
     var focused by remember { mutableStateOf(false) }
     LaunchedEffect(slides.size, focused) {
-        if (slides.size < 2 || focused) return@LaunchedEffect
+        // TVs: never by itself (the page moving under the remote is unsettling); its arrows move it.
+        if (slides.size < 2 || focused || tv) return@LaunchedEffect
         while (true) {
             delay(7000)
             if (!pager.isScrollInProgress) {

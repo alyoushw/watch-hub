@@ -8,6 +8,9 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.material3.TextButton
@@ -208,7 +211,9 @@ fun PosterCard(item: SearchResult, rank: Int? = null, width: Dp = 120.dp, onClic
     val context = LocalContext.current
     Column(
         // Long press: share it.
-        Modifier.width(width).focusHighlight().combinedClickable(onClick = onClick, onLongClick = { context.shareTitle(item.displayTitle, item.type, item.id) }),
+        Modifier.width(width).focusHighlight()
+            .remoteLongPress { context.shareTitle(item.displayTitle, item.type, item.id) }
+            .combinedClickable(onClick = onClick, onLongClick = { context.shareTitle(item.displayTitle, item.type, item.id) }),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Box {
@@ -545,3 +550,36 @@ fun StreamShareDialog(title: String, url: String, onDone: () -> Unit) {
  */
 fun Modifier.readableWidth(max: androidx.compose.ui.unit.Dp = 820.dp): Modifier =
     this.fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = max)
+
+/**
+ * Long press with a TV remote: holding OK (or pressing the remote's Menu key) does what a long
+ * touch does — the remote sends a repeating key, which `combinedClickable` does not take as one.
+ * Put it before the `clickable` of the same element.
+ */
+fun Modifier.remoteLongPress(onLongPress: () -> Unit): Modifier = androidx.compose.ui.composed {
+    var fired by remember { mutableStateOf(false) }
+    this.onPreviewKeyEvent { e ->
+        val ok = e.key == androidx.compose.ui.input.key.Key.DirectionCenter || e.key == androidx.compose.ui.input.key.Key.Enter ||
+            e.key == androidx.compose.ui.input.key.Key.NumPadEnter
+        val down = e.type == androidx.compose.ui.input.key.KeyEventType.KeyDown
+        when {
+            e.key == androidx.compose.ui.input.key.Key.Menu && down -> {
+                onLongPress()
+                true
+            }
+            ok && down && e.nativeKeyEvent.repeatCount > 0 -> {
+                if (!fired) {
+                    fired = true
+                    onLongPress()
+                }
+                true
+            }
+            // The release after a long press does not also count as a click.
+            ok && !down && fired -> {
+                fired = false
+                true
+            }
+            else -> false
+        }
+    }
+}
