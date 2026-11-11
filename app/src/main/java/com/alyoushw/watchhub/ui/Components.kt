@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.composed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.foundation.layout.widthIn
@@ -556,9 +557,9 @@ fun Modifier.readableWidth(max: androidx.compose.ui.unit.Dp = 820.dp): Modifier 
  * touch does — the remote sends a repeating key, which `combinedClickable` does not take as one.
  * Put it before the `clickable` of the same element.
  */
-fun Modifier.remoteLongPress(onLongPress: () -> Unit): Modifier = androidx.compose.ui.composed {
+fun Modifier.remoteLongPress(onLongPress: () -> Unit): Modifier = composed {
     var fired by remember { mutableStateOf(false) }
-    this.onPreviewKeyEvent { e ->
+    Modifier.onPreviewKeyEvent { e ->
         val ok = e.key == androidx.compose.ui.input.key.Key.DirectionCenter || e.key == androidx.compose.ui.input.key.Key.Enter ||
             e.key == androidx.compose.ui.input.key.Key.NumPadEnter
         val down = e.type == androidx.compose.ui.input.key.KeyEventType.KeyDown
