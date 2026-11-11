@@ -100,6 +100,7 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}) {
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
+                .readableWidth()
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {

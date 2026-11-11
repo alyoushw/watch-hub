@@ -525,6 +525,7 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
                         )
                     }
                     LazyColumn(
+                        Modifier.readableWidth(900.dp),
                         contentPadding = PaddingValues(12.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {

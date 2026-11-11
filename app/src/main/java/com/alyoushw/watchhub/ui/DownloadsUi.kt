@@ -122,7 +122,7 @@ fun DownloadsPage(onClose: () -> Unit) {
                 if (saved.isEmpty()) {
                     MessageBox("ما فيه تنزيلات", "اضغط مطولاً على أي فيلم، أو على حلقة في صفحة المسلسل، واختر «نزّلها».")
                 } else {
-                    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    LazyColumn(Modifier.readableWidth(900.dp), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                         items(saved, key = { it.key }) { d ->
                             // Running ones report live (with a steady speed); the rest are read every second.
                             val st = live[d.key] ?: remember(tick, d.key) { container.downloads.state(d) }
