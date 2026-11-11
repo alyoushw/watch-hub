@@ -107,6 +107,8 @@ fun HeroTabs(
             }
         }
         Spacer(Modifier.weight(1f))
+        // Only while there are downloads (with their progress).
+        DownloadsButton()
         IconButton(modifier = Modifier.focusFrame(), onClick = onRefresh) {
             Icon(Icons.Filled.Refresh, contentDescription = "تحديث", tint = Color.White)
         }

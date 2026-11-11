@@ -24,14 +24,24 @@ data class Download(
     val entryJson: String,
 )
 
-/** Where a download is at: progress 0..1, done, or failed. */
-data class DownloadState(val progress: Float, val done: Boolean, val failed: Boolean)
+/** Where a download is at: bytes so far and in all, and whether it is done, waiting or failed. */
+data class DownloadState(
+    val progress: Float,
+    val done: Boolean,
+    val failed: Boolean,
+    val bytes: Long = 0,
+    val total: Long = 0,
+    val paused: Boolean = false,
+)
 
 /**
  * Films and episodes from the Xtream account saved on the device, to watch without internet
  * (in the car, on a trip) in the same player. Android's download manager does the downloading
  * (with its own notification); the files stay in the app's folder and go with the app.
  */
+/** ADM's free and paid editions. */
+private val AdmPackages = listOf("com.dv.adm", "com.dv.adm.pay", "com.dv.adm.old")
+
 class Downloads(private val context: Context) {
     private val prefs = context.getSharedPreferences("downloads", Context.MODE_PRIVATE)
     private val json = Json { ignoreUnknownKeys = true }
@@ -86,6 +96,9 @@ class Downloads(private val context: Context) {
                 if (total > 0) (got.toFloat() / total).coerceIn(0f, 1f) else 0f,
                 status == DownloadManager.STATUS_SUCCESSFUL,
                 status == DownloadManager.STATUS_FAILED,
+                got.coerceAtLeast(0),
+                total.coerceAtLeast(0),
+                status == DownloadManager.STATUS_PAUSED || status == DownloadManager.STATUS_PENDING,
             )
         }
     }
@@ -95,6 +108,27 @@ class Downloads(private val context: Context) {
         val d = _items.value.firstOrNull { it.key == key } ?: return null
         val f = File(d.file)
         return if (f.exists() && state(d).done) Uri.fromFile(f).toString() else null
+    }
+
+    /**
+     * Hands the link to ADM (Advanced Download Manager), which opens its own "new download"
+     * window. False when ADM is not installed. Its files are ADM's: this app does not track them.
+     */
+    fun sendToAdm(activity: android.content.Context, url: String, name: String): Boolean {
+        for (pkg in AdmPackages) {
+            val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                .putExtra(android.content.Intent.EXTRA_TEXT, url)
+                .putExtra(android.content.Intent.EXTRA_SUBJECT, name)
+                .putExtra("title", name)
+                .setPackage(pkg)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            val view = android.content.Intent(android.content.Intent.ACTION_VIEW, Uri.parse(url)).setPackage(pkg)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            for (i in listOf(send, view)) {
+                if (runCatching { activity.startActivity(i) }.isSuccess) return true
+            }
+        }
+        return false
     }
 
     fun entryOf(d: Download): WatchEntry? = runCatching { json.decodeFromString(WatchEntry.serializer(), d.entryJson) }.getOrNull()

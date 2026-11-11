@@ -169,7 +169,7 @@ fun XtreamScreen(onOpenSeries: (String) -> Unit, onOpenSettings: () -> Unit) {
             )
         },
     ) { padding ->
-        if (showDownloads) DownloadsDialog(onClose = { showDownloads = false })
+        if (showDownloads) DownloadsPage(onClose = { showDownloads = false })
         Box(Modifier.fillMaxSize().padding(padding)) {
             if (!account.isComplete) {
                 MessageBox(
@@ -211,6 +211,8 @@ private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind
     }
     var filter by remember(vm.kind, vm.selected) { mutableStateOf("") }
     var itemMenu by remember { mutableStateOf<XtreamItem?>(null) }
+    var downloadChoice by remember { mutableStateOf<Pair<WatchEntry, String>?>(null) }
+    downloadChoice?.let { (e, u) -> DownloadChoiceDialog(e, u) { downloadChoice = null } }
     var streamShare by remember { mutableStateOf<Pair<String, String>?>(null) }
     streamShare?.let { (t, u) -> StreamShareDialog(t, u) { streamShare = null } }
     val scope = rememberCoroutineScope()
@@ -237,9 +239,13 @@ private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind
                         val saved = container.downloads.has(e.key)
                         OutlinedButton(modifier = Modifier.fillMaxWidth().focusFrame(), onClick = {
                             itemMenu = null
-                            if (saved) container.downloads.remove(e.key) else container.downloads.start(e, container.xtream.playUrls(item, account).first())
-                            android.widget.Toast.makeText(context, if (saved) "انحذف التنزيل" else "📥 بدأ تنزيل «${item.name}»", android.widget.Toast.LENGTH_SHORT).show()
-                        }) { Text(if (saved) "🗑 احذف التنزيل" else "📥 نزّله للمشاهدة بدون نت") }
+                            if (saved) {
+                                container.downloads.remove(e.key)
+                                android.widget.Toast.makeText(context, "انحذف التنزيل", android.widget.Toast.LENGTH_SHORT).show()
+                            } else {
+                                downloadChoice = e to container.xtream.playUrls(item, account).first()
+                            }
+                        }) { Text(if (saved) "🗑 احذف التنزيل" else "📥 تنزيل") }
                     }
                 }
             },
@@ -446,6 +452,8 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
                     var markFor by remember { mutableStateOf<XtreamEpisode?>(null) }
                     val shareScope = rememberCoroutineScope()
                     var epShare by remember { mutableStateOf<Pair<String, String>?>(null) }
+                    var epDownload by remember { mutableStateOf<Pair<WatchEntry, String>?>(null) }
+                    epDownload?.let { (e, u) -> DownloadChoiceDialog(e, u) { epDownload = null } }
                     epShare?.let { (t, u) -> StreamShareDialog(t, u) { epShare = null } }
 
                     // Long press on an episode: watched / not watched (synced like any progress).
@@ -501,11 +509,15 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
                                     OutlinedButton(
                                         modifier = Modifier.fillMaxWidth().focusFrame(),
                                         onClick = {
-                                            if (saved) container.downloads.remove(epEntry.key) else container.downloads.start(epEntry, container.xtream.playUrls(ep, account).first())
-                                            android.widget.Toast.makeText(context, if (saved) "انحذف التنزيل" else "📥 بدأ التنزيل، تلقاه في «التنزيلات»", android.widget.Toast.LENGTH_SHORT).show()
                                             markFor = null
+                                            if (saved) {
+                                                container.downloads.remove(epEntry.key)
+                                                android.widget.Toast.makeText(context, "انحذف التنزيل", android.widget.Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                epDownload = epEntry to container.xtream.playUrls(ep, account).first()
+                                            }
                                         },
-                                    ) { Text(if (saved) "🗑 احذف التنزيل" else "📥 نزّلها للمشاهدة بدون نت") }
+                                    ) { Text(if (saved) "🗑 احذف التنزيل" else "📥 تنزيل الحلقة") }
                                 }
                             },
                             confirmButton = {},
@@ -925,61 +937,4 @@ fun ContinueWatchingRow(
             }
         }
     }
-}
-
-/** "📥 التنزيلات": films and episodes saved on the device; play without internet or delete. */
-@Composable
-private fun DownloadsDialog(onClose: () -> Unit) {
-    val container = appContainer()
-    val context = LocalContext.current
-    val saved by container.downloads.items.collectAsStateWithLifecycle()
-    var tick by remember { mutableStateOf(0) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            kotlinx.coroutines.delay(1_500)
-            tick++
-        }
-    }
-    AlertDialog(
-        onDismissRequest = onClose,
-        title = { Text("📥 التنزيلات") },
-        text = {
-            if (saved.isEmpty()) {
-                Text("ما فيه تنزيلات. اضغط مطولاً على أي فيلم، أو على حلقة في صفحة المسلسل، واختر «نزّلها».")
-            } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(saved, key = { it.key }) { d ->
-                        val st = remember(tick, d.key) { container.downloads.state(d) }
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Column(Modifier.weight(1f)) {
-                                Text(d.title, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(
-                                    when {
-                                        st.failed -> "⚠️ فشل التنزيل"
-                                        st.done -> listOfNotNull(d.subtitle, "✓ جاهز").joinToString(" · ")
-                                        else -> "ننزّل… ${Math.round(st.progress * 100)}%"
-                                    },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                )
-                            }
-                            if (st.done) {
-                                TextButton(modifier = Modifier.focusFrame(), onClick = {
-                                    val e = container.downloads.entryOf(d)
-                                    val url = container.downloads.localUrl(d.key)
-                                    if (e != null && url != null) {
-                                        onClose()
-                                        PlayerActivity.start(context, listOf(url), e)
-                                    }
-                                }) { Text("▶") }
-                            }
-                            TextButton(modifier = Modifier.focusFrame(), onClick = { container.downloads.remove(d.key) }) { Text("🗑") }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(modifier = Modifier.focusFrame(), onClick = onClose) { Text("تم") } },
-    )
 }
