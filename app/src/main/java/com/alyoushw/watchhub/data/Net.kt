@@ -50,3 +50,21 @@ object Net {
         _changes.value++
     }
 }
+
+/**
+ * The player's decoders: the device's own first, and FFmpeg's (built into the app) for sound the
+ * device cannot decode — Dolby AC3 / E-AC3, DTS, MP2 — common on channels and missing on many car
+ * screens. With [forceSoftwareAudio] FFmpeg goes first (for devices that claim a format but play
+ * it silent).
+ */
+fun playerRenderers(context: android.content.Context): androidx.media3.exoplayer.DefaultRenderersFactory {
+    val force = context.getSharedPreferences("player", android.content.Context.MODE_PRIVATE).getBoolean("softwareAudio", false)
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    val factory = androidx.media3.exoplayer.DefaultRenderersFactory(context)
+        .setExtensionRendererMode(
+            if (force) androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+            else androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON,
+        )
+        .setEnableDecoderFallback(true)
+    return factory
+}

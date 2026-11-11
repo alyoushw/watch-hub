@@ -91,7 +91,7 @@ class PlayerActivity : ComponentActivity() {
         // Providers often redirect a stream to another server, sometimes from https to http
         // (OkHttp follows both). Its pool is dropped when the network changes (see Net).
         val http = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(com.alyoushw.watchhub.data.Net.streams)
-        player = ExoPlayer.Builder(this)
+        player = ExoPlayer.Builder(this, com.alyoushw.watchhub.data.playerRenderers(this))
             .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http)))
             .setSeekBackIncrementMs(10_000)
             .setSeekForwardIncrementMs(10_000)
@@ -170,6 +170,13 @@ class PlayerActivity : ComponentActivity() {
                     onCancelUpNext = { upNextDismissedFor = entry?.key; session.upNext = null },
                     loadSources = ::otherSources,
                     onPickSource = ::playSource,
+                    onRestart = {
+                        // Same item, same spot, with the other sound decoder.
+                        saveProgress(important = true)
+                        PlayerQueue.items = queue
+                        PlayerQueue.index = position
+                        recreate()
+                    },
                 )
             }
         }

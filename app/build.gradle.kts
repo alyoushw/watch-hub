@@ -100,6 +100,8 @@ dependencies {
     implementation(libs.androidx.work)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.okhttp)
+    // FFmpeg audio decoders (Dolby AC3 / E-AC3, DTS, MP2…) for devices without them, like car screens.
+    implementation(libs.media3.ffmpeg)
     implementation(libs.media3.exoplayer.hls)
     implementation(libs.media3.ui)
     // Watch Hub account: Google sign-in and sync (Firebase, configured at runtime from the web app).

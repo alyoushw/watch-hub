@@ -140,6 +140,8 @@ fun PlayerScreen(
     onCancelUpNext: () -> Unit,
     loadSources: suspend () -> List<ChannelSource>,
     onPickSource: (ChannelSource, List<ChannelSource>) -> Unit,
+    /** Starts the player again (after switching the sound decoder). */
+    onRestart: () -> Unit = {},
 ) {
     val title = session.title
     val subtitle = session.subtitle
@@ -710,6 +712,12 @@ fun PlayerScreen(
                         prefs.edit().putBoolean("subBg", subBackground).apply()
                     },
                     boost = boost,
+                    softwareAudio = remember { prefs.getBoolean("softwareAudio", false) },
+                    onSoftwareAudio = {
+                        prefs.edit().putBoolean("softwareAudio", !prefs.getBoolean("softwareAudio", false)).commit()
+                        menu = null
+                        onRestart()
+                    },
                     onBoost = {
                         boost = !boost
                         flash(Indicator(PlayerIcons.Volume, if (boost) "تعزيز الصوت شغّال" else "تعزيز الصوت طافي"))
@@ -902,6 +910,8 @@ private fun MenuPanel(
     onSubBackground: () -> Unit,
     boost: Boolean,
     onBoost: () -> Unit,
+    softwareAudio: Boolean,
+    onSoftwareAudio: () -> Unit,
     sleeping: Boolean,
     onSleep: (Int?) -> Unit,
     onClose: () -> Unit,
@@ -980,6 +990,7 @@ private fun MenuPanel(
                         if (options.size <= 1) item { Hint("هذا الملف فيه صوت واحد بس") }
                         item { SectionLabel("خيارات") }
                         item { MenuRow("تعزيز الصوت (للأفلام الهادية)", selected = boost, modifier = if (options.isEmpty()) Modifier.focusRequester(firstFocus) else Modifier, onClick = onBoost) }
+                        item { MenuRow("ما فيه صوت؟ استخدم قارئ الصوت الداخلي", selected = softwareAudio, onClick = onSoftwareAudio) }
                     }
                 }
             }
