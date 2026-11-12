@@ -155,3 +155,8 @@ preview package, the regular package retains the Android OAuth identity document
 in README.md. The emulator also verifies the existing live account configuration
 and Firebase initialization. Completing Google consent with an actual user account
 remains a manual device check and is not claimed as an automated test.
+
+A `distribution=validation` run builds the original application identity and runs
+the same signing/version comparison, but saves the APK only in a private draft
+`stable-candidate-N`. It cannot publish a stable release or upload a public APK
+artifact. This makes the exact upgrade APK reviewable before merge/publication.

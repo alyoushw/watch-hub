@@ -6,12 +6,13 @@ on:
   workflow_dispatch:
     inputs:
       distribution:
-        description: 'Private preview or main-channel release (main branch only)'
+        description: 'Private preview, main-app validation draft, or reviewed stable release'
         type: choice
         default: private
         options:
           - private
           - stable
+          - validation
 
 permissions:
   contents: write
@@ -21,8 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       WATCHHUB_ANIMEIFY_TOKEN: ${{ secrets.WATCHHUB_ANIMEIFY_TOKEN }}
-      WATCHHUB_PREVIEW: ${{ ((github.ref != 'refs/heads/main' && github.ref != 'refs/heads/ccr-3b14310b-u6y40j') || (github.event_name == 'workflow_dispatch' && inputs.distribution == 'private')) && 'true' || 'false' }}
-      APK_NAME: ${{ ((github.ref != 'refs/heads/main' && github.ref != 'refs/heads/ccr-3b14310b-u6y40j') || (github.event_name == 'workflow_dispatch' && inputs.distribution == 'private')) && 'WatchHub-Anime-Preview.apk' || 'WatchHub.apk' }}
+      WATCHHUB_PREVIEW: ${{ (inputs.distribution != 'validation' && ((github.ref != 'refs/heads/main' && github.ref != 'refs/heads/ccr-3b14310b-u6y40j') || (github.event_name == 'workflow_dispatch' && inputs.distribution == 'private'))) && 'true' || 'false' }}
+      APK_NAME: ${{ (inputs.distribution != 'validation' && ((github.ref != 'refs/heads/main' && github.ref != 'refs/heads/ccr-3b14310b-u6y40j') || (github.event_name == 'workflow_dispatch' && inputs.distribution == 'private'))) && 'WatchHub-Anime-Preview.apk' || 'WatchHub.apk' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -106,13 +107,13 @@ jobs:
         run: cp app/build/outputs/apk/release/app-release.apk "$APK_NAME"
 
       - name: Verify compatibility with the installed main application
-        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ccr-3b14310b-u6y40j') && github.event_name == 'workflow_dispatch' && inputs.distribution == 'stable'
+        if: github.event_name == 'workflow_dispatch' && (inputs.distribution == 'validation' || ((github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ccr-3b14310b-u6y40j') && inputs.distribution == 'stable'))
         env:
           GH_TOKEN: ${{ github.token }}
         run: python .github/scripts/verify-stable-apk.py "$APK_NAME"
 
       - uses: actions/upload-artifact@v4
-        if: env.WATCHHUB_PREVIEW != 'true'
+        if: env.WATCHHUB_PREVIEW != 'true' && inputs.distribution != 'validation'
         with:
           name: WatchHub-apk
           path: ${{ env.APK_NAME }}
@@ -140,14 +141,14 @@ jobs:
 
       # Draft assets are accessible only to repository writers; the main release is untouched.
       - name: Create private preview draft
-        if: github.event_name == 'workflow_dispatch' && inputs.distribution == 'private'
+        if: github.event_name == 'workflow_dispatch' && (inputs.distribution == 'private' || inputs.distribution == 'validation')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: anime-preview-${{ github.run_number }}
-          name: Watch Hub Anime - private preview ${{ github.run_number }}
+          tag_name: ${{ inputs.distribution == 'validation' && 'stable-candidate' || 'anime-preview' }}-${{ github.run_number }}
+          name: Watch Hub - private ${{ inputs.distribution == 'validation' && 'update candidate' || 'anime preview' }} ${{ github.run_number }}
           files: ${{ env.APK_NAME }}
           draft: true
           prerelease: true
           make_latest: false
           target_commitish: ${{ github.sha }}
-          body: 'نسخة خاصة مستقلة للتجربة. لا تستبدل التطبيق الرئيسي ولا تُرسل كتحديث عام.'
+          body: ${{ inputs.distribution == 'validation' && 'ملف مراجعة خاص لتحديث التطبيق الأساسي بنفس المعرّف والتوقيع. لم ينشر كتحديث عام.' || 'نسخة خاصة مستقلة للتجربة. لا تستبدل التطبيق الرئيسي ولا تُرسل كتحديث عام.' }}
