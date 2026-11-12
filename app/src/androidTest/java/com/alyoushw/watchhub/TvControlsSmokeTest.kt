@@ -1,31 +1,45 @@
 package com.alyoushw.watchhub
 
-import android.content.Context
+import com.alyoushw.watchhub.player.QueueItem
+
+import com.alyoushw.watchhub.player.PlayerQueue
+
+import com.alyoushw.watchhub.player.PlayerActivity
+
 import android.content.Intent
+
+import android.content.Context
+
 import android.os.SystemClock
 import android.view.KeyEvent
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.InputModeManager
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.UiDevice
+import java.io.File
 import com.alyoushw.watchhub.data.AnimeEpisodeRef
 import com.alyoushw.watchhub.data.WatchEntry
-import com.alyoushw.watchhub.player.PlayerActivity
-import com.alyoushw.watchhub.player.PlayerQueue
-import com.alyoushw.watchhub.player.QueueItem
 import com.alyoushw.watchhub.ui.ContinueWatchingRow
 import com.alyoushw.watchhub.ui.WatchHubTheme
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(AndroidJUnit4::class)
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 class TvControlsSmokeTest {
     @get:Rule val compose = createEmptyComposeRule()
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
@@ -42,36 +56,59 @@ class TvControlsSmokeTest {
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 scenario.onActivity { activity -> activity.setContent {
-                    WatchHubTheme(forceDark = true) {
-                        ContinueWatchingRow(onOpenSeries = {}, kinds = setOf(WatchEntry.ANIME),
-                            onOpenAnime = { opened.incrementAndGet() })
+                    // Emulate the remote-only input mode. A phone emulator's Touch mode
+                    // explicitly makes combinedClickable's focus target non-focusable.
+                    val keyboard = remember { object : InputModeManager {
+                        override val inputMode = InputMode.Keyboard
+                        override fun requestInputMode(inputMode: InputMode) = inputMode == InputMode.Keyboard
+                    } }
+                    CompositionLocalProvider(LocalInputModeManager provides keyboard) {
+                        WatchHubTheme(forceDark = true) {
+                            ContinueWatchingRow(onOpenSeries = {}, kinds = setOf(WatchEntry.ANIME),
+                                onOpenAnime = { opened.incrementAndGet() })
+                        }
                     }
                 } }
-                instrumentation.setInTouchMode(false)
-                compose.onNodeWithText(title).performSemanticsAction(SemanticsActions.RequestFocus) { it() }
-                compose.onNodeWithText(title).assertIsFocused()
-                val downAt = SystemClock.uptimeMillis()
-                send(downAt, KeyEvent.ACTION_DOWN, 0)
-                send(downAt, KeyEvent.ACTION_DOWN, 1)
-                send(downAt, KeyEvent.ACTION_DOWN, 2)
-                compose.waitForIdle()
-                compose.onNodeWithText("المواسم والحلقات · أنمي فاي").assertDoesNotExist()
-                assertEquals(0, opened.get())
-                send(downAt, KeyEvent.ACTION_UP, 0)
-                compose.waitForIdle()
-                assertEquals("Releasing the long press must not activate the title", 0, opened.get())
-                compose.waitUntil(10_000) {
-                    compose.onAllNodesWithText("المواسم والحلقات · أنمي فاي").fetchSemanticsNodes().isNotEmpty()
+                try {
+                    compose.waitUntil(10_000) {
+                        var ready = false
+                        scenario.onActivity { ready = it.hasWindowFocus() }
+                        ready
+                    }
+                    instrumentation.setInTouchMode(false)
+                    focus(title)
+                    val downAt = SystemClock.uptimeMillis()
+                    send(downAt, KeyEvent.ACTION_DOWN, 0)
+                    send(downAt, KeyEvent.ACTION_DOWN, 1)
+                    send(downAt, KeyEvent.ACTION_DOWN, 2)
+                    compose.waitForIdle()
+                    compose.onNodeWithText("المواسم والحلقات · أنمي فاي").assertDoesNotExist()
+                    assertEquals(0, opened.get())
+                    send(downAt, KeyEvent.ACTION_UP, 0)
+                    compose.waitForIdle()
+                    assertEquals("Releasing the long press must not activate the title", 0, opened.get())
+                    compose.waitUntil(10_000) {
+                        compose.onAllNodesWithText("المواسم والحلقات · أنمي فاي").fetchSemanticsNodes().isNotEmpty()
+                    }
+                    assertEquals("The originating key must not select a dialog action", 0, opened.get())
+                    focus("المواسم والحلقات · أنمي فاي")
+                    val nextDown = SystemClock.uptimeMillis()
+                    send(nextDown, KeyEvent.ACTION_DOWN, 0)
+                    send(nextDown, KeyEvent.ACTION_UP, 0)
+                    compose.waitForIdle()
+                    assertEquals("A fresh short press must select exactly once", 1, opened.get())
+                    compose.onNodeWithText("المواسم والحلقات · أنمي فاي").assertDoesNotExist()
+                } catch (failure: Throwable) {
+                    runCatching {
+                        val device = UiDevice.getInstance(instrumentation)
+                        device.executeShellCommand("mkdir -p /sdcard/Download/watchhub-smoke")
+                        device.executeShellCommand("screencap -p /sdcard/Download/watchhub-smoke/tv-longpress-failure.png")
+                        val file = File(context.getExternalFilesDir(null), "tv-longpress-failure.xml")
+                        device.dumpWindowHierarchy(file)
+                        device.executeShellCommand("cp ${file.absolutePath} /sdcard/Download/watchhub-smoke/")
+                    }
+                    throw failure
                 }
-                assertEquals("The originating key must not select a dialog action", 0, opened.get())
-                compose.onNodeWithText("المواسم والحلقات · أنمي فاي")
-                    .performSemanticsAction(SemanticsActions.RequestFocus) { it() }
-                val nextDown = SystemClock.uptimeMillis()
-                send(nextDown, KeyEvent.ACTION_DOWN, 0)
-                send(nextDown, KeyEvent.ACTION_UP, 0)
-                compose.waitForIdle()
-                assertEquals("A fresh short press must select exactly once", 1, opened.get())
-                compose.onNodeWithText("المواسم والحلقات · أنمي فاي").assertDoesNotExist()
             }
         } finally { container.history.remove(entry.key) }
     }
@@ -103,6 +140,15 @@ class TvControlsSmokeTest {
             prefs.edit().remove("autoPreload").remove("stallPreloadOptIn").apply()
             PlayerQueue.items = emptyList()
             file.delete()
+        }
+    }
+
+
+    private fun focus(text: String) {
+        compose.waitUntil(10_000) {
+            val node = compose.onNodeWithText(text)
+            node.performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+            node.fetchSemanticsNode().config.getOrNull(SemanticsProperties.Focused) == true
         }
     }
 

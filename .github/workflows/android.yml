@@ -47,10 +47,10 @@ jobs:
         run: python .github/scripts/reuse-app-verification.py
 
       - name: Tests and lint
-        if: steps.prior_checks.outputs.reused != 'true'
+        if: steps.prior_checks.outputs.unit_lint_reused != 'true'
         run: |
           chmod +x gradlew
-          ./gradlew testDebugUnitTest lintDebug compileDebugAndroidTestKotlin --stacktrace
+          ./gradlew testDebugUnitTest lintDebug --stacktrace
 
       - name: Upload verification reports
         if: always()
@@ -69,6 +69,12 @@ jobs:
           if [ -f app/build/reports/lint-results.txt ]; then
             cat app/build/reports/lint-results.txt
           fi
+
+      - name: Compile Android regression tests
+        if: steps.prior_checks.outputs.reused != 'true'
+        run: |
+          chmod +x gradlew
+          ./gradlew compileDebugAndroidTestKotlin --stacktrace
 
       - name: Enable KVM for Android smoke test
         if: steps.prior_checks.outputs.reused != 'true'
