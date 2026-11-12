@@ -405,6 +405,7 @@ fun DetailScreen(
     onOpen: (MediaType, Int) -> Unit,
     onOpenPerson: (Int) -> Unit = {},
     onOpenXtreamSeries: (String) -> Unit = {},
+    onOpenAnime: (AnimeLookup) -> Unit = {},
 ) {
     val container = appContainer()
     val vm: DetailViewModel = viewModel { DetailViewModel(container, type, id) }
@@ -427,7 +428,7 @@ fun DetailScreen(
             when (val s = vm.state) {
                 DetailState.Loading -> CenteredLoading()
                 is DetailState.Failed -> MessageBox(s.message, actionLabel = "حاول مرة ثانية", onAction = vm::load)
-                is DetailState.Loaded -> DetailContent(s.info, vm.links, vm.similar, onAdd = { vm.addToWatchlist(s.info) }, onOpen = onOpen, onOpenPerson = onOpenPerson, onOpenXtreamSeries = onOpenXtreamSeries)
+                is DetailState.Loaded -> DetailContent(s.info, vm.links, vm.similar, onAdd = { vm.addToWatchlist(s.info) }, onOpen = onOpen, onOpenPerson = onOpenPerson, onOpenXtreamSeries = onOpenXtreamSeries, onOpenAnime = onOpenAnime)
             }
         }
     }
@@ -443,6 +444,7 @@ private fun DetailContent(
     onOpen: (MediaType, Int) -> Unit,
     onOpenPerson: (Int) -> Unit,
     onOpenXtreamSeries: (String) -> Unit,
+    onOpenAnime: (AnimeLookup) -> Unit,
 ) {
     val container = appContainer()
     val context = LocalContext.current
@@ -472,8 +474,12 @@ private fun DetailContent(
 
         if (16 in info.genreIds && (info.originalLanguage == "ja" || "JP" in info.countries)) {
             item {
-                AnimeSources(AnimeLookup(info.title, info.searchTitle, info.type == MediaType.MOVIE,
-                    info.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }, info.type, info.id))
+                Column(Modifier.padding(horizontal = 16.dp)) {
+                    AnimeifyWatchButton(AnimeLookup(info.title, info.searchTitle, info.type == MediaType.MOVIE,
+                        info.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }, info.type, info.id,
+                        overview = info.overview, overviewIsEnglish = info.overviewIsEnglish,
+                        backdrop = info.backdropPath?.let { "https://image.tmdb.org/t/p/w1280$it" }), onOpenAnime, Modifier.fillMaxWidth())
+                }
             }
         }
 

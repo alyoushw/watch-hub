@@ -113,3 +113,27 @@ asset named `WatchHub-Anime-Preview.apk`, with `make_latest=false`. Draft assets
 require a repository writer's GitHub login. They are excluded from `/releases/latest`
 and do not notify existing users. The branch/PR remains separate and is not merged
 into the current or default branch for this delivery.
+
+## Revised watch flow and downloads
+
+The title page now has a gold `تشغيل أنمي فاي` watch action below the existing
+provider choices. It opens a separate saved navigation route with the title's
+poster/story, related seasons, and episode cards. The episode card component is
+shared with the IPTV series page, retaining its colours, RTL layout, watched states
+and remote focus. A top download button queues the selected season; long-pressing
+an episode downloads that episode after selecting a server/quality.
+
+Animeify episodes now appear in the existing horizontal Continue Watching row
+alongside IPTV entries, with an Animeify provider label. Series and movie filters
+remain separate, and long-pressing an Animeify card opens its season/episode page.
+
+Downloads use the existing serial download worker and pause/resume controls.
+Animeify download entries persist an empty URL and the stable episode reference.
+The worker resolves a fresh source URL each time a download starts or retries;
+completed local files bypass source resolution in the existing player.
+
+Additional verification covers saved navigation payloads, the watch-action/episode
+page/download-picker flow with Honey Lemon Soda, actual source download bytes and
+pause support, and playback of a completed local file with an Animeify reference.
+UI screenshots are collected with the device reports. Delivery remains a separate
+private preview; neither application branch is merged or its main release updated.

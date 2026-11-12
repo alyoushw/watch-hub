@@ -79,6 +79,7 @@ jobs:
           path: |
             app/build/reports/androidTests/
             app/build/outputs/androidTest-results/
+            app/build/reports/screenshots/
 
       - name: Restore signing key
         env:

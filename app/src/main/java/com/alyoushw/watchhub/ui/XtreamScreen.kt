@@ -711,7 +711,16 @@ fun XtreamWatchButton(
 /** An episode in the list: gold frame and "تشاهدها" while in progress, faded with ✓ once finished. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun EpisodeRow(ep: XtreamEpisode, watched: WatchEntry?, current: Boolean, onLongClick: () -> Unit, onClick: () -> Unit) {
+private fun EpisodeRow(ep: XtreamEpisode, watched: WatchEntry?, current: Boolean, onLongClick: () -> Unit, onClick: () -> Unit) =
+    EpisodePlaybackRow("الحلقة ${ep.number}", ep.title, ep.image, watched, current, onLongClick, onClick)
+
+/** Shared episode card for IPTV and Animeify, with identical styling and focus behavior. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+internal fun EpisodePlaybackRow(
+    label: String, title: String, image: String?, watched: WatchEntry?, current: Boolean,
+    onLongClick: () -> Unit, onClick: () -> Unit,
+) {
     val finished = watched?.finished == true
     val shape = RoundedCornerShape(12.dp)
     Row(
@@ -732,8 +741,8 @@ private fun EpisodeRow(ep: XtreamEpisode, watched: WatchEntry?, current: Boolean
             Modifier.size(width = 112.dp, height = 63.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surface),
             contentAlignment = Alignment.Center,
         ) {
-            if (ep.image != null) {
-                AsyncImage(model = ep.image, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            if (image != null) {
+                AsyncImage(model = image, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             }
             Box(
                 Modifier.size(30.dp).clip(CircleShape).background(if (finished) Color(0xFF2E7D4F) else Color.Black.copy(alpha = 0.55f)),
@@ -745,13 +754,13 @@ private fun EpisodeRow(ep: XtreamEpisode, watched: WatchEntry?, current: Boolean
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("الحلقة ${ep.number}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
+                Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
                 when {
                     finished -> Tag("✓ خلصتها", Color(0xFF2E7D4F))
                     current || (watched != null && watched.durationMs > 0) -> Tag("▶ تشاهدها", Gold, dark = true)
                 }
             }
-            Text(ep.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(title, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (watched != null && !finished && watched.durationMs > 0) {
                 Text(
                     "وصلت ${com.alyoushw.watchhub.player.formatTime(watched.positionMs)} من ${com.alyoushw.watchhub.player.formatTime(watched.durationMs)}",
@@ -811,6 +820,8 @@ fun ContinueWatchingRow(
     kinds: Set<String> = setOf(WatchEntry.EPISODE, WatchEntry.MOVIE),
     onOpenTitle: (MediaType, Int) -> Unit = { _, _ -> },
     onOpenLive: () -> Unit = {},
+    onOpenAnime: ((WatchEntry) -> Unit)? = null,
+    animeMovies: Boolean? = null,
 ) {
     val container = appContainer()
     val context = LocalContext.current
@@ -820,20 +831,30 @@ fun ContinueWatchingRow(
     var menuFor by remember { mutableStateOf<WatchEntry?>(null) }
     var streamShare by remember { mutableStateOf<Pair<String, String>?>(null) }
     streamShare?.let { (t, u) -> StreamShareDialog(t, u) { streamShare = null } }
-    if (accounts.isEmpty()) return
-    val list = remember(entries, accounts, kinds) {
+    val list = remember(entries, accounts, kinds, animeMovies) {
         val ids = accounts.map { it.id }.toSet()
-        container.history.continueList().filter { it.accountId in ids && it.kind in kinds }.take(20)
+        container.history.continueList().filter { e ->
+            e.kind in kinds && if (e.animeRef != null) {
+                animeMovies == null || (e.animeRef.type == "MOVIE") == animeMovies
+            } else e.accountId in ids
+        }.take(20)
     }
     if (list.isEmpty()) return
 
+    fun openAnime(e: WatchEntry) {
+        if (onOpenAnime != null) onOpenAnime(e)
+        else e.animeRef?.let { onOpenTitle(MediaType.fromPath(it.detailType) ?: MediaType.ANIME, it.detailId) }
+    }
+
     fun openSeries(e: WatchEntry) {
+        if (e.animeRef != null) { openAnime(e); return }
         e.accountId?.let { container.settings.setActiveXtream(it) }
         e.seriesId?.let(onOpenSeries)
     }
 
     /** The title's page on the platform side (TMDB): its known id, else found by its name. */
     fun openPlatformPage(e: WatchEntry) {
+        e.animeRef?.let { onOpenTitle(MediaType.fromPath(it.detailType) ?: MediaType.ANIME, it.detailId); return }
         val type = if (e.kind == WatchEntry.EPISODE) MediaType.TV else MediaType.MOVIE
         val known = e.tmdbId
         if (known != null && type == MediaType.MOVIE) {
@@ -854,6 +875,7 @@ fun ContinueWatchingRow(
     // Long press: open the title's own page, or drop it from the row.
     menuFor?.let { e ->
         val openLabel = when (e.kind) {
+            WatchEntry.ANIME -> "المواسم والحلقات · أنمي فاي"
             WatchEntry.EPISODE -> "حلقات المسلسل في الحساب"
             WatchEntry.MOVIE -> "معلومات الفيلم (المنصة)"
             else -> "افتح القنوات المباشرة"
@@ -868,6 +890,7 @@ fun ContinueWatchingRow(
                         onClick = {
                             menuFor = null
                             when (e.kind) {
+                                WatchEntry.ANIME -> openAnime(e)
                                 WatchEntry.EPISODE -> openSeries(e)
                                 WatchEntry.LIVE -> {
                                     e.accountId?.let { container.settings.setActiveXtream(it) }
@@ -890,10 +913,15 @@ fun ContinueWatchingRow(
                         modifier = Modifier.fillMaxWidth().focusFrame(),
                         onClick = {
                             menuFor = null
-                            container.xtream.playUrls(e).firstOrNull()?.let { streamShare = e.title to it }
+                            if (e.animeRef != null) scope.launch {
+                                try { streamShare = e.title to container.animeify.resolve(e.animeRef) }
+                                catch (x: com.alyoushw.watchhub.data.AnimeifyException) {
+                                    android.widget.Toast.makeText(context, x.message, android.widget.Toast.LENGTH_LONG).show()
+                                }
+                            } else container.xtream.playUrls(e).firstOrNull()?.let { streamShare = e.title to it }
                         },
                     ) { Text("▶ مشاركة رابط التشغيل") }
-                    if (e.kind != WatchEntry.LIVE) {
+                    if (e.kind != WatchEntry.LIVE && e.animeRef == null) {
                         OutlinedButton(
                             modifier = Modifier.fillMaxWidth().focusFrame(),
                             onClick = {
@@ -932,7 +960,10 @@ fun ContinueWatchingRow(
                         .remoteLongPress { menuFor = e }
                         .combinedClickable(
                             onClick = {
-                                if (e.kind == WatchEntry.EPISODE && e.finished && e.seriesId != null) {
+                                if (e.animeRef != null) {
+                                    if (e.finished) openAnime(e)
+                                    else PlayerActivity.start(context, listOf(com.alyoushw.watchhub.player.QueueItem(emptyList(), e)), 0)
+                                } else if (e.kind == WatchEntry.EPISODE && e.finished && e.seriesId != null) {
                                     openSeries(e)
                                 } else {
                                     PlayerActivity.start(context, container.xtream.playUrls(e), e)
@@ -977,7 +1008,9 @@ fun ContinueWatchingRow(
                     }
                     // Same height for every card (empty line when there is nothing to say).
                     Text(sub ?: " ", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (accounts.size > 1) {
+                    if (e.animeRef != null) {
+                        Text("أنمي فاي", style = MaterialTheme.typography.labelSmall, color = Gold, maxLines = 1)
+                    } else if (accounts.size > 1 || list.any { it.animeRef != null }) {
                         accounts.firstOrNull { it.id == e.accountId }?.let {
                             Text(it.label, style = MaterialTheme.typography.labelSmall, color = Gold, maxLines = 1)
                         }

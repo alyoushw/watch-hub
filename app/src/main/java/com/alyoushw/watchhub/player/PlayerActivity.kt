@@ -322,6 +322,13 @@ class PlayerActivity : ComponentActivity() {
         val ref = entry?.animeRef
         if (ref != null) {
             resolveJob?.cancel()
+            val local = entry?.key?.let(container.downloads::localUrl)
+            if (local != null) {
+                queue = queue.toMutableList().also { it[position] = it[position].copy(urls = listOf(local)) }
+                urlIndex = 0
+                setResolvedMedia(startAt)
+                return
+            }
             val key = entry?.key
             resolveJob = lifecycleScope.launch {
                 try {

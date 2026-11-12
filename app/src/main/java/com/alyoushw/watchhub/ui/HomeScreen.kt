@@ -395,6 +395,7 @@ fun HomeScreen(
     onOpenSettings: () -> Unit,
     onSeeAll: (HomeSection) -> Unit,
     onOpenXtreamSeries: (String) -> Unit = {},
+    onOpenAnime: (AnimeLookup) -> Unit = {},
 ) {
     val container = appContainer()
     val vm: HomeViewModel = viewModel { HomeViewModel(container) }
@@ -413,9 +414,9 @@ fun HomeScreen(
     var live by rememberSaveable { mutableStateOf(false) }
     // Each tab keeps its own: episodes under series, films under films (channels live in «مباشر»).
     val continueKinds = when (vm.type) {
-        MediaType.TV -> setOf(WatchEntry.EPISODE)
-        MediaType.MOVIE -> setOf(WatchEntry.MOVIE)
-        else -> emptySet()
+        MediaType.TV -> setOf(WatchEntry.EPISODE, WatchEntry.ANIME)
+        MediaType.MOVIE -> setOf(WatchEntry.MOVIE, WatchEntry.ANIME)
+        else -> setOf(WatchEntry.ANIME)
     }
     val header: @Composable () -> Unit = {
         HeroTabs(
@@ -465,8 +466,9 @@ fun HomeScreen(
             apiKey.isBlank() -> Column {
                 header()
                 // "تابع المشاهدة" never waits for (or depends on) the TMDB rows.
-                if (vm.type == MediaType.ANIME) AnimeContinueRow(onOpen)
-                else ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true })
+                ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true },
+                    onOpenAnime = { onOpenAnime(it.animeLookup()) },
+                    animeMovies = when (vm.type) { MediaType.TV -> false; MediaType.MOVIE -> true; else -> null })
                 MessageBox(
                     title = "خطوة وحدة قبل نبدأ",
                     body = "حط مفتاح TMDB المجاني في الإعدادات عشان نعرض لك أفضل الأعمال في كل منصة.",
@@ -477,15 +479,17 @@ fun HomeScreen(
 
             vm.loading && vm.sections.isEmpty() -> Column {
                 header()
-                if (vm.type == MediaType.ANIME) AnimeContinueRow(onOpen)
-                else ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true })
+                ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true },
+                    onOpenAnime = { onOpenAnime(it.animeLookup()) },
+                    animeMovies = when (vm.type) { MediaType.TV -> false; MediaType.MOVIE -> true; else -> null })
                 CenteredLoading()
             }
 
             vm.error != null && vm.sections.isEmpty() -> Column {
                 header()
-                if (vm.type == MediaType.ANIME) AnimeContinueRow(onOpen)
-                else ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true })
+                ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true },
+                    onOpenAnime = { onOpenAnime(it.animeLookup()) },
+                    animeMovies = when (vm.type) { MediaType.TV -> false; MediaType.MOVIE -> true; else -> null })
                 MessageBox(vm.error.orEmpty(), actionLabel = "حاول مرة ثانية", onAction = vm::refresh)
             }
 
@@ -503,8 +507,9 @@ fun HomeScreen(
                             onOpen = { item -> item.type?.let { onOpen(it, item.id) } },
                         )
                     }
-                    item(key = "continue") { if (vm.type == MediaType.ANIME) AnimeContinueRow(onOpen)
-                else ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true }) }
+                    item(key = "continue") { ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true },
+                    onOpenAnime = { onOpenAnime(it.animeLookup()) },
+                    animeMovies = when (vm.type) { MediaType.TV -> false; MediaType.MOVIE -> true; else -> null }) }
                     item(key = "foryou") { ForYouRow(vm.type, onOpen) }
                     items(vm.sections.filter { !(it.wide && it.id == hero?.id) }, key = { it.id }) { section ->
                         TitleRow(
