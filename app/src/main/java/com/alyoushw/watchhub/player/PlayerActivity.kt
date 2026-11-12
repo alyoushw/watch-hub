@@ -62,28 +62,13 @@ class PlayerActivity : ComponentActivity() {
 
     // ---------- slow connection: notice, load ahead ----------
 
-    private var stallStartedAt = 0L
-    private val stalls = mutableListOf<Long>()
     private var preloadJob: Job? = null
 
-    /** Counts the stops to load while playing a film / episode; two in 3 minutes, or one over 4 s, means a slow connection. */
+    /** Extra loading is opt-in; ordinary buffering never opens a prompt or pauses playback. */
     private fun watchStalls(state: Int) {
         val e = entry ?: return
-        if (e.isLive || !started || session.preloading != null) return
-        val now = System.currentTimeMillis()
-        if (state == Player.STATE_BUFFERING && player.playWhenReady && player.currentPosition > 3_000) {
-            stallStartedAt = now
-            if (session.autoPreload) {
-                preload(2)
-                return
-            }
-            stalls += now
-            stalls.removeAll { now - it > 3 * 60_000 }
-            if (stalls.size >= 2) slowNotice()
-        } else if (state == Player.STATE_READY && stallStartedAt > 0) {
-            if (now - stallStartedAt > 4_000 && !session.autoPreload) slowNotice()
-            stallStartedAt = 0
-        }
+        if (!session.autoPreload || e.isLive || !started || session.preloading != null) return
+        if (state == Player.STATE_BUFFERING && player.playWhenReady && player.currentPosition > 3_000) preload(2)
     }
 
     private fun slowNotice() {
@@ -100,7 +85,6 @@ class PlayerActivity : ComponentActivity() {
     /** Pauses, loads [minutes] ahead (or to the end), then plays on and keeps that much ready. */
     private fun preload(minutes: Int) {
         session.slowNet = null
-        stalls.clear()
         val wanted = minutes * 60_000L
         loadControl.aheadMs = wanted + 15_000
         player.playWhenReady = false
@@ -126,8 +110,16 @@ class PlayerActivity : ComponentActivity() {
 
     private fun setAutoPreload(on: Boolean) {
         session.autoPreload = on
-        getSharedPreferences("player", MODE_PRIVATE).edit().putBoolean("autoPreload", on).apply()
-        if (on) preload(2) else session.slowNet = null
+        // A new explicit opt-in; an old saved autoPreload flag must not enable this feature.
+        getSharedPreferences("player", MODE_PRIVATE).edit().putBoolean("stallPreloadOptIn", on).apply()
+        session.slowNet = null
+        if (!on) {
+            val wasPreloading = session.preloading != null
+            preloadJob?.cancel()
+            session.preloading = null
+            loadControl.aheadMs = FlexibleLoadControl.NORMAL_MS
+            if (wasPreloading) player.playWhenReady = lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+        }
     }
     private var retries = 0
     private var started = false
@@ -164,7 +156,7 @@ class PlayerActivity : ComponentActivity() {
         // Providers often redirect a stream to another server, sometimes from https to http
         // (OkHttp follows both). Its pool is dropped when the network changes (see Net).
         val http = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(com.alyoushw.watchhub.data.Net.streams)
-        session.autoPreload = getSharedPreferences("player", MODE_PRIVATE).getBoolean("autoPreload", false)
+        session.autoPreload = getSharedPreferences("player", MODE_PRIVATE).getBoolean("stallPreloadOptIn", false)
         player = ExoPlayer.Builder(this, com.alyoushw.watchhub.data.playerRenderers(this))
             .setBandwidthMeter(bandwidth)
             .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http)))
@@ -250,6 +242,7 @@ class PlayerActivity : ComponentActivity() {
                     onPickSource = ::playSource,
                     onPreload = ::preload,
                     onAutoPreload = { setAutoPreload(!session.autoPreload) },
+                    onManualPreload = ::slowNotice,
                     onDismissSlow = { session.slowNet = null },
                     onPlayNow = ::playNowAfterPreload,
                     onRestart = {
@@ -275,8 +268,6 @@ class PlayerActivity : ComponentActivity() {
         preloadJob?.cancel()
         session.preloading = null
         session.slowNet = null
-        stalls.clear()
-        stallStartedAt = 0
         loadControl.aheadMs = FlexibleLoadControl.NORMAL_MS
         // Saved on the device: play the file (no internet needed), the link stays as a fallback.
         container.downloads.localUrl(queue[i].entry.key)?.let { local ->

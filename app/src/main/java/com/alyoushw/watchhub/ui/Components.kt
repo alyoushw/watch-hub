@@ -213,7 +213,7 @@ fun PosterCard(item: SearchResult, rank: Int? = null, width: Dp = 120.dp, onClic
     Column(
         // Long press: share it.
         Modifier.width(width).focusHighlight()
-            .remoteLongPress { context.shareTitle(item.displayTitle, item.type, item.id) }
+            .remoteLongPress({ context.shareTitle(item.displayTitle, item.type, item.id) }, onClick)
             .combinedClickable(onClick = onClick, onLongClick = { context.shareTitle(item.displayTitle, item.type, item.id) }),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -557,27 +557,36 @@ fun Modifier.readableWidth(max: androidx.compose.ui.unit.Dp = 820.dp): Modifier 
  * touch does — the remote sends a repeating key, which `combinedClickable` does not take as one.
  * Put it before the `clickable` of the same element.
  */
-fun Modifier.remoteLongPress(onLongPress: () -> Unit): Modifier = composed {
-    var fired by remember { mutableStateOf(false) }
-    Modifier.onPreviewKeyEvent { e ->
+fun Modifier.remoteLongPress(onLongPress: () -> Unit, onClick: () -> Unit): Modifier = composed {
+    var armed by remember { mutableStateOf(false) }
+    var pressed by remember { mutableStateOf(false) }
+    var menuPressed by remember { mutableStateOf(false) }
+    Modifier.onFocusChanged { state ->
+        if (!state.isFocused && !state.hasFocus) { armed = false; pressed = false; menuPressed = false }
+    }.onPreviewKeyEvent { e ->
         val ok = e.key == androidx.compose.ui.input.key.Key.DirectionCenter || e.key == androidx.compose.ui.input.key.Key.Enter ||
             e.key == androidx.compose.ui.input.key.Key.NumPadEnter
         val down = e.type == androidx.compose.ui.input.key.KeyEventType.KeyDown
         when {
-            e.key == androidx.compose.ui.input.key.Key.Menu && down -> {
-                onLongPress()
+            e.key == androidx.compose.ui.input.key.Key.Menu -> {
+                if (down) menuPressed = true
+                else if (menuPressed) { menuPressed = false; onLongPress() }
                 true
             }
-            ok && down && e.nativeKeyEvent.repeatCount > 0 -> {
-                if (!fired) {
-                    fired = true
-                    onLongPress()
-                }
+            ok && down -> {
+                if (e.nativeKeyEvent.repeatCount == 0) { pressed = true; armed = false }
+                else if (pressed) armed = true
+                if (e.nativeKeyEvent.isLongPress && pressed) armed = true
+                // Own the entire key gesture, so combinedClickable cannot start a second
+                // long-press timer or forward the held key into the new dialog.
                 true
             }
-            // The release after a long press does not also count as a click.
-            ok && !down && fired -> {
-                fired = false
+            ok -> {
+                val activate = pressed
+                val long = armed || e.nativeKeyEvent.eventTime - e.nativeKeyEvent.downTime >= android.view.ViewConfiguration.getLongPressTimeout()
+                pressed = false
+                armed = false
+                if (activate) { if (long) onLongPress() else onClick() }
                 true
             }
             else -> false

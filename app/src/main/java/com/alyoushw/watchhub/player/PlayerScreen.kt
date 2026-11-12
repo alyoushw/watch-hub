@@ -146,6 +146,7 @@ fun PlayerScreen(
     onRestart: () -> Unit = {},
     onPreload: (Int) -> Unit = {},
     onAutoPreload: () -> Unit = {},
+    onManualPreload: () -> Unit = {},
     onDismissSlow: () -> Unit = {},
     onPlayNow: () -> Unit = {},
 ) {
@@ -701,6 +702,7 @@ fun PlayerScreen(
                         menu = null
                         onAutoPreload()
                     },
+                    onManualPreload = { menu = null; onManualPreload() },
                     tracks = tracks,
                     auto = player.trackSelectionParameters.overrides.keys.none { it.type == C.TRACK_TYPE_VIDEO },
                     onAuto = {
@@ -1169,6 +1171,7 @@ private fun PreloadBox(ready: Long, wanted: Long, modifier: Modifier, onPlayNow:
 private fun QualityPanel(
     autoPreload: Boolean,
     onAutoPreload: () -> Unit,
+    onManualPreload: () -> Unit,
     tracks: Tracks,
     auto: Boolean,
     onAuto: () -> Unit,
@@ -1201,6 +1204,9 @@ private fun QualityPanel(
             LazyColumn(contentPadding = PaddingValues(vertical = 6.dp)) {
                 item {
                     MenuRow("⚡ تحميل مسبق تلقائي لما يقطّع", selected = autoPreload, onClick = onAutoPreload)
+                }
+                item {
+                    MenuRow("تحميل مسبق لمرة واحدة", selected = false, onClick = onManualPreload)
                 }
                 if (options.size > 1) {
                     item { MenuRow("تلقائي (حسب سرعة النت)", selected = auto, modifier = Modifier.focusRequester(firstFocus), onClick = onAuto) }

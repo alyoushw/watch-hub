@@ -104,7 +104,7 @@ private fun PickCard(p: Pick, onOpen: (MediaType, Int) -> Unit, onNope: () -> Un
     }
     val context = androidx.compose.ui.platform.LocalContext.current
     Column(
-        Modifier.width(150.dp).focusHighlight().remoteLongPress { context.shareTitle(item.displayTitle, item.type, item.id) }.combinedClickable(
+        Modifier.width(150.dp).focusHighlight().remoteLongPress({ context.shareTitle(item.displayTitle, item.type, item.id) }, { item.type?.let { onOpen(it, item.id) } }).combinedClickable(
             onClick = { item.type?.let { onOpen(it, item.id) } },
             onLongClick = { context.shareTitle(item.displayTitle, item.type, item.id) },
         ),

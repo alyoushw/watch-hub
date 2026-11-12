@@ -907,7 +907,7 @@ private fun ChannelRow(
             .focusFrame(shape)
             .clip(shape)
             .background(if (selected) MaterialTheme.colorScheme.surfaceContainerHighest else Color.Transparent)
-            .remoteLongPress(onLongClick)
+            .remoteLongPress(onLongClick, onClick)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,

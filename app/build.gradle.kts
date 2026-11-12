@@ -11,8 +11,8 @@ android {
     val privatePreview = System.getenv("WATCHHUB_PREVIEW") == "true"
 
     defaultConfig {
-        applicationId = if (privatePreview) "com.alyoushw.watchhub.animepreview" else "com.alyoushw.watchhub"
-        manifestPlaceholders["appLabel"] = if (privatePreview) "Watch Hub Anime (خاص)" else "@string/app_name"
+        applicationId = if (privatePreview) "com.alyoushw.watchhub.smartpreview" else "com.alyoushw.watchhub"
+        manifestPlaceholders["appLabel"] = "@string/app_name"
         minSdk = 26
         targetSdk = 35
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -20,7 +20,7 @@ android {
         // release to offer updates. Local builds count as 0 (always older).
         val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0
         versionCode = 100 + build
-        versionName = "0.23.$build" + if (privatePreview) "-preview" else ""
+        versionName = "0.24.$build" + if (privatePreview) "-preview" else ""
         buildConfigField("int", "BUILD_NUMBER", "$build")
         buildConfigField("boolean", "IS_PREVIEW", privatePreview.toString())
         val animeifyToken = System.getenv("WATCHHUB_ANIMEIFY_TOKEN").orEmpty().trim()
