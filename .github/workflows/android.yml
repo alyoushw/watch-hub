@@ -21,8 +21,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       WATCHHUB_ANIMEIFY_TOKEN: ${{ secrets.WATCHHUB_ANIMEIFY_TOKEN }}
-      WATCHHUB_PREVIEW: ${{ (github.ref != 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.distribution == 'private')) && 'true' || 'false' }}
-      APK_NAME: ${{ (github.ref != 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.distribution == 'private')) && 'WatchHub-Anime-Preview.apk' || 'WatchHub.apk' }}
+      WATCHHUB_PREVIEW: ${{ ((github.ref != 'refs/heads/main' && github.ref != 'refs/heads/ccr-3b14310b-u6y40j') || (github.event_name == 'workflow_dispatch' && inputs.distribution == 'private')) && 'true' || 'false' }}
+      APK_NAME: ${{ ((github.ref != 'refs/heads/main' && github.ref != 'refs/heads/ccr-3b14310b-u6y40j') || (github.event_name == 'workflow_dispatch' && inputs.distribution == 'private')) && 'WatchHub-Anime-Preview.apk' || 'WatchHub.apk' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -105,6 +105,12 @@ jobs:
       - name: Rename APK
         run: cp app/build/outputs/apk/release/app-release.apk "$APK_NAME"
 
+      - name: Verify compatibility with the installed main application
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ccr-3b14310b-u6y40j') && github.event_name == 'workflow_dispatch' && inputs.distribution == 'stable'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python .github/scripts/verify-stable-apk.py "$APK_NAME"
+
       - uses: actions/upload-artifact@v4
         if: env.WATCHHUB_PREVIEW != 'true'
         with:
@@ -123,7 +129,7 @@ jobs:
           fi
 
       - name: Publish release
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.distribution == 'stable'))
+        if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || ((github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ccr-3b14310b-u6y40j') && github.event_name == 'workflow_dispatch' && inputs.distribution == 'stable')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}

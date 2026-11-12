@@ -49,6 +49,7 @@ fun UpdateNotice() {
     val progress by updater.progress.collectAsStateWithLifecycle()
     var error by remember { mutableStateOf<String?>(null) }
     var canInstall by remember { mutableStateOf(updater.canInstall()) }
+    var hidden by remember { mutableStateOf(false) }
 
     // Phones on Android 13+ ask once for notifications, for the background "update ready" note.
     val askNotify = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -70,11 +71,11 @@ fun UpdateNotice() {
     }
 
     val u: AppUpdate = update ?: return
-    if (updater.wasDismissed(u) && progress == null) return
+    if (hidden || updater.wasDismissed(u) && progress == null) return
     val downloading = progress != null
 
     AlertDialog(
-        onDismissRequest = { if (!downloading) updater.dismiss(u) },
+        onDismissRequest = { if (!downloading) hidden = true },
         title = { Text("يوجد تحديث جديد") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {

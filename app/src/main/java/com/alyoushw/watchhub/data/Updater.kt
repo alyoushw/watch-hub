@@ -28,10 +28,18 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.util.concurrent.TimeUnit
+
+/** A newer build on GitHub: its number and where its APK is. */
+data class AppUpdate(val build: Int, val url: String, val notes: String?)
 
 /**
  * Keeps the app up to date from its GitHub releases ("build-N"): finds a newer build than this
@@ -40,6 +48,7 @@ import java.util.concurrent.TimeUnit
  */
 class Updater(private val context: Context) {
     private val http = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
+    private val json = Json { ignoreUnknownKeys = true }
     private val prefs = context.getSharedPreferences("updates", Context.MODE_PRIVATE)
 
     private val _available = MutableStateFlow<AppUpdate?>(null)
@@ -68,7 +77,6 @@ class Updater(private val context: Context) {
      */
     suspend fun check(manual: Boolean = false): AppUpdate? = withContext(Dispatchers.IO) {
         if (BuildConfig.IS_PREVIEW) return@withContext null
-        lastCheck = System.currentTimeMillis()
         if (manual) {
             prefs.edit().remove(KEY_DISMISSED).apply()
             _available.value = null
@@ -78,12 +86,17 @@ class Updater(private val context: Context) {
                 Request.Builder().url(LATEST).header("Accept", "application/vnd.github+json").build(),
             ).execute().use { res ->
                 if (!res.isSuccessful) return@use null
-                parseAppUpdate(res.body?.string().orEmpty())
+                val o = json.parseToJsonElement(res.body?.string().orEmpty()).jsonObject
+                val build = o["tag_name"]?.jsonPrimitive?.contentOrNull?.removePrefix("build-")?.toIntOrNull() ?: return@use null
+                val apk = o["assets"]?.jsonArray?.map { it.jsonObject }
+                    ?.firstOrNull { it["name"]?.jsonPrimitive?.contentOrNull?.endsWith(".apk") == true }
+                    ?.get("browser_download_url")?.jsonPrimitive?.contentOrNull ?: return@use null
+                AppUpdate(build, apk, o["body"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() })
             }
-        }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrNull()
-        val newer = found?.takeIf { isNewerBuild(currentBuild, it.build) }
-        // A temporary GitHub failure must not remove an update the user already saw.
-        if (found != null) _available.value = newer
+        }.getOrNull()
+        if (found != null) lastCheck = System.currentTimeMillis()
+        val newer = found?.takeIf { currentBuild > 0 && it.build > currentBuild }
+        _available.value = newer
         newer
     }
 
@@ -180,9 +193,8 @@ class Updater(private val context: Context) {
             .setContentIntent(open)
             .setAutoCancel(true)
             .build()
-        if (runCatching { nm.notify(1, n) }.isSuccess) {
-            prefs.edit().putInt(KEY_NOTIFIED, update.build).apply()
-        }
+        runCatching { nm.notify(1, n) }
+        prefs.edit().putInt(KEY_NOTIFIED, update.build).apply()
     }
 
     companion object {

@@ -83,8 +83,21 @@ class PlaybackSmokeTest {
                 assertNotNull((activity.application as WatchHubApp).container.updater)
                 assertEquals(BuildConfig.APPLICATION_ID, activity.packageName)
                 if (BuildConfig.IS_PREVIEW) assertTrue(activity.packageName.endsWith(".animepreview"))
+                else assertEquals("com.alyoushw.watchhub", activity.packageName)
             }
         }
+    }
+
+    @Test fun existingAccountConfigurationConnectsWithoutChangingSignIn() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val cloud = (context.applicationContext as WatchHubApp).container.cloud
+        assertTrue("The existing account configuration endpoint must remain available", cloud.refreshConfig())
+        val config = checkNotNull(cloud.config)
+        assertTrue(config.usable)
+        assertTrue("Keep the existing Google web client", config.googleWebClientId.endsWith(".apps.googleusercontent.com"))
+        val firebase = checkNotNull(config.firebase)
+        assertTrue("Keep the existing Android Firebase application", firebase.androidAppId.contains(":android:"))
+        assertFalse("Firebase must initialize the existing account connection", cloud.state.value is com.alyoushw.watchhub.data.CloudSync.State.NotConfigured)
     }
 
     @Test fun existingPlayerDecodesMp4AndPersistsProgress() {
