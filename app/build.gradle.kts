@@ -13,6 +13,7 @@ android {
         applicationId = "com.alyoushw.watchhub"
         minSdk = 26
         targetSdk = 35
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // The CI run number is the build number ("build-84"): the app compares it with the newest
         // release to offer updates. Local builds count as 0 (always older).
         val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0
@@ -86,6 +87,9 @@ dependencies {
     implementation("org.jsoup:jsoup:1.18.3")
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:core-ktx:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
