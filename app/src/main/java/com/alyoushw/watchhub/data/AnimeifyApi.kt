@@ -111,8 +111,14 @@ class AnimeifyApi(
             add("Token", token)
         }.build()
         val text = request(Request.Builder().url(base + path).post(form).build())
-        return try { json.parseToJsonElement(text.trimStart('\uFEFF', ' ', '\r', '\n')) }
+        val result = try { json.parseToJsonElement(text.trimStart('\uFEFF', ' ', '\r', '\n')) }
         catch (_: IllegalArgumentException) { throw AnimeifyException("ردّ مصدر Animeify ببيانات غير صالحة") }
+        if (path == "anime/load_servers.php") {
+            if (result !is JsonObject) throw AnimeifyException("تعذّر قراءة سيرفرات الحلقة")
+        } else if (result !is JsonArray) {
+            throw AnimeifyException("ردّ مصدر Animeify ببيانات غير صالحة")
+        }
+        return result
     }
 
     private suspend fun fetch(url: String): String = request(Request.Builder().url(url)

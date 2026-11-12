@@ -20,7 +20,7 @@ android {
         versionCode = 100 + build
         versionName = "0.23.$build"
         buildConfigField("int", "BUILD_NUMBER", "$build")
-        val animeifyToken = System.getenv("WATCHHUB_ANIMEIFY_TOKEN").orEmpty()
+        val animeifyToken = System.getenv("WATCHHUB_ANIMEIFY_TOKEN").orEmpty().trim()
         buildConfigField("String", "ANIMEIFY_TOKEN", "\"${animeifyToken.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
     }
 

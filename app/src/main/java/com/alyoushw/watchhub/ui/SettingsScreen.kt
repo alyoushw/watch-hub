@@ -210,7 +210,7 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}) {
             SectionTitle("عن التطبيق")
             AppVersionRow()
             Text(
-                "Watch Hub ما يشغّل الفيديو بنفسه (إلا محتوى حساب Xtream Codes إذا أضفته) ولا يحفظ كلمات مرور حساباتك غير هذا الحساب. يجمع لك المحتوى في مكان واحد، " +
+                "Watch Hub يشغّل حلقات Animeify ومحتوى حساب Xtream Codes بالمشغل المدمج ويجمع لك المحتوى في مكان واحد، " +
                     "ولما تضغط «شاهد» يفتح العمل في تطبيق المنصة الرسمي.\n\n" +
                     "كل بياناتك (قائمتك واشتراكاتك) محفوظة على جوالك بس.\n\n" +
                     "This product uses the TMDB API but is not endorsed or certified by TMDB. " +
