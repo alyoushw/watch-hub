@@ -341,7 +341,7 @@ private fun XtreamCard(item: XtreamItem, onLongClick: () -> Unit = {}, onClick: 
         Modifier
             .focusHighlight(shape)
             .clip(shape)
-            .remoteLongPress(onLongClick)
+            .remoteLongPress(onLongClick, onClick)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -730,7 +730,7 @@ internal fun EpisodePlaybackRow(
             .clip(shape)
             .background(if (current) Gold.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant)
             .border(if (current) 2.dp else 0.dp, if (current) Gold else Color.Transparent, shape)
-            .remoteLongPress(onLongClick)
+            .remoteLongPress(onLongClick, onClick)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .graphicsLayer { alpha = if (finished) 0.55f else 1f }
             .padding(10.dp),
@@ -952,23 +952,24 @@ fun ContinueWatchingRow(
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             items(list, key = { it.key }) { e ->
                 val shape = RoundedCornerShape(12.dp)
+                val resume = {
+                    if (e.animeRef != null) {
+                        if (e.finished) openAnime(e)
+                        else PlayerActivity.start(context, listOf(com.alyoushw.watchhub.player.QueueItem(emptyList(), e)), 0)
+                    } else if (e.kind == WatchEntry.EPISODE && e.finished && e.seriesId != null) {
+                        openSeries(e)
+                    } else {
+                        PlayerActivity.start(context, container.xtream.playUrls(e), e)
+                    }
+                }
                 Column(
                     Modifier
                         .width(220.dp)
                         .focusHighlight(shape)
                         .clip(shape)
-                        .remoteLongPress { menuFor = e }
+                        .remoteLongPress({ menuFor = e }, resume)
                         .combinedClickable(
-                            onClick = {
-                                if (e.animeRef != null) {
-                                    if (e.finished) openAnime(e)
-                                    else PlayerActivity.start(context, listOf(com.alyoushw.watchhub.player.QueueItem(emptyList(), e)), 0)
-                                } else if (e.kind == WatchEntry.EPISODE && e.finished && e.seriesId != null) {
-                                    openSeries(e)
-                                } else {
-                                    PlayerActivity.start(context, container.xtream.playUrls(e), e)
-                                }
-                            },
+                            onClick = resume,
                             onLongClick = { menuFor = e },
                         ),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
