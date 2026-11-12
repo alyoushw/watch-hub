@@ -11,6 +11,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      WATCHHUB_ANIMEIFY_TOKEN: ${{ secrets.WATCHHUB_ANIMEIFY_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
