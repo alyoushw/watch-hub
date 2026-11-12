@@ -35,6 +35,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 
 /**
  * Full-screen player for the user's Xtream Codes streams: our own controls and gestures
@@ -243,6 +244,9 @@ class PlayerActivity : ComponentActivity() {
                     onPreload = ::preload,
                     onAutoPreload = { setAutoPreload(!session.autoPreload) },
                     onManualPreload = ::slowNotice,
+                    onSourceQuality = ::selectSourceQuality,
+                    onAttachSubtitle = ::attachSubtitle,
+                    onAttachSubtitleFile = ::attachSubtitleFile,
                     onDismissSlow = { session.slowNet = null },
                     onPlayNow = ::playNowAfterPreload,
                     onRestart = {
@@ -274,7 +278,7 @@ class PlayerActivity : ComponentActivity() {
             if (queue[i].urls.firstOrNull() != local) queue = queue.toMutableList().also { it[i] = it[i].copy(urls = listOf(local) + it[i].urls) }
         }
         if (started) saveProgress(important = true)
-        if (queue[i].entry.animeRef != null || entry?.animeRef != null) {
+        if (queue[i].entry.animeRef != null || entry?.animeRef != null || queue[i].entry.sourceRef != null || entry?.sourceRef != null) {
             started = false
             player.stop()
             player.clearMediaItems()
@@ -288,6 +292,9 @@ class PlayerActivity : ComponentActivity() {
         introPending = null
         val item = queue[i]
         val e = item.entry
+        session.sourceQualities = emptyList()
+        session.sourceQuality = null
+        session.sourceMessage = null
         session.title = e.title
         session.subtitle = e.subtitle
         session.live = e.isLive
@@ -310,6 +317,44 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun setMedia(startAt: Long) {
+        val sourceRef = entry?.sourceRef
+        if (sourceRef != null) {
+            resolveJob?.cancel()
+            session.preparingSource = true
+            session.sourceProgress = null
+            val key = entry?.key
+            resolveJob = lifecycleScope.launch {
+                try {
+                    val resolved = container.watchSources.resolve(sourceRef, container.playbackEngines) { progress ->
+                        runOnUiThread { if (entry?.key == key) session.sourceProgress = progress }
+                    }
+                    val subtitles = coroutineScope {
+                        resolved.source.subtitles.take(8).map { subtitle -> async {
+                            try { com.alyoushw.watchhub.data.SubtitleFiles.fetch(this@PlayerActivity, subtitle.url, subtitle.language, subtitle.label).copy(id = subtitle.id) }
+                            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                            catch (_: Exception) { null }
+                        } }.awaitAll().filterNotNull()
+                    }
+                    if (entry?.key != key || entry?.sourceRef != sourceRef) return@launch
+                    val mime = when (resolved.variant.transport) {
+                        com.alyoushw.watchhub.data.SourceTransport.HLS -> androidx.media3.common.MimeTypes.APPLICATION_M3U8
+                        com.alyoushw.watchhub.data.SourceTransport.MP4 -> androidx.media3.common.MimeTypes.VIDEO_MP4
+                        com.alyoushw.watchhub.data.SourceTransport.MKV -> androidx.media3.common.MimeTypes.VIDEO_MATROSKA
+                        else -> null
+                    }
+                    queue = queue.toMutableList().also { it[position] = it[position].copy(urls = listOf(resolved.uri), subtitles = subtitles, mimeType = mime) }
+                    session.sourceQualities = resolved.source.variants.map { it.id to it.label }
+                    session.sourceQuality = resolved.variant.id
+                    urlIndex = 0
+                    setResolvedMedia(startAt)
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (e: Exception) {
+                    session.sourceMessage = e.message ?: "تعذّر تشغيل المصدر؛ اختر مصدراً آخر"
+                    Toast.makeText(this@PlayerActivity, session.sourceMessage, Toast.LENGTH_LONG).show()
+                } finally { if (isActive) session.preparingSource = false }
+            }
+            return
+        }
         val ref = entry?.animeRef
         if (ref != null) {
             resolveJob?.cancel()
@@ -337,12 +382,61 @@ class PlayerActivity : ComponentActivity() {
         setResolvedMedia(startAt)
     }
 
+    private fun selectSourceQuality(id: String) {
+        val ref = entry?.sourceRef ?: return
+        if (id == ref.variantId || session.sourceQualities.none { it.first == id }) return
+        val at = player.currentPosition
+        player.pause()
+        queue = queue.toMutableList().also { it[position] = it[position].copy(entry = it[position].entry.copy(sourceRef = ref.copy(variantId = id))) }
+        setMedia(at)
+    }
+
+    private fun attachSubtitle(url: String, language: String) {
+        lifecycleScope.launch {
+            try {
+                val key = entry?.key
+                val subtitle = com.alyoushw.watchhub.data.SubtitleFiles.fetch(this@PlayerActivity, url, language, "ترجمة مضافة")
+                if (entry?.key != key) return@launch
+                applySubtitle(subtitle)
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { Toast.makeText(this@PlayerActivity, e.message ?: "تعذّر تحميل الترجمة", Toast.LENGTH_LONG).show() }
+        }
+    }
+
+    private fun attachSubtitleFile(uri: android.net.Uri, language: String) {
+        lifecycleScope.launch {
+            try {
+                val key = entry?.key
+                val subtitle = com.alyoushw.watchhub.data.SubtitleFiles.fromUri(this@PlayerActivity, uri, language)
+                if (entry?.key == key) applySubtitle(subtitle)
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { Toast.makeText(this@PlayerActivity, e.message ?: "تعذّر قراءة الترجمة", Toast.LENGTH_LONG).show() }
+        }
+    }
+
+    private fun applySubtitle(subtitle: com.alyoushw.watchhub.data.SourceSubtitle) {
+        val at = player.currentPosition
+        queue = queue.toMutableList().also { it[position] = it[position].copy(subtitles = it[position].subtitles + subtitle) }
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).setPreferredTextLanguage(subtitle.language).build()
+        setResolvedMedia(at)
+        Toast.makeText(this, "أُضيف ملف الترجمة", Toast.LENGTH_SHORT).show()
+    }
+
     private fun setResolvedMedia(startAt: Long) {
         val urls = current?.urls ?: return
         if (urls.isEmpty()) return
         val item = MediaItem.Builder()
             .setUri(urls[urlIndex.coerceIn(0, urls.lastIndex)])
+            .setMimeType(current?.mimeType)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(entry?.title).build())
+            .setSubtitleConfigurations(current?.subtitles.orEmpty().mapIndexed { index, subtitle ->
+                MediaItem.SubtitleConfiguration.Builder(android.net.Uri.parse(subtitle.url))
+                    .setId(subtitle.id).setLabel(subtitle.label).setLanguage(subtitle.language)
+                    .setSelectionFlags(if (subtitle.language == "ar" || index == 0 && current?.subtitles.orEmpty().none { it.language == "ar" }) C.SELECTION_FLAG_DEFAULT else 0)
+                    .setMimeType(if (subtitle.format == "srt") androidx.media3.common.MimeTypes.APPLICATION_SUBRIP else androidx.media3.common.MimeTypes.TEXT_VTT)
+                    .build()
+            })
             .build()
         if (startAt > 0) player.setMediaItem(item, startAt) else player.setMediaItem(item)
         player.prepare()
@@ -354,6 +448,7 @@ class PlayerActivity : ComponentActivity() {
      */
     private fun loadSeriesQueue() {
         val e = entry ?: return
+        if (e.sourceRef != null) return
         e.animeRef?.let { ref ->
             if (queue.size > 1) return
             lifecycleScope.launch {
@@ -611,7 +706,7 @@ class PlayerActivity : ComponentActivity() {
         /** Plays [items] starting at [index]: left/right (channels) or next episode move through them. */
         fun start(context: Context, items: List<QueueItem>, index: Int) {
             val selected = items.getOrNull(index) ?: return
-            if (selected.urls.isEmpty() && selected.entry.animeRef == null) return
+            if (selected.urls.isEmpty() && selected.entry.animeRef == null && selected.entry.sourceRef == null) return
             PlayerQueue.items = items
             PlayerQueue.index = index
             context.startActivity(Intent(context, PlayerActivity::class.java))

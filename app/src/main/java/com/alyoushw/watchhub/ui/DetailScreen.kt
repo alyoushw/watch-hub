@@ -146,6 +146,7 @@ data class DetailInfo(
     val genreIds: List<Int> = emptyList(),
     /** Production countries as ISO codes, e.g. ["SA"]. */
     val countries: List<String> = emptyList(),
+    val originalTitle: String = "",
 ) {
     /** "🇸🇦 سعودي" style label(s) for the header. */
     val countryText: String?
@@ -193,6 +194,7 @@ data class DetailInfo(
                 id = ar.id,
                 title = ar.displayTitle.ifBlank { en?.displayTitle.orEmpty() },
                 searchTitle = en?.displayTitle?.ifBlank { null } ?: ar.displayTitle,
+                originalTitle = ar.originalTitle ?: ar.originalName ?: en?.originalTitle ?: en?.originalName ?: en?.displayTitle.orEmpty(),
                 year = ar.year,
                 tagline = (ar.tagline?.ifBlank { null } ?: en?.tagline?.ifBlank { null }),
                 overview = overview,
@@ -471,6 +473,8 @@ private fun DetailContent(
         }
 
         item { WatchButtons(info, links, subscribedKeys, onWatch) }
+
+        item { SmartWatchSources(info) }
 
         if (16 in info.genreIds && (info.originalLanguage == "ja" || "JP" in info.countries)) {
             item {

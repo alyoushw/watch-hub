@@ -26,6 +26,16 @@ class AppContainer(context: Context) {
     val links = DirectLinks()
     val jikan = JikanApi()
     val animeify = com.alyoushw.watchhub.data.AnimeifyApi()
+    val watchSources = com.alyoushw.watchhub.data.WatchSources({
+        listOf(com.alyoushw.watchhub.data.OpenFilmSourceProvider()) +
+            settings.sourceCatalogue.value.takeIf { it.isNotBlank() }?.let {
+                val catalogue = com.alyoushw.watchhub.data.ManifestSourceProvider(it)
+                listOf(if (settings.torrentIndexEnabled.value)
+                    com.alyoushw.watchhub.data.IndexedCatalogueProvider(catalogue, com.alyoushw.watchhub.data.TpbTorrentIndex()) else catalogue)
+            }.orEmpty()
+    })
+    val playbackEngines = com.alyoushw.watchhub.data.PlaybackEngines(listOf(
+        com.alyoushw.watchhub.data.DirectPlaybackEngine(), com.alyoushw.watchhub.data.TorrentPlaybackEngine(context)))
     val assistant = ClaudeAssistant(settings)
     val xtream = XtreamApi(settings)
     val history = WatchHistory(context).also { it.remapAccounts(settings.accountIdChanges) }

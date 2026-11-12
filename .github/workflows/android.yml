@@ -50,7 +50,7 @@ jobs:
         if: steps.prior_checks.outputs.reused != 'true'
         run: |
           chmod +x gradlew
-          ./gradlew testDebugUnitTest lintDebug --stacktrace
+          ./gradlew testDebugUnitTest lintDebug compileDebugAndroidTestKotlin --stacktrace
 
       - name: Upload verification reports
         if: always()
@@ -160,7 +160,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.distribution == 'validation' && 'stable-candidate' || 'smart-preview' }}-${{ github.run_number }}
-          name: Watch Hub - private ${{ inputs.distribution == 'validation' && 'update candidate' || 'anime preview' }} ${{ github.run_number }}
+          name: Watch Hub - private ${{ inputs.distribution == 'validation' && 'update candidate' || 'smart preview' }} ${{ github.run_number }}
           files: ${{ env.APK_NAME }}
           draft: true
           prerelease: true

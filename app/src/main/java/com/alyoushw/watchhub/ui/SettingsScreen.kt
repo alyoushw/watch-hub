@@ -111,6 +111,9 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}) {
             StatsSection()
 
             HorizontalDivider()
+            SourceSettingsSection()
+
+            HorizontalDivider()
 
             SectionTitle("مفتاح TMDB")
             Text(

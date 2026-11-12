@@ -75,6 +75,7 @@ import androidx.compose.ui.input.key.nativeKeyCode
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
@@ -122,6 +123,9 @@ private val PictureModes = listOf(
 private val Speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
 
 /** Subtitle sizes (fraction of the picture height). */
+private val SubColors = listOf(android.graphics.Color.WHITE to "أبيض", android.graphics.Color.YELLOW to "أصفر", android.graphics.Color.CYAN to "سماوي", android.graphics.Color.GREEN to "أخضر")
+private val SubDelays = listOf(0L, 500L, 1000L, 1500L, 2000L, 3000L, 5000L)
+
 private val SubSizes = listOf(0.05f to "صغير", 0.065f to "متوسط", 0.08f to "كبير", 0.1f to "كبير جداً")
 
 /** Sleep timer choices in minutes; -1 = at the end of this episode / film. */
@@ -147,6 +151,9 @@ fun PlayerScreen(
     onPreload: (Int) -> Unit = {},
     onAutoPreload: () -> Unit = {},
     onManualPreload: () -> Unit = {},
+    onSourceQuality: (String) -> Unit = {},
+    onAttachSubtitle: (String, String) -> Unit = { _, _ -> },
+    onAttachSubtitleFile: (android.net.Uri, String) -> Unit = { _, _ -> },
     onDismissSlow: () -> Unit = {},
     onPlayNow: () -> Unit = {},
 ) {
@@ -187,6 +194,15 @@ fun PlayerScreen(
     val prefs = remember { context.getSharedPreferences("player", Context.MODE_PRIVATE) }
     var subSize by remember { mutableIntStateOf(prefs.getInt("subSize", 1).coerceIn(0, SubSizes.lastIndex)) }
     var subBackground by remember { mutableStateOf(prefs.getBoolean("subBg", false)) }
+    var subColor by remember { mutableIntStateOf(prefs.getInt("subColor", android.graphics.Color.WHITE)) }
+    var subDelay by remember { mutableLongStateOf(prefs.getLong("subDelay", 0).coerceIn(0, 5000)) }
+    var arabicCaptions by remember { mutableStateOf(prefs.getBoolean("arabicCaptions", false)) }
+    var captionStatus by remember { mutableStateOf<String?>(null) }
+    var attachSubtitles by remember { mutableStateOf(false) }
+    val selectedText = tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }.firstNotNullOfOrNull { group ->
+        (0 until group.length).firstOrNull { group.isTrackSelected(it) }?.let(group::getTrackFormat)
+    }
+    if (attachSubtitles) SubtitleAttachmentDialog(onDismiss = { attachSubtitles = false }, onUrl = onAttachSubtitle, onFile = onAttachSubtitleFile)
     var boost by remember { mutableStateOf(false) }
     /** Sleep timer: when to stop (ms clock), or stop at the end of this item. */
     var sleepAt by remember { mutableStateOf<Long?>(null) }
@@ -450,10 +466,11 @@ fun PlayerScreen(
                 },
                 update = { view ->
                     view.resizeMode = PictureModes[resize].resize
+                    view.subtitleView?.visibility = if (arabicCaptions || subDelay > 0) android.view.View.GONE else android.view.View.VISIBLE
                     view.subtitleView?.setFractionalTextSize(SubSizes[subSize].first)
                     view.subtitleView?.setStyle(
                         CaptionStyleCompat(
-                            android.graphics.Color.WHITE,
+                            subColor,
                             if (subBackground) 0x99000000.toInt() else android.graphics.Color.TRANSPARENT,
                             android.graphics.Color.TRANSPARENT,
                             if (subBackground) CaptionStyleCompat.EDGE_TYPE_NONE else CaptionStyleCompat.EDGE_TYPE_OUTLINE,
@@ -474,6 +491,9 @@ fun PlayerScreen(
                         scaleY = zoom
                     },
             )
+
+            CaptionOverlay(player, arabicCaptions, subDelay, selectedText?.language, selectedText != null,
+                SubSizes[subSize].first, subColor, subBackground, Modifier.fillMaxSize()) { captionStatus = it }
 
             // Touch: tap shows/hides, double tap skips, drag left/right edge for brightness/volume,
             // drag sideways to seek, pinch to zoom.
@@ -602,6 +622,18 @@ fun PlayerScreen(
                 }
             }
 
+            if (session.preparingSource) {
+                Column(Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.8f), RoundedCornerShape(12.dp)).padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    CircularProgressIndicator(color = Gold)
+                    Text(if (session.sourceProgress != null) "تجهيز ملف الفيديو · ${(session.sourceProgress!! * 100).toInt()}%" else "جارٍ تجهيز مصدر المشاهدة…", color = Color.White)
+                    Text("الرجوع يلغي التجهيز", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                }
+            }
+            session.sourceMessage?.let { message ->
+                Text(message, color = Color.White, modifier = Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.8f)).padding(20.dp))
+            }
+
             session.slowNet?.let { why ->
                 if (!locked && session.preloading == null) {
                     SlowNetCard(
@@ -703,6 +735,9 @@ fun PlayerScreen(
                         onAutoPreload()
                     },
                     onManualPreload = { menu = null; onManualPreload() },
+                    sourceQualities = session.sourceQualities,
+                    sourceQuality = session.sourceQuality,
+                    onSourceQuality = { menu = null; onSourceQuality(it) },
                     tracks = tracks,
                     auto = player.trackSelectionParameters.overrides.keys.none { it.type == C.TRACK_TYPE_VIDEO },
                     onAuto = {
@@ -760,6 +795,18 @@ fun PlayerScreen(
                         subBackground = !subBackground
                         prefs.edit().putBoolean("subBg", subBackground).apply()
                     },
+                    arabicCaptions = arabicCaptions,
+                    captionStatus = captionStatus,
+                    onArabicCaptions = {
+                        arabicCaptions = !arabicCaptions
+                        captionStatus = null
+                        prefs.edit().putBoolean("arabicCaptions", arabicCaptions).apply()
+                    },
+                    subColor = subColor,
+                    onSubColor = { subColor = it; prefs.edit().putInt("subColor", it).apply() },
+                    subDelay = subDelay,
+                    onSubDelay = { subDelay = it; prefs.edit().putLong("subDelay", it).apply() },
+                    onAttach = { menu = null; attachSubtitles = true },
                     boost = boost,
                     softwareAudio = remember { prefs.getBoolean("softwareAudio", false) },
                     onSoftwareAudio = {
@@ -958,6 +1005,14 @@ private fun MenuPanel(
     onSubSize: (Int) -> Unit,
     subBackground: Boolean,
     onSubBackground: () -> Unit,
+    arabicCaptions: Boolean,
+    captionStatus: String?,
+    onArabicCaptions: () -> Unit,
+    subColor: Int,
+    onSubColor: (Int) -> Unit,
+    subDelay: Long,
+    onSubDelay: (Long) -> Unit,
+    onAttach: () -> Unit,
     boost: Boolean,
     onBoost: () -> Unit,
     softwareAudio: Boolean,
@@ -1014,7 +1069,14 @@ private fun MenuPanel(
                     Menu.SUBTITLES -> {
                         item { MenuRow("بدون ترجمة", selected = !anyText, modifier = Modifier.focusRequester(firstFocus), onClick = onSubtitlesOff) }
                         items(options) { (g, i, sel) -> MenuRow(trackName(g, i, "ترجمة"), selected = sel) { onPickTrack(g, i) } }
-                        if (options.isEmpty()) item { Hint("هذا الملف ما فيه ترجمات") }
+                        item { MenuRow("إضافة ملف ترجمة SRT / WebVTT", selected = false, onClick = onAttach) }
+                        if (options.isEmpty()) item { Hint("لا يوجد مسار ترجمة نصية؛ أضف ملفاً للترجمة إلى العربية. التفريغ من الصوت غير متاح حالياً.") }
+                        item { MenuRow("ترجمة النصوص إلى العربية", selected = arabicCaptions, onClick = onArabicCaptions) }
+                        if (arabicCaptions) item { Hint(captionStatus ?: "اختر ترجمة نصية؛ يجري تنزيل نموذج اللغة عند الحاجة أول مرة") }
+                        item { SectionLabel("تأخير الترجمة") }
+                        items(SubDelays) { delay -> MenuRow(if (delay == 0L) "بدون تأخير" else "+${delay / 1000.0} ثانية", selected = delay == subDelay) { onSubDelay(delay) } }
+                        item { SectionLabel("لون الترجمة") }
+                        items(SubColors) { (color, label) -> MenuRow(label, selected = color == subColor) { onSubColor(color) } }
                         item { SectionLabel("حجم الترجمة") }
                         items(SubSizes.size) { n -> MenuRow(SubSizes[n].second, selected = n == subSize) { onSubSize(n) } }
                         item { MenuRow("خلفية داكنة ورا الترجمة", selected = subBackground, onClick = onSubBackground) }
@@ -1172,6 +1234,9 @@ private fun QualityPanel(
     autoPreload: Boolean,
     onAutoPreload: () -> Unit,
     onManualPreload: () -> Unit,
+    sourceQualities: List<Pair<String, String>>,
+    sourceQuality: String?,
+    onSourceQuality: (String) -> Unit,
     tracks: Tracks,
     auto: Boolean,
     onAuto: () -> Unit,
@@ -1201,12 +1266,16 @@ private fun QualityPanel(
                 .padding(vertical = 18.dp),
         ) {
             Text("الجودة", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
-            LazyColumn(contentPadding = PaddingValues(vertical = 6.dp)) {
+            LazyColumn(modifier = Modifier.testTag("quality-options"), contentPadding = PaddingValues(vertical = 6.dp)) {
                 item {
                     MenuRow("⚡ تحميل مسبق تلقائي لما يقطّع", selected = autoPreload, onClick = onAutoPreload)
                 }
                 item {
                     MenuRow("تحميل مسبق لمرة واحدة", selected = false, onClick = onManualPreload)
+                }
+                if (sourceQualities.size > 1) {
+                    item { SectionLabel("جودات المصدر") }
+                    items(sourceQualities) { (id, label) -> MenuRow(label, selected = id == sourceQuality) { onSourceQuality(id) } }
                 }
                 if (options.size > 1) {
                     item { MenuRow("تلقائي (حسب سرعة النت)", selected = auto, modifier = Modifier.focusRequester(firstFocus), onClick = onAuto) }
@@ -1214,7 +1283,7 @@ private fun QualityPanel(
                         val (g, i, f) = options[n]
                         MenuRow(label(f), selected = !auto && g.isTrackSelected(i)) { onPick(g, i, "${minOf(f.height, f.width.takeIf { w -> w > 0 } ?: f.height)}p") }
                     }
-                } else {
+                } else if (sourceQualities.size <= 1) {
                     val f = options.firstOrNull()?.third
                     item {
                         MenuRow(f?.let { label(it) } ?: "الجودة الأصلية", selected = true, modifier = Modifier.focusRequester(firstFocus), onClick = onClose)

@@ -34,6 +34,7 @@ data class WatchEntry(
     val tmdbId: Int? = null,
     /** Animeify's stable source reference; never a temporary CDN URL. */
     val animeRef: AnimeEpisodeRef? = null,
+    val sourceRef: WatchSourceRef? = null,
 ) {
     val isLive: Boolean get() = kind == LIVE
     val isEpisode: Boolean get() = kind == EPISODE || kind == ANIME

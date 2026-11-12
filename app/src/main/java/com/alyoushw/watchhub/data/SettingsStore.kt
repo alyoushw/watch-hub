@@ -296,6 +296,21 @@ class SettingsStore(context: Context) {
         _webUrl.value = v.ifEmpty { DEFAULT_WEB_URL }
     }
 
+    private val _torrentIndexEnabled = MutableStateFlow(prefs.getBoolean("torrent_index_enabled", false))
+    val torrentIndexEnabled: StateFlow<Boolean> = _torrentIndexEnabled.asStateFlow()
+    fun setTorrentIndexEnabled(value: Boolean) {
+        prefs.edit().putBoolean("torrent_index_enabled", value).apply()
+        _torrentIndexEnabled.value = value
+    }
+
+    private val _sourceCatalogue = MutableStateFlow(prefs.getString("source_catalogue", "").orEmpty())
+    val sourceCatalogue: StateFlow<String> = _sourceCatalogue.asStateFlow()
+    fun setSourceCatalogue(value: String) {
+        val url = value.trim()
+        prefs.edit().putString("source_catalogue", url).apply()
+        _sourceCatalogue.value = url
+    }
+
     private val _themeMode = MutableStateFlow(prefs.getString(KEY_THEME, "dark") ?: "dark")
 
     /** "dark", "light" or "system". */

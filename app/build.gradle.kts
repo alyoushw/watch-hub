@@ -92,6 +92,12 @@ android {
 }
 
 dependencies {
+    implementation("org.libtorrent4j:libtorrent4j:2.1.0-39")
+    runtimeOnly("org.libtorrent4j:libtorrent4j-android-arm64:2.1.0-39")
+    runtimeOnly("org.libtorrent4j:libtorrent4j-android-arm:2.1.0-39")
+    runtimeOnly("org.libtorrent4j:libtorrent4j-android-x86_64:2.1.0-39")
+    runtimeOnly("org.libtorrent4j:libtorrent4j-android-x86:2.1.0-39")
+    implementation("com.google.mlkit:language-id:17.0.6")
     implementation("org.jsoup:jsoup:1.18.3")
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
