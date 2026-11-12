@@ -105,6 +105,7 @@ jobs:
         run: cp app/build/outputs/apk/release/app-release.apk "$APK_NAME"
 
       - uses: actions/upload-artifact@v4
+        if: env.WATCHHUB_PREVIEW != 'true'
         with:
           name: WatchHub-apk
           path: ${{ env.APK_NAME }}
