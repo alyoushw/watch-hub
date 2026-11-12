@@ -122,18 +122,68 @@ fun DownloadsPage(onClose: () -> Unit) {
                 if (saved.isEmpty()) {
                     MessageBox("ما فيه تنزيلات", "اضغط مطولاً على أي فيلم، أو على حلقة في صفحة المسلسل، واختر «نزّلها».")
                 } else {
+                    // A series' episodes together, under one heading with "all" buttons.
+                    val groups = remember(saved) {
+                        saved.groupBy { d -> container.downloads.entryOf(d)?.let { e -> e.seriesId?.let { "${e.accountId}:$it" } } ?: d.key }.values.toList()
+                    }
+                    var confirm by remember { mutableStateOf<Pair<String, List<String>>?>(null) }
+                    confirm?.let { (what, keys) ->
+                        AlertDialog(
+                            onDismissRequest = { confirm = null },
+                            title = { Text("حذف $what؟") },
+                            text = { Text("بينحذف ${keys.size} من الجهاز، واللي يتنزّل منها يوقف.") },
+                            confirmButton = {
+                                TextButton(modifier = Modifier.focusFrame(), onClick = {
+                                    container.downloads.removeAll(keys)
+                                    confirm = null
+                                }) { Text("احذف", color = MaterialTheme.colorScheme.error) }
+                            },
+                            dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = { confirm = null }) { Text("إلغاء") } },
+                        )
+                    }
                     LazyColumn(Modifier.readableWidth(900.dp), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        items(saved, key = { it.key }) { d ->
-                            // Running ones report live (with a steady speed); the rest are read every second.
-                            val st = live[d.key] ?: remember(tick, d.key) { container.downloads.state(d) }
-                            DownloadRow(d, st, container.downloads.canPause(d), onPause = { container.downloads.pause(d.key) }, onResume = { container.downloads.resume(d.key) }, onPlay = {
-                                val e = container.downloads.entryOf(d)
-                                val url = container.downloads.localUrl(d.key)
-                                if (e != null && url != null) {
-                                    onClose()
-                                    PlayerActivity.start(context, listOf(url), e)
+                        if (saved.size > 1) {
+                            item(key = "all") {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text("${saved.size} تنزيل · واحد ورا الثاني", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                                    TextButton(modifier = Modifier.focusFrame(), onClick = { confirm = "الكل" to saved.map { it.key } }) { Text("🗑 حذف الكل", color = MaterialTheme.colorScheme.error) }
                                 }
-                            }, onDelete = { container.downloads.remove(d.key) })
+                            }
+                        }
+                        groups.forEach { group ->
+                            if (group.size > 1) {
+                                item(key = "g:" + group.first().key) {
+                                    val states = remember(tick, group) { group.map { live[it.key] ?: container.downloads.state(it) } }
+                                    val keys = group.map { it.key }
+                                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Gold.copy(alpha = 0.1f)).padding(10.dp)) {
+                                        Text(group.first().title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(
+                                            "${states.count { it.done }} من ${group.size} حلقة جاهزة",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            TextButton(modifier = Modifier.focusFrame(), onClick = { container.downloads.pauseAll(keys) }) { Text("⏸ إيقاف الكل") }
+                                            TextButton(modifier = Modifier.focusFrame(), onClick = { container.downloads.resumeAll(keys) }) { Text("▶ كمّل الكل") }
+                                            TextButton(modifier = Modifier.focusFrame(), onClick = { confirm = "حلقات «${group.first().title}»" to keys }) {
+                                                Text("🗑 حذف الكل", color = MaterialTheme.colorScheme.error)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            items(group, key = { it.key }) { d ->
+                                // Running ones report live (with a steady speed); the rest are read every second.
+                                val st = live[d.key] ?: remember(tick, d.key) { container.downloads.state(d) }
+                                DownloadRow(d, st, container.downloads.canPause(d), onPause = { container.downloads.pause(d.key) }, onResume = { container.downloads.resume(d.key) }, onPlay = {
+                                    val e = container.downloads.entryOf(d)
+                                    val url = container.downloads.localUrl(d.key)
+                                    if (e != null && url != null) {
+                                        onClose()
+                                        PlayerActivity.start(context, listOf(url), e)
+                                    }
+                                }, onDelete = { container.downloads.remove(d.key) })
+                            }
                         }
                     }
                 }

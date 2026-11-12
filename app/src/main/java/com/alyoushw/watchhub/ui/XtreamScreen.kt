@@ -454,6 +454,45 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
                     val shareScope = rememberCoroutineScope()
                     var epShare by remember { mutableStateOf<Pair<String, String>?>(null) }
                     var epDownload by remember { mutableStateOf<Pair<WatchEntry, String>?>(null) }
+                    var downloadAll by remember { mutableStateOf(false) }
+                    // "📥 تنزيل الحلقات": this season or the whole series, into the download queue.
+                    if (downloadAll) {
+                        fun queue(eps: List<XtreamEpisode>) {
+                            val list = eps.map { e -> WatchEntry.episode(account, seriesId, series.name, series.cover, e) to container.xtream.playUrls(e, account).first() }
+                            val fresh = list.count { !container.downloads.has(it.first.key) }
+                            container.downloads.startAll(list)
+                            downloadAll = false
+                            android.widget.Toast.makeText(
+                                context,
+                                if (fresh == 0) "كلها موجودة في التنزيلات" else "📥 أضفنا $fresh حلقة. تتنزّل وحدة ورا الثانية، تابعها من السهم ⬇ في الرئيسية",
+                                android.widget.Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                        val thisSeason = series.episodes.filter { it.season == season }
+                        AlertDialog(
+                            onDismissRequest = { downloadAll = false },
+                            title = { Text("تنزيل حلقات «${series.name}»") },
+                            text = {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    if (seasons.size > 1) {
+                                        OutlinedButton(modifier = Modifier.fillMaxWidth().focusFrame(), onClick = { queue(thisSeason) }) {
+                                            Text("الموسم $season (${thisSeason.size} حلقة)")
+                                        }
+                                    }
+                                    OutlinedButton(modifier = Modifier.fillMaxWidth().focusFrame(), onClick = { queue(series.episodes) }) {
+                                        Text("كل المسلسل (${series.episodes.size} حلقة)")
+                                    }
+                                    Text(
+                                        "تتنزّل داخل التطبيق وحدة ورا الثانية (أغلب الحسابات تسمح باتصال واحد). تقدر توقفها أو تحذفها من صفحة التنزيلات.",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            },
+                            confirmButton = {},
+                            dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = { downloadAll = false }) { Text("إلغاء") } },
+                        )
+                    }
                     epDownload?.let { (e, u) -> DownloadChoiceDialog(e, u) { epDownload = null } }
                     epShare?.let { (t, u) -> StreamShareDialog(t, u) { epShare = null } }
 
@@ -542,6 +581,12 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
                                     Text("كمّل: الموسم ${ep.season} · الحلقة ${ep.number}", fontWeight = FontWeight.Bold)
                                 }
                             }
+                        }
+                        item(key = "download-all") {
+                            OutlinedButton(
+                                onClick = { downloadAll = true },
+                                modifier = Modifier.fillMaxWidth().focusFrame(),
+                            ) { Text("📥 تنزيل الحلقات للمشاهدة بدون نت") }
                         }
                         item {
                             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {

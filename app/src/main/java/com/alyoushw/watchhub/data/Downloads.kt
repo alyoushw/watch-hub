@@ -87,46 +87,89 @@ class Downloads(private val context: Context) {
 
     fun find(key: String) = _items.value.firstOrNull { it.key == key }
 
-    /** Starts saving [entry] from [url]. */
-    fun start(entry: WatchEntry, url: String) {
-        if (has(entry.key)) return
+    init {
+        // After the app was closed: a download marked running with no work behind it goes back
+        // in the queue, and the queue moves on.
+        Thread {
+            val wm = WorkManager.getInstance(context)
+            _items.value.filter { it.systemId < 0 && status(it.key) == STATUS_RUNNING }.forEach { d ->
+                val alive = runCatching { wm.getWorkInfosForUniqueWork("dl:${d.key}").get() }.getOrNull().orEmpty().any { !it.state.isFinished }
+                if (!alive) setStatus(d.key, STATUS_QUEUED)
+            }
+            startNext()
+        }.start()
+    }
+
+    /** Adds [entry] to the queue; downloads go one at a time (accounts often allow one connection). */
+    fun start(entry: WatchEntry, url: String) = startAll(listOf(entry to url))
+
+    /** Adds several (a whole season or series), in order; the queue takes them one by one. */
+    fun startAll(list: List<Pair<WatchEntry, String>>) {
         val dir = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: context.filesDir
-        val ext = url.substringAfterLast('.', "mp4").substringBefore('?').take(5).ifBlank { "mp4" }
-        val file = File(dir, entry.key.replace(Regex("[^A-Za-z0-9_-]"), "_") + "." + ext)
-        file.delete()
-        store(_items.value + Download(entry.key, entry.title, entry.subtitle, entry.image, file.absolutePath, -1, json.encodeToString(WatchEntry.serializer(), entry), url))
-        setStatus(entry.key, STATUS_QUEUED)
-        enqueue(entry.key)
+        val added = list.filter { (e, _) -> !has(e.key) }.map { (entry, url) ->
+            val ext = url.substringAfterLast('.', "mp4").substringBefore('?').take(5).ifBlank { "mp4" }
+            val file = File(dir, entry.key.replace(Regex("[^A-Za-z0-9_-]"), "_") + "." + ext)
+            file.delete()
+            setStatus(entry.key, STATUS_QUEUED)
+            Download(entry.key, entry.title, entry.subtitle, entry.image, file.absolutePath, -1, json.encodeToString(WatchEntry.serializer(), entry), url)
+        }
+        if (added.isEmpty()) return
+        store(_items.value + added)
+        startNext()
     }
 
-    private fun enqueue(key: String) {
+    /** Starts the first waiting download, unless one is already running. */
+    @Synchronized
+    fun startNext() {
+        val items = _items.value.filter { it.systemId < 0 && it.url.isNotBlank() }
+        if (items.any { status(it.key) == STATUS_RUNNING }) return
+        val next = items.firstOrNull { status(it.key) == STATUS_QUEUED } ?: return
+        setStatus(next.key, STATUS_RUNNING)
         val request = OneTimeWorkRequestBuilder<DownloadWorker>()
-            .setInputData(Data.Builder().putString("key", key).build())
+            .setInputData(Data.Builder().putString("key", next.key).build())
             .build()
-        WorkManager.getInstance(context).enqueueUniqueWork("dl:$key", ExistingWorkPolicy.REPLACE, request)
+        WorkManager.getInstance(context).enqueueUniqueWork("dl:${next.key}", ExistingWorkPolicy.REPLACE, request)
     }
 
-    /** Stops for now; the part already saved stays, and [resume] goes on from there. */
+    /** Stops for now (or takes it out of the queue); the part already saved stays. */
     fun pause(key: String) {
+        val wasRunning = status(key) == STATUS_RUNNING
         setStatus(key, STATUS_PAUSED)
         WorkManager.getInstance(context).cancelUniqueWork("dl:$key")
         _live.value = _live.value - key
+        if (wasRunning) startNext()
     }
 
+    /** Back in the queue: it continues from where it stopped when its turn comes. */
     fun resume(key: String) {
         if (find(key)?.url.isNullOrBlank()) return
+        if (status(key) == STATUS_RUNNING || status(key) == STATUS_DONE) return
         setStatus(key, STATUS_QUEUED)
-        enqueue(key)
+        startNext()
     }
+
+    fun pauseAll(keys: List<String>) {
+        keys.forEach { k -> if (status(k) == STATUS_QUEUED) setStatus(k, STATUS_PAUSED) }
+        keys.firstOrNull { status(it) == STATUS_RUNNING }?.let(::pause)
+    }
+
+    fun resumeAll(keys: List<String>) {
+        keys.forEach { k -> if (status(k) == STATUS_PAUSED || status(k) == STATUS_FAILED) setStatus(k, STATUS_QUEUED) }
+        startNext()
+    }
+
+    fun removeAll(keys: List<String>) = keys.forEach(::remove)
 
     fun remove(key: String) {
         val d = find(key) ?: return
+        val wasRunning = status(key) == STATUS_RUNNING
         WorkManager.getInstance(context).cancelUniqueWork("dl:$key")
         if (d.systemId >= 0) runCatching { dm.remove(d.systemId) }
         runCatching { File(d.file).delete() }
         prefs.edit().remove("st:$key").remove("tot:$key").apply()
         _live.value = _live.value - key
         store(_items.value - d)
+        if (wasRunning) startNext()
     }
 
     fun canPause(d: Download) = d.systemId < 0 && d.url.isNotBlank()
@@ -241,6 +284,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
                     // Nothing left to fetch: it was already complete.
                     downloads.setStatus(key, Downloads.STATUS_DONE)
                     downloads.publish(key, null)
+                    downloads.startNext()
                     return@withContext Result.success()
                 }
                 if (!res.isSuccessful) throw java.io.IOException("HTTP ${res.code}")
@@ -284,21 +328,23 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
                 }
                 downloads.setStatus(key, Downloads.STATUS_DONE)
                 downloads.publish(key, null)
+                // Next in the queue.
+                downloads.startNext()
                 Result.success()
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
-            // Paused (or removed): keep what was saved.
-            if (downloads.status(key) == Downloads.STATUS_RUNNING) downloads.setStatus(key, Downloads.STATUS_PAUSED)
+            // Paused or removed (they move the queue on themselves): keep what was saved.
             downloads.publish(key, null)
             throw e
         } catch (e: Exception) {
             downloads.publish(key, null)
             // A dropped connection: try again a few times (it continues from where it stopped).
-            if (runAttemptCount < 4 && downloads.status(key) != Downloads.STATUS_PAUSED) {
-                downloads.setStatus(key, Downloads.STATUS_QUEUED)
+            // It stays "running" meanwhile, so the queue does not start another.
+            if (runAttemptCount < 4 && downloads.status(key) == Downloads.STATUS_RUNNING) {
                 Result.retry()
             } else {
-                downloads.setStatus(key, Downloads.STATUS_FAILED)
+                if (downloads.status(key) == Downloads.STATUS_RUNNING) downloads.setStatus(key, Downloads.STATUS_FAILED)
+                downloads.startNext()
                 Result.failure()
             }
         }
