@@ -14,6 +14,9 @@ def output(*args):
 
 def tool(name):
     root = Path(os.environ["ANDROID_HOME"]) / "build-tools"
+    stable = root / "35.0.0" / name
+    if stable.exists():
+        return str(stable)
     candidates = list(root.glob("*/" + name))
     assert candidates, f"Missing Android tool: {name}"
     return str(sorted(candidates, key=lambda p: tuple(int(n) for n in re.findall(r"\d+", p.parent.name)))[-1])
@@ -24,8 +27,10 @@ def identity(apk):
     package = re.search(r"package: name='([^']+)' versionCode='(\d+)'", badging)
     assert package, "Cannot read APK package/version"
     signing = output(tool("apksigner"), "verify", "--print-certs", str(apk))
-    certificates = sorted(re.findall(r"Signer #\d+ certificate SHA-256 digest: (\S+)", signing))
-    assert certificates, "APK has no verified signing certificate"
+    certificates = sorted({digest.replace(":", "").lower() for digest in
+                           re.findall(r"certificate SHA-256 digest:\s*([0-9a-fA-F:]+)", signing)
+                           if len(digest.replace(":", "")) == 64})
+    assert certificates, "Cannot read verified APK certificate fingerprints: " + signing
     return package[1], int(package[2]), certificates
 
 

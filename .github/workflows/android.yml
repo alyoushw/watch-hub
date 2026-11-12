@@ -13,6 +13,10 @@ on:
           - private
           - stable
           - validation
+      verified_run:
+        description: 'Optional previous run with passing app tests; application sources must match'
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -34,7 +38,16 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      - name: Verify reusable app test results
+        id: prior_checks
+        if: github.event_name == 'workflow_dispatch' && inputs.distribution == 'validation' && inputs.verified_run != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFIED_RUN: ${{ inputs.verified_run }}
+        run: python .github/scripts/reuse-app-verification.py
+
       - name: Tests and lint
+        if: steps.prior_checks.outputs.reused != 'true'
         run: |
           chmod +x gradlew
           ./gradlew testDebugUnitTest lintDebug --stacktrace
@@ -58,12 +71,14 @@ jobs:
           fi
 
       - name: Enable KVM for Android smoke test
+        if: steps.prior_checks.outputs.reused != 'true'
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
       - name: Android device smoke test
+        if: steps.prior_checks.outputs.reused != 'true'
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
