@@ -1164,6 +1164,7 @@ private fun StatsSection() {
             val parts = listOfNotNull(
                 st.byKind["episode"]?.takeIf { it > 0 }?.let { "مسلسلات ${hours(it)}" },
                 st.byKind["movie"]?.takeIf { it > 0 }?.let { "أفلام ${hours(it)}" },
+                st.byKind["anime_episode"]?.takeIf { it > 0 }?.let { "أنمي ${hours(it)}" },
                 st.byKind["live"]?.takeIf { it > 0 }?.let { "مباشر ${hours(it)}" },
             )
             if (parts.isNotEmpty()) Text(parts.joinToString(" · "), style = MaterialTheme.typography.bodySmall)

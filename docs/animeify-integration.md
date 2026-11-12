@@ -91,6 +91,10 @@ client token or temporary CDN links.
 Unit tests cover title/MAL mapping, special episodes/sorting, available qualities,
 MediaFire link decoding/host validation, source request shapes and URL refresh,
 missing selected quality, source errors, backward-compatible history, and release
-update parsing/version comparisons. Device playback, subtitles and notification
-permission behavior still require an Android device/emulator smoke test before
-claiming end-to-end device verification.
+update parsing/version comparisons. The API 30 emulator suite checks launching the existing Home screen and actual MP4
+playback/progress persistence with a generated local sample. A third test exercises
+live Animeify search, episodes, server resolution and playback when the owner token
+is configured; it is explicitly skipped otherwise. Publication separately requires
+that token. Subtitle selection, TV remote interaction, and Android 13+ notification
+permission behavior need additional manual device checks and are not claimed as
+covered by the API 30 smoke suite.

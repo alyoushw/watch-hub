@@ -18,6 +18,7 @@ import com.alyoushw.watchhub.player.PlayerActivity
 import com.alyoushw.watchhub.player.QueueItem
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 
 data class AnimeLookup(
     val title: String, val searchTitle: String, val movie: Boolean, val poster: String?,
@@ -64,7 +65,7 @@ class AnimeSourcesViewModel(private val container: AppContainer, private val ani
                 val exact = titles.firstOrNull { anime.malId != null && it.malId == anime.malId }
                 if (exact != null) loadTitle(exact)
             } catch (e: AnimeifyException) { error = e.message }
-            finally { loading = false }
+            finally { if (isActive) loading = false }
         }
     }
 
@@ -76,7 +77,7 @@ class AnimeSourcesViewModel(private val container: AppContainer, private val ani
             error = null
             try { loadTitle(title) }
             catch (e: AnimeifyException) { error = e.message }
-            finally { loading = false }
+            finally { if (isActive) loading = false }
         }
     }
 
@@ -98,7 +99,7 @@ class AnimeSourcesViewModel(private val container: AppContainer, private val ani
         serverJob = viewModelScope.launch {
             try { servers = container.animeify.servers(ref(ep, "")) }
             catch (e: AnimeifyException) { serverError = e.message }
-            finally { loadingServers = false }
+            finally { if (isActive) loadingServers = false }
         }
     }
 
@@ -119,7 +120,7 @@ class AnimeSourcesViewModel(private val container: AppContainer, private val ani
         QueueItem(emptyList(), WatchEntry(
             key = "animeify:${r.animeId}:${r.episode}", kind = WatchEntry.ANIME,
             itemId = r.episode, title = selected?.title ?: anime.title,
-            subtitle = "الموسم ${r.season} · الحلقة ${r.episode}", image = anime.poster,
+            subtitle = if (r.type == "MOVIE") "فيلم" else "الموسم ${r.season} · الحلقة ${r.episode}", image = anime.poster,
             seriesId = r.animeId, accountId = "animeify", animeRef = r,
         ))
     }
@@ -167,7 +168,7 @@ fun AnimeSources(anime: AnimeLookup) {
                 val watched = history.firstOrNull { it.key == "animeify:${vm.selected?.id}:${ep.number}" }
                 OutlinedButton(onClick = { vm.chooseEpisode(ep) }, modifier = Modifier.focusFrame()) {
                     Text((if (watched?.finished == true) "✓ " else if (watched != null) "▶ " else "") +
-                        "الحلقة ${ep.number}" + ep.extra.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty())
+                        (if (vm.selected?.type == "MOVIE") "مشاهدة الفيلم" else "الحلقة ${ep.number}") + ep.extra.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty())
                 }
             }
         }
@@ -180,7 +181,7 @@ fun AnimeSources(anime: AnimeLookup) {
     vm.episode?.let { ep ->
         AlertDialog(
             onDismissRequest = vm::dismissEpisode,
-            title = { Text("الحلقة ${ep.number} · اختر السيرفر") },
+            title = { Text(if (vm.selected?.type == "MOVIE") "الفيلم · اختر السيرفر" else "الحلقة ${ep.number} · اختر السيرفر") },
             text = {
                 Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (vm.loadingServers) CircularProgressIndicator()
@@ -213,7 +214,10 @@ fun AnimeContinueRow(onOpen: (MediaType, Int) -> Unit) {
         SectionTitle("تابع مشاهدة الأنمي")
         list.forEach { entry ->
             val ref = entry.animeRef ?: return@forEach
-            OutlinedButton(onClick = { PlayerActivity.start(context, listOf(QueueItem(emptyList(), entry)), 0) },
+            OutlinedButton(onClick = {
+                if (entry.finished) onOpen(MediaType.fromPath(ref.detailType) ?: MediaType.ANIME, ref.detailId)
+                else PlayerActivity.start(context, listOf(QueueItem(emptyList(), entry)), 0)
+            },
                 modifier = Modifier.fillMaxWidth().focusFrame()) { Text("▶ ${entry.title} · ${entry.subtitle.orEmpty()}") }
             TextButton(onClick = { onOpen(MediaType.fromPath(ref.detailType) ?: MediaType.ANIME, ref.detailId) }, modifier = Modifier.focusFrame()) { Text("المواسم والحلقات واختيار السيرفر") }
         }

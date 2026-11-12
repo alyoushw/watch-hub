@@ -365,7 +365,7 @@ class PlayerActivity : ComponentActivity() {
                         val next = ref.copy(episode = ep.number)
                         QueueItem(emptyList(), e.copy(
                             key = "animeify:${ref.animeId}:${ep.number}", itemId = ep.number,
-                            subtitle = "الموسم ${ref.season} · الحلقة ${ep.number}", animeRef = next,
+                            subtitle = if (ref.type == "MOVIE") "فيلم" else "الموسم ${ref.season} · الحلقة ${ep.number}", animeRef = next,
                             positionMs = 0, durationMs = 0,
                         ))
                     }

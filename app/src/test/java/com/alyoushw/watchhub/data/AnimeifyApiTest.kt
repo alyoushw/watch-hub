@@ -29,6 +29,7 @@ class AnimeifyApiTest {
         assertEquals(listOf("1.5", "2", "10"), result.map { it.number })
         assertEquals("خاصة", result.first().extra)
         assertEquals(3, AnimeifyApi.parseEpisodes(Json.parseToJsonElement(fixture("episodes"))).size)
+        assertEquals("0", AnimeifyApi.parseEpisodes(Json.parseToJsonElement("""[{"Episode":"0"}]""")).single().number)
     }
 
     @Test fun `server qualities exclude empty fields and unavailable sentinel values`() {
