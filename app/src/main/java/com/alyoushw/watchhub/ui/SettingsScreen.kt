@@ -1127,6 +1127,11 @@ private fun YouTubeSection() {
 /** This build's number, and a button to look for a newer one now. */
 @Composable
 private fun AppVersionRow() {
+    if (com.alyoushw.watchhub.BuildConfig.IS_PREVIEW) {
+        Text("نسخة خاصة · ${com.alyoushw.watchhub.BuildConfig.VERSION_NAME}")
+        Text("هذه النسخة مستقلة عن التطبيق الرئيسي ولا تستقبل تحديثاته.", style = MaterialTheme.typography.bodySmall)
+        return
+    }
     val updater = appContainer().updater
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf<String?>(null) }

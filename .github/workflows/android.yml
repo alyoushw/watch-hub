@@ -4,6 +4,14 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      distribution:
+        description: 'Private preview or main-channel release (main branch only)'
+        type: choice
+        default: private
+        options:
+          - private
+          - stable
 
 permissions:
   contents: write
@@ -13,6 +21,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       WATCHHUB_ANIMEIFY_TOKEN: ${{ secrets.WATCHHUB_ANIMEIFY_TOKEN }}
+      WATCHHUB_PREVIEW: ${{ (github.ref != 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.distribution == 'private')) && 'true' || 'false' }}
+      APK_NAME: ${{ (github.ref != 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.distribution == 'private')) && 'WatchHub-Anime-Preview.apk' || 'WatchHub.apk' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -59,11 +69,7 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
-          script: |
-            ./gradlew connectedDebugAndroidTest --stacktrace || {
-              adb logcat -d -v brief ExoPlayerImplInternal:E TestRunner:I '*:S' | sed -E 's#https?://[^ ]+#[redacted-url]#g' | tail -n 180
-              exit 1
-            }
+          script: bash .github/scripts/android-smoke.sh
 
       - name: Upload device smoke reports
         if: always()
@@ -96,14 +102,14 @@ jobs:
           ./gradlew assembleRelease --stacktrace
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/release/app-release.apk WatchHub.apk
+        run: cp app/build/outputs/apk/release/app-release.apk "$APK_NAME"
 
       - uses: actions/upload-artifact@v4
         with:
           name: WatchHub-apk
-          path: WatchHub.apk
+          path: ${{ env.APK_NAME }}
 
-      # Every build of main, and every manual run, becomes a release, so the APK can be downloaded straight from the phone.
+      # Validate source configuration before creating any release asset.
       - name: Verify release source configuration
         if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         env:
@@ -115,11 +121,25 @@ jobs:
           fi
 
       - name: Publish release
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.distribution == 'stable'))
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
           name: Watch Hub (build ${{ github.run_number }})
-          files: WatchHub.apk
+          files: ${{ env.APK_NAME }}
           make_latest: true
           target_commitish: ${{ github.sha }}
+
+      # Draft assets are accessible only to repository writers; the main release is untouched.
+      - name: Create private preview draft
+        if: github.event_name == 'workflow_dispatch' && inputs.distribution == 'private'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: anime-preview-${{ github.run_number }}
+          name: Watch Hub Anime - private preview ${{ github.run_number }}
+          files: ${{ env.APK_NAME }}
+          draft: true
+          prerelease: true
+          make_latest: false
+          target_commitish: ${{ github.sha }}
+          body: 'نسخة خاصة مستقلة للتجربة. لا تستبدل التطبيق الرئيسي ولا تُرسل كتحديث عام.'

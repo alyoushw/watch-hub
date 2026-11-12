@@ -67,6 +67,7 @@ class Updater(private val context: Context) {
      * [manual] (the Settings button) shows the card again even after "لاحقاً".
      */
     suspend fun check(manual: Boolean = false): AppUpdate? = withContext(Dispatchers.IO) {
+        if (BuildConfig.IS_PREVIEW) return@withContext null
         lastCheck = System.currentTimeMillis()
         if (manual) {
             prefs.edit().remove(KEY_DISMISSED).apply()
@@ -147,6 +148,7 @@ class Updater(private val context: Context) {
 
     /** Checks every few hours in the background and posts a notification for a new build. */
     fun scheduleBackgroundChecks() {
+        if (BuildConfig.IS_PREVIEW) return
         val request = PeriodicWorkRequestBuilder<UpdateWorker>(6, TimeUnit.HOURS)
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .build()

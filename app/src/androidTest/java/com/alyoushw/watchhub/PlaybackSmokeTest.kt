@@ -81,6 +81,8 @@ class PlaybackSmokeTest {
                 assertEquals(Lifecycle.State.RESUMED, activity.lifecycle.currentState)
                 assertTrue(activity.window.decorView.isShown)
                 assertNotNull((activity.application as WatchHubApp).container.updater)
+                assertEquals(BuildConfig.APPLICATION_ID, activity.packageName)
+                if (BuildConfig.IS_PREVIEW) assertTrue(activity.packageName.endsWith(".animepreview"))
             }
         }
     }

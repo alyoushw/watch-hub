@@ -98,3 +98,18 @@ is configured; it is explicitly skipped otherwise. Publication separately requir
 that token. Subtitle selection, TV remote interaction, and Android 13+ notification
 permission behavior need additional manual device checks and are not claimed as
 covered by the API 30 smoke suite.
+
+
+## Private preview distribution
+
+The requested delivery is a private test APK, not a main-channel release. Feature
+branch builds use `com.alyoushw.watchhub.animepreview` and the launcher label
+`Watch Hub Anime (خاص)` with a `-preview` version suffix. This allows installation
+alongside the existing app, with independent local settings/data. The preview does
+not poll or install main-channel updates; the regular package retains its updater.
+
+A manual Actions run with `distribution=private` creates only a draft prerelease
+asset named `WatchHub-Anime-Preview.apk`, with `make_latest=false`. Draft assets
+require a repository writer's GitHub login. They are excluded from `/releases/latest`
+and do not notify existing users. The branch/PR remains separate and is not merged
+into the current or default branch for this delivery.

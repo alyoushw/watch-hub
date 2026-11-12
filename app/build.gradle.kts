@@ -8,9 +8,11 @@ plugins {
 android {
     namespace = "com.alyoushw.watchhub"
     compileSdk = 35
+    val privatePreview = System.getenv("WATCHHUB_PREVIEW") == "true"
 
     defaultConfig {
-        applicationId = "com.alyoushw.watchhub"
+        applicationId = if (privatePreview) "com.alyoushw.watchhub.animepreview" else "com.alyoushw.watchhub"
+        manifestPlaceholders["appLabel"] = if (privatePreview) "Watch Hub Anime (خاص)" else "@string/app_name"
         minSdk = 26
         targetSdk = 35
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -18,8 +20,9 @@ android {
         // release to offer updates. Local builds count as 0 (always older).
         val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0
         versionCode = 100 + build
-        versionName = "0.23.$build"
+        versionName = "0.23.$build" + if (privatePreview) "-preview" else ""
         buildConfigField("int", "BUILD_NUMBER", "$build")
+        buildConfigField("boolean", "IS_PREVIEW", privatePreview.toString())
         val animeifyToken = System.getenv("WATCHHUB_ANIMEIFY_TOKEN").orEmpty().trim()
         buildConfigField("String", "ANIMEIFY_TOKEN", "\"${animeifyToken.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
     }
