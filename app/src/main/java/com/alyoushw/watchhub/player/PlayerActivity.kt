@@ -95,6 +95,12 @@ class PlayerActivity : ComponentActivity() {
             .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http)))
             .setSeekBackIncrementMs(10_000)
             .setSeekForwardIncrementMs(10_000)
+            // Slow connections (the car): keep up to two minutes ready ahead, start after 2.5 s.
+            .setLoadControl(
+                androidx.media3.exoplayer.DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(30_000, 120_000, 2_500, 5_000)
+                    .build(),
+            )
             .build()
         // Arabic audio and subtitles first when a file has them.
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()

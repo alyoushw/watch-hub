@@ -99,7 +99,7 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.hypot
 
-private enum class Menu { SUBTITLES, AUDIO, SPEED, SOURCES, INFO, SLEEP, PICTURE }
+private enum class Menu { SUBTITLES, AUDIO, SPEED, SOURCES, INFO, SLEEP, PICTURE, QUALITY }
 
 /** Picture modes for "حجم الصورة": how the video fits, or a fixed shape it is drawn in. */
 private data class PictureMode(val label: String, val resize: Int, val ratio: Float? = null)
@@ -670,6 +670,24 @@ fun PlayerScreen(
                 )
             } else if (menu == Menu.INFO) {
                 InfoPanel(info, onClose = { menu = null })
+            } else if (menu == Menu.QUALITY) {
+                QualityPanel(
+                    tracks = tracks,
+                    auto = player.trackSelectionParameters.overrides.keys.none { it.type == C.TRACK_TYPE_VIDEO },
+                    onAuto = {
+                        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO).build()
+                        flash(Indicator(PlayerIcons.Quality, "الجودة: تلقائي"))
+                        menu = null
+                    },
+                    onPick = { group, i, label ->
+                        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                            .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, i))
+                            .build()
+                        flash(Indicator(PlayerIcons.Quality, "الجودة: $label"))
+                        menu = null
+                    },
+                    onClose = { menu = null },
+                )
             } else if (menu == Menu.PICTURE) {
                 PicturePanel(
                     mode = resize,
@@ -820,6 +838,7 @@ private fun Controls(
             }
             if (live) ToolButton(PlayerIcons.Sources, "نفس القناة في حسابات ثانية") { onMenu(Menu.SOURCES) }
             ToolButton(PlayerIcons.Subtitles, "الترجمة") { onMenu(Menu.SUBTITLES) }
+            ToolButton(PlayerIcons.Quality, "الجودة") { onMenu(Menu.QUALITY) }
             ToolButton(PlayerIcons.Audio, "الصوت المعلّق") { onMenu(Menu.AUDIO) }
             ToolButton(PlayerIcons.Aspect, resizeLabel, onResize)
             if (!live) ToolButton(PlayerIcons.Speed, if (speed == 1f) "السرعة" else "×$speed") { onMenu(Menu.SPEED) }
@@ -945,7 +964,7 @@ private fun MenuPanel(
                     Menu.AUDIO -> "الصوت المعلّق"
                     Menu.SPEED -> "سرعة التشغيل"
                     Menu.SLEEP -> "مؤقت النوم"
-                    Menu.SOURCES, Menu.INFO, Menu.PICTURE -> ""
+                    Menu.SOURCES, Menu.INFO, Menu.PICTURE, Menu.QUALITY -> ""
                 },
                 color = Color.White,
                 fontSize = 19.sp,
@@ -977,7 +996,7 @@ private fun MenuPanel(
                             }
                         }
                     }
-                    Menu.SOURCES, Menu.INFO, Menu.PICTURE -> Unit
+                    Menu.SOURCES, Menu.INFO, Menu.PICTURE, Menu.QUALITY -> Unit
                     Menu.AUDIO -> {
                         items(options.size) { n ->
                             val (g, i, sel) = options[n]
@@ -1053,6 +1072,66 @@ private fun StepRow(onMinus: () -> Unit, onPlus: () -> Unit, firstFocus: FocusRe
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         PillButton("−  تصغير", Modifier.weight(1f).let { if (firstFocus != null) it.focusRequester(firstFocus) else it }, onClick = onMinus)
         PillButton("+  تكبير", Modifier.weight(1f), onClick = onPlus)
+    }
+}
+
+/**
+ * "الجودة": automatic (by the connection's speed) or one of the qualities the stream offers.
+ * Most films and episodes from an Xtream account are one file in one quality: then it says so.
+ */
+@OptIn(UnstableApi::class)
+@Composable
+private fun QualityPanel(
+    tracks: Tracks,
+    auto: Boolean,
+    onAuto: () -> Unit,
+    onPick: (Tracks.Group, Int, String) -> Unit,
+    onClose: () -> Unit,
+) {
+    val options = buildList {
+        tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }.forEach { g ->
+            for (i in 0 until g.length) if (g.isTrackSupported(i) && g.getTrackFormat(i).height > 0) add(Triple(g, i, g.getTrackFormat(i)))
+        }
+    }.distinctBy { it.third.height }.sortedByDescending { it.third.height }
+    val firstFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
+    fun label(f: androidx.media3.common.Format): String {
+        val h = minOf(f.height, f.width.takeIf { it > 0 } ?: f.height)
+        val rate = listOf(f.averageBitrate, f.bitrate, f.peakBitrate).firstOrNull { it > 0 }
+        return "${h}p" + (rate?.let { " · " + String.format(Locale.US, "%.1f Mbps", it / 1_000_000f) } ?: "")
+    }
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)).clickable(onClick = onClose)) {
+        Column(
+            Modifier
+                .align(Alignment.CenterEnd)
+                .fillMaxHeight()
+                .width(320.dp)
+                .background(Color(0xF2141210))
+                .pointerInput(Unit) { detectTapGestures { } }
+                .padding(vertical = 18.dp),
+        ) {
+            Text("الجودة", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+            LazyColumn(contentPadding = PaddingValues(vertical = 6.dp)) {
+                if (options.size > 1) {
+                    item { MenuRow("تلقائي (حسب سرعة النت)", selected = auto, modifier = Modifier.focusRequester(firstFocus), onClick = onAuto) }
+                    items(options.size) { n ->
+                        val (g, i, f) = options[n]
+                        MenuRow(label(f), selected = !auto && g.isTrackSelected(i)) { onPick(g, i, "${minOf(f.height, f.width.takeIf { w -> w > 0 } ?: f.height)}p") }
+                    }
+                } else {
+                    val f = options.firstOrNull()?.third
+                    item {
+                        MenuRow(f?.let { label(it) } ?: "الجودة الأصلية", selected = true, modifier = Modifier.focusRequester(firstFocus), onClick = onClose)
+                    }
+                    item {
+                        Hint(
+                            "هذا الفيديو جاي من المزود بجودة وحدة بس، فما يقدر المشغل يختار جودة أقل. " +
+                                "للنت البطيء (مثل السيارة): نزّل الحلقات قبل من «📥 تنزيل الحلقات» في صفحة المسلسل، وتشتغل بدون نت.",
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1328,6 +1407,7 @@ object PlayerIcons {
     val Brightness = icon("Brightness", "M20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12 20 8.69zM12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6zm0-10c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4z")
     val Volume = icon("Volume", "M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z")
     val Lock = Icons.Filled.Lock
+    val Quality = icon("Quality", "M19 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-8 12H9.5v-2h-2v2H6V9h1.5v2.5h2V9H11v6zm7-1c0 .55-.45 1-1 1h-.75v1.5h-1.5V15H14c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v4zm-3.5-.5h2v-3h-2v3z")
     val YouTube = icon("YouTube", "M10 15l5.19-3L10 9v6zm11.56-7.83c.13.47.22 1.1.28 1.9.07.8.1 1.49.1 2.09L22 12c0 2.19-.16 3.8-.44 4.83-.25.9-.83 1.48-1.73 1.73-.47.13-1.33.22-2.65.28-1.3.07-2.49.1-3.59.1L12 19c-4.19 0-6.8-.16-7.83-.44-.9-.25-1.48-.83-1.73-1.73-.13-.47-.22-1.1-.28-1.9-.07-.8-.1-1.49-.1-2.09L2 12c0-2.19.16-3.8.44-4.83.25-.9.83-1.48 1.73-1.73.47-.13 1.33-.22 2.65-.28 1.3-.07 2.49-.1 3.59-.1L12 5c4.19 0 6.8.16 7.83.44.9.25 1.48.83 1.73 1.73z")
     val Info = icon("Info", "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z")
     val Sleep = icon("Sleep", "M12.34 2.02C6.59 1.82 2 6.42 2 12c0 5.52 4.48 10 10 10 3.71 0 6.93-2.02 8.66-5.02-7.51-.25-12.09-8.43-8.32-14.96z")
