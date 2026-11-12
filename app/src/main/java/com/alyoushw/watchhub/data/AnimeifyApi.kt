@@ -122,7 +122,9 @@ class AnimeifyApi(
     }
 
     private suspend fun fetch(url: String): String = request(Request.Builder().url(url)
-        .header("User-Agent", "Mozilla/5.0 (Android) WatchHub").build())
+        // MediaFire serves an indirect mobile landing page to Android user agents. Use the
+        // browser request contract used by Animeify's downloader to obtain the actual MP4 link.
+        .header("User-Agent", BROWSER_AGENT).build())
 
     private suspend fun request(request: Request): String = withContext(Dispatchers.IO) {
         coroutineContext.ensureActive()
@@ -143,6 +145,7 @@ class AnimeifyApi(
     }
 
     companion object {
+        private const val BROWSER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36"
         private fun JsonObject.text(key: String) = (get(key) as? JsonPrimitive)?.contentOrNull.orEmpty().trim()
 
         internal fun titles(element: JsonElement): List<AnimeifyTitle> = (element as? JsonArray).orEmpty()

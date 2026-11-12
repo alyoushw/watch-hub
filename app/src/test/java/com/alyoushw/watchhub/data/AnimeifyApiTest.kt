@@ -4,6 +4,9 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.*
@@ -54,6 +57,24 @@ class AnimeifyApiTest {
         assertEquals(url, AnimeifyApi.mediaFireUrl("""<a data-scrambled-url="$encoded">Download</a>"""))
         assertNull(AnimeifyApi.mediaFireUrl("<html>file removed</html>"))
         assertNull(AnimeifyApi.mediaFireUrl("""<a data-scrambled-url="invalid!">Download</a>"""))
+    }
+
+    @Test fun `mediafire resolver requests desktop page instead of indirect Android landing page`() = runBlocking {
+        MockWebServer().use { server ->
+            val direct = "https://download1.mediafire.com/fixture/video.mp4"
+            val client = OkHttpClient.Builder().addInterceptor { chain ->
+                if (chain.request().url.host == "www.mediafire.com") {
+                    // Mirrors MediaFire's observed UA-dependent response without a live network dependency.
+                    val link = if (chain.request().header("User-Agent").orEmpty().contains("Android"))
+                        "//www.mediafire.com/file/fixture_id?dkey=mobile" else direct
+                    Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
+                        .code(200).message("OK").body("""<a id="downloadButton" href="$link">Download</a>""".toResponseBody()).build()
+                } else chain.proceed(chain.request())
+            }.build()
+            server.enqueue(MockResponse().setBody("""{"CurrentEpisode":{"FRLink":"fixture_id"}}"""))
+            val api = AnimeifyApi("test-token", server.url("/").toString(), client)
+            assertEquals(direct, api.resolve(AnimeEpisodeRef("xNaruto", 20, "SERIES", 1, "1", "FRLink")))
+        }
     }
 
     @Test fun `request encodes search text and refreshes source URL on each resolution`() = runBlocking {
