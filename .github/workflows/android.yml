@@ -59,7 +59,11 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
-          script: ./gradlew connectedDebugAndroidTest --stacktrace
+          script: |
+            ./gradlew connectedDebugAndroidTest --stacktrace || {
+              adb logcat -d -v brief ExoPlayerImplInternal:E TestRunner:I '*:S' | sed -E 's#https?://[^ ]+#[redacted-url]#g' | tail -n 180
+              exit 1
+            }
 
       - name: Upload device smoke reports
         if: always()
