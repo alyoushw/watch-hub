@@ -37,6 +37,14 @@ jobs:
             app/build/reports/tests/
             app/build/test-results/
             app/build/reports/lint-results-debug.*
+            app/build/reports/lint-results.txt
+
+      - name: Print lint diagnostics
+        if: always()
+        run: |
+          if [ -f app/build/reports/lint-results.txt ]; then
+            cat app/build/reports/lint-results.txt
+          fi
 
       - name: Enable KVM for Android smoke test
         run: |

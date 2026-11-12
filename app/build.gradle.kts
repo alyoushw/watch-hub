@@ -67,6 +67,11 @@ android {
         buildConfig = true
     }
 
+    lint {
+        textReport = true
+        textOutput = file("build/reports/lint-results.txt")
+    }
+
     packaging {
         resources {
             // Duplicate metadata files shipped by the Anthropic SDK's dependencies (Jackson, OpenTelemetry).
