@@ -3,6 +3,11 @@ package com.alyoushw.watchhub
 import android.os.SystemClock
 import android.view.KeyEvent
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -37,13 +42,19 @@ class TvControlsSmokeTest {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 scenario.onActivity { activity -> activity.setContent {
                     WatchHubTheme(forceDark = true) {
+                        val input = LocalInputModeManager.current
+                        LaunchedEffect(Unit) { input.requestInputMode(InputMode.Keyboard) }
                         ContinueWatchingRow(onOpenSeries = {}, kinds = setOf(WatchEntry.ANIME),
                             onOpenAnime = { opened.incrementAndGet() })
                     }
                 } }
+                compose.waitUntil(10_000) {
+                    var ready = false
+                    scenario.onActivity { ready = it.hasWindowFocus() }
+                    ready
+                }
                 instrumentation.setInTouchMode(false)
-                compose.onNodeWithText(title).performSemanticsAction(SemanticsActions.RequestFocus) { it() }
-                compose.onNodeWithText(title).assertIsFocused()
+                focus(title)
                 val downAt = SystemClock.uptimeMillis()
                 send(downAt, KeyEvent.ACTION_DOWN, 0)
                 send(downAt, KeyEvent.ACTION_DOWN, 1)
@@ -58,8 +69,7 @@ class TvControlsSmokeTest {
                     compose.onAllNodesWithText("المواسم والحلقات · أنمي فاي").fetchSemanticsNodes().isNotEmpty()
                 }
                 assertEquals("The originating key must not select a dialog action", 0, opened.get())
-                compose.onNodeWithText("المواسم والحلقات · أنمي فاي")
-                    .performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+                focus("المواسم والحلقات · أنمي فاي")
                 val nextDown = SystemClock.uptimeMillis()
                 send(nextDown, KeyEvent.ACTION_DOWN, 0)
                 send(nextDown, KeyEvent.ACTION_UP, 0)
@@ -68,6 +78,14 @@ class TvControlsSmokeTest {
                 compose.onNodeWithText("المواسم والحلقات · أنمي فاي").assertDoesNotExist()
             }
         } finally { container.history.remove(entry.key) }
+    }
+
+    private fun focus(text: String) {
+        compose.waitUntil(10_000) {
+            val node = compose.onNodeWithText(text)
+            node.performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+            node.fetchSemanticsNode().config.getOrNull(SemanticsProperties.Focused) == true
+        }
     }
 
     private fun send(downAt: Long, action: Int, repeats: Int) {
