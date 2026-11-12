@@ -25,6 +25,7 @@ class AppContainer(context: Context) {
     val api = TmdbApi(settings)
     val links = DirectLinks()
     val jikan = JikanApi()
+    val animeify = com.alyoushw.watchhub.data.AnimeifyApi()
     val assistant = ClaudeAssistant(settings)
     val xtream = XtreamApi(settings)
     val history = WatchHistory(context).also { it.remapAccounts(settings.accountIdChanges) }

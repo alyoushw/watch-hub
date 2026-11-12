@@ -470,6 +470,13 @@ private fun DetailContent(
 
         item { WatchButtons(info, links, subscribedKeys, onWatch) }
 
+        if (16 in info.genreIds && (info.originalLanguage == "ja" || "JP" in info.countries)) {
+            item {
+                AnimeSources(AnimeLookup(info.title, info.searchTitle, info.type == MediaType.MOVIE,
+                    info.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }, info.type, info.id))
+            }
+        }
+
         item {
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (saved == null) {

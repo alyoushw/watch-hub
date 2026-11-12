@@ -17,8 +17,10 @@ android {
         // release to offer updates. Local builds count as 0 (always older).
         val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0
         versionCode = 100 + build
-        versionName = "0.22.$build"
+        versionName = "0.23.$build"
         buildConfigField("int", "BUILD_NUMBER", "$build")
+        val animeifyToken = System.getenv("WATCHHUB_ANIMEIFY_TOKEN").orEmpty()
+        buildConfigField("String", "ANIMEIFY_TOKEN", "\"${animeifyToken.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
     }
 
     // A fixed release key (from CI secrets) lets new APKs install over old ones and keep the data.
@@ -81,6 +83,9 @@ android {
 }
 
 dependencies {
+    implementation("org.jsoup:jsoup:1.18.3")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))

@@ -21,6 +21,21 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      - name: Tests and lint
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest lintDebug --stacktrace
+
+      - name: Upload verification reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-reports
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+            app/build/reports/lint-results-debug.*
+
       - name: Restore signing key
         env:
           KEYSTORE_BASE64: ${{ secrets.WATCHHUB_KEYSTORE_BASE64 }}
@@ -34,6 +49,7 @@ jobs:
 
       - name: Build APK
         env:
+          WATCHHUB_ANIMEIFY_TOKEN: ${{ secrets.WATCHHUB_ANIMEIFY_TOKEN }}
           WATCHHUB_KEYSTORE_PASSWORD: ${{ secrets.WATCHHUB_KEYSTORE_PASSWORD }}
           WATCHHUB_KEY_ALIAS: ${{ secrets.WATCHHUB_KEY_ALIAS }}
           WATCHHUB_KEY_PASSWORD: ${{ secrets.WATCHHUB_KEY_PASSWORD }}
@@ -50,6 +66,16 @@ jobs:
           path: WatchHub.apk
 
       # Every build of main, and every manual run, becomes a release, so the APK can be downloaded straight from the phone.
+      - name: Verify release source configuration
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        env:
+          ANIMEIFY_TOKEN: ${{ secrets.WATCHHUB_ANIMEIFY_TOKEN }}
+        run: |
+          if [ -z "$ANIMEIFY_TOKEN" ]; then
+            echo "Configure WATCHHUB_ANIMEIFY_TOKEN before publishing an Animeify-enabled release."
+            exit 1
+          fi
+
       - name: Publish release
         if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         uses: softprops/action-gh-release@v2
@@ -58,3 +84,4 @@ jobs:
           name: Watch Hub (build ${{ github.run_number }})
           files: WatchHub.apk
           make_latest: true
+          target_commitish: ${{ github.sha }}

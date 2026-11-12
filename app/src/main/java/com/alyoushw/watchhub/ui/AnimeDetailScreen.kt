@@ -182,6 +182,7 @@ private fun AnimeContent(vm: AnimeDetailViewModel, anime: JAnime, onOpen: (Media
         item { AnimeHeader(anime) }
 
         item { AnimeWatchButtons(anime, searchTitle) }
+        item { AnimeSources(anime) }
 
         item {
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

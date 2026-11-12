@@ -1,0 +1,96 @@
+# Animeify integration (Android 0.23)
+
+## Baseline and scope
+
+Based on `ccr-3b14310b-u6y40j` at `d82d9ae`, which contains the player,
+downloads, accounts/sync, and update notifications used by the published build 129.
+`main` is an older application and must not replace this baseline during merging.
+The owner explicitly authorized use of the Animeify source in this session.
+
+The existing application, navigation, ExoPlayer/Media3 player, audio decoders,
+buffering controls, Xtream account behavior, downloads, subscription tracking,
+and build-N update protocol are retained. No new application or player is created.
+
+## Source contract verified against Animeify 3.2.0
+
+Reference APK: <https://animeify-app.com/downloads/Animeify_v3.2.0.apk>
+
+SHA-256: `ac89ac85751b73c9767824c41b4a37465b0d4bbb8ea5f612a9544ba58eb90d09`
+
+Read-only form POST requests to `https://animeify.net/animeify/apis_v4/`:
+
+| Path | Parameters besides Token | Response |
+| --- | --- | --- |
+| `anime/load_anime_list_v2.php` | UserId=0, Language=ar, FilterType=SEARCH, FilterData, Type, From=0 | Title array |
+| `anime/load_related_anime.php` | UserId=0, Language=ar, RelationId, RelatedId | Related seasons/films array |
+| `episodes/load_episodes.php` | AnimeID | Episode array |
+| `anime/load_servers.php` | UserId=0, AnimeId, Episode, AnimeType | CurrentEpisode and adjacent episodes |
+
+Never interchange AnimeId (source string), Id (source database id), MAL id, or TMDB id.
+`MalId_org` is preferred over `MalId`, which may contain the sentinel `tempres`.
+Known MAL matches select automatically. TMDB titles show source search results for
+explicit selection; they do not auto-play approximate title matches.
+
+Both TMDB anime details and retained Jikan details offer the source panel. Related
+entries display their actual source season and title, including separately catalogued
+films. Episode lists paginate at 30 items for large series and TV use.
+
+Supported server adapters: MediaFire HD/SD/FHD MP4 (`FRLink`, `FRLowQ`, `FRFhdQ`),
+Sendvid HD/SD, and OK's available stream. Only non-empty source fields are offered;
+an advertised host may still have removed an old video. Unsupported legacy hosts
+(Mega, Drive, obsolete file hosts) are not claimed as supported. Failed hosts show
+an error; select another server from the title page.
+
+Arabic is supplied by the translated source video (including burned-in subtitles)
+or embedded subtitle tracks selected by the existing player. No generated subtitle
+translation or guaranteed Arabic availability is claimed for every source file.
+
+## Playback and persistence
+
+Queues and watch history identify an episode by AnimeId + episode, independent of
+server choice. An additive `animeRef` holds stable identifiers only. Resolving the
+source on playback, retry, and resume obtains a fresh CDN URL. Those URLs are kept
+only in the in-memory player queue and never in preferences or cloud history.
+Resume/next/previous/intro/end-credit behavior uses the existing player. The anime
+Home tab has its own continue-watching section; old Xtream entries remain separate.
+The optional source reference is preserved by Android/cloud serialization and the
+web sync field whitelist. Web playback of the new source is outside this Android scope.
+
+## Build configuration
+
+Set repository Actions secret `WATCHHUB_ANIMEIFY_TOKEN` to the owner's API client
+token. It is injected into BuildConfig by release builds, not committed to Git.
+Local builds can set the same environment variable. No Animeify user account or
+credentials are imported. Missing configuration produces a clear source error,
+and publishing is blocked until the release build includes the source token.
+
+Run `./gradlew testDebugUnitTest lintDebug assembleRelease` with Java 17 and SDK 35.
+GitHub Actions runs unit tests/lint before building and uploads verification reports
+and `WatchHub-apk`. Pushes to the feature branch do not publish. After verification,
+a manual run on the reviewed branch follows the existing release mechanism.
+Release tags remain build-N, versionCode remains 100 + run number, versionName is
+0.23.N, and the original signing-key configuration remains unchanged. Release tags
+now explicitly identify the built commit instead of relying on the default branch.
+
+## Update review
+
+The 6-hour WorkManager task, notification channel/permission, FileProvider installer,
+and foreground checks remain in place. Fixes cover dismissed dialogs being shown
+again after a manual check, notification delivery failures, retaining known updates
+during temporary API failures, and local build number 0 being older than CI builds.
+Release parsing is tested against the canonical WatchHub.apk and build-N protocol.
+
+## Verification
+
+Live read probes returned HTTP 200 for catalogue search, related seasons, the 220
+Naruto episodes, and current episode servers. MediaFire returned a page containing
+the expected MP4 download link. These are point-in-time checks, not a guarantee that
+all advertised host links remain available. Synthetic/trimmed fixtures contain no
+client token or temporary CDN links.
+
+Unit tests cover title/MAL mapping, special episodes/sorting, available qualities,
+MediaFire link decoding/host validation, source request shapes and URL refresh,
+missing selected quality, source errors, backward-compatible history, and release
+update parsing/version comparisons. Device playback, subtitles and notification
+permission behavior still require an Android device/emulator smoke test before
+claiming end-to-end device verification.

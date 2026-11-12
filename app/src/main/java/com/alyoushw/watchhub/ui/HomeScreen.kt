@@ -465,7 +465,8 @@ fun HomeScreen(
             apiKey.isBlank() -> Column {
                 header()
                 // "تابع المشاهدة" never waits for (or depends on) the TMDB rows.
-                ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true })
+                if (vm.type == MediaType.ANIME) AnimeContinueRow(onOpen)
+                else ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true })
                 MessageBox(
                     title = "خطوة وحدة قبل نبدأ",
                     body = "حط مفتاح TMDB المجاني في الإعدادات عشان نعرض لك أفضل الأعمال في كل منصة.",
@@ -476,13 +477,15 @@ fun HomeScreen(
 
             vm.loading && vm.sections.isEmpty() -> Column {
                 header()
-                ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true })
+                if (vm.type == MediaType.ANIME) AnimeContinueRow(onOpen)
+                else ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true })
                 CenteredLoading()
             }
 
             vm.error != null && vm.sections.isEmpty() -> Column {
                 header()
-                ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true })
+                if (vm.type == MediaType.ANIME) AnimeContinueRow(onOpen)
+                else ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true })
                 MessageBox(vm.error.orEmpty(), actionLabel = "حاول مرة ثانية", onAction = vm::refresh)
             }
 
@@ -500,7 +503,8 @@ fun HomeScreen(
                             onOpen = { item -> item.type?.let { onOpen(it, item.id) } },
                         )
                     }
-                    item(key = "continue") { ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true }) }
+                    item(key = "continue") { if (vm.type == MediaType.ANIME) AnimeContinueRow(onOpen)
+                else ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true }) }
                     item(key = "foryou") { ForYouRow(vm.type, onOpen) }
                     items(vm.sections.filter { !(it.wide && it.id == hero?.id) }, key = { it.id }) { section ->
                         TitleRow(

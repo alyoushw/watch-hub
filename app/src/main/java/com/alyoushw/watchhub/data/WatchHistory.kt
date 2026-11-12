@@ -32,8 +32,11 @@ data class WatchEntry(
     val accountId: String? = null,
     /** The TMDB title, when known, for "افتح صفحة الفيلم". */
     val tmdbId: Int? = null,
+    /** Animeify's stable source reference; never a temporary CDN URL. */
+    val animeRef: AnimeEpisodeRef? = null,
 ) {
     val isLive: Boolean get() = kind == LIVE
+    val isEpisode: Boolean get() = kind == EPISODE || kind == ANIME
 
     /** 0..1, or 0 when the length is unknown (live). */
     val progress: Float get() = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
@@ -45,6 +48,7 @@ data class WatchEntry(
         const val LIVE = "live"
         const val MOVIE = "movie"
         const val EPISODE = "episode"
+        const val ANIME = "anime_episode"
 
         fun keyOf(account: XtreamAccount, kind: String, id: String) = "${account.id}:$kind:$id"
 
@@ -226,7 +230,7 @@ class WatchHistory(context: Context) {
         val seenSeries = mutableSetOf<String>()
         return _entries.value.filter { e ->
             when {
-                e.kind == WatchEntry.EPISODE && e.seriesId != null -> seenSeries.add("${e.accountId}:${e.seriesId}")
+                e.isEpisode && e.seriesId != null -> seenSeries.add("${e.accountId}:${e.seriesId}")
                 e.kind == WatchEntry.MOVIE -> !e.finished
                 else -> true
             }
