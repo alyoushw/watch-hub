@@ -449,6 +449,7 @@ class CloudSync(
         "image" to image, "ext" to ext, "seriesId" to seriesId, "positionMs" to positionMs,
         "durationMs" to durationMs, "updatedAt" to updatedAt, "accountId" to accountId, "tmdbId" to tmdbId,
         "deleted" to false, "device" to deviceName,
+        "animeRef" to animeRef?.let { json.encodeToString(AnimeEpisodeRef.serializer(), it) },
     )
 
     private fun DocumentSnapshot.toEntry(): WatchEntry? {
@@ -467,6 +468,9 @@ class CloudSync(
             updatedAt = getLong("updatedAt") ?: 0,
             accountId = getString("accountId"),
             tmdbId = getLong("tmdbId")?.toInt(),
+            animeRef = getString("animeRef")?.let { raw ->
+                runCatching { json.decodeFromString(AnimeEpisodeRef.serializer(), raw) }.getOrNull()
+            },
         )
     }
 

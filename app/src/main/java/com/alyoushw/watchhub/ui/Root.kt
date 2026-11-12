@@ -67,8 +67,7 @@ private fun NavHostController.switchTab(route: String) = navigate(route) {
 }
 
 @Composable
-fun WatchHubRoot() {
-    val nav = rememberNavController()
+fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
     val backStack by nav.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
 
@@ -132,6 +131,7 @@ fun WatchHubRoot() {
                     onOpen = { type, id -> nav.openDetail(type, id) },
                     onOpenSettings = { nav.switchTab(Tab.SETTINGS.route) },
                     onOpenXtreamSeries = { sid -> nav.navigate("xtream/series/${Uri.encode(sid)}") },
+                    onOpenAnime = { lookup -> nav.navigate(lookup.route()) },
                     onSeeAll = { section ->
                         val source = section.source
                         if (source != null) {
@@ -180,6 +180,14 @@ fun WatchHubRoot() {
                 XtreamSeriesScreen(seriesId = entry.arguments?.getString("id").orEmpty(), onBack = { nav.popBackStack() })
             }
             composable(
+                route = "animeify/{lookup}",
+                arguments = listOf(navArgument("lookup") { type = NavType.StringType }),
+            ) { entry ->
+                val lookup = runCatching { decodeAnimeLookup(entry.arguments?.getString("lookup").orEmpty()) }.getOrNull()
+                if (lookup != null) AnimeSourcesScreen(lookup, onBack = { nav.popBackStack() })
+                else MessageBox("تعذّر فتح صفحة أنمي فاي", actionLabel = "رجوع", onAction = { nav.popBackStack() })
+            }
+            composable(
                 route = "detail/{type}/{id}",
                 arguments = listOf(
                     navArgument("type") { type = NavType.StringType },
@@ -190,6 +198,7 @@ fun WatchHubRoot() {
                 val id = entry.arguments?.getInt("id") ?: 0
                 if (type == MediaType.ANIME) {
                     AnimeDetailScreen(
+                        onOpenAnime = { lookup -> nav.navigate(lookup.route()) },
                         id = id,
                         onBack = { nav.popBackStack() },
                         onOpen = { t, i -> nav.openDetail(t, i) },
@@ -202,6 +211,7 @@ fun WatchHubRoot() {
                         onOpen = { t, i -> nav.openDetail(t, i) },
                         onOpenPerson = { personId -> nav.navigate("person/$personId") },
                         onOpenXtreamSeries = { sid -> nav.navigate("xtream/series/${Uri.encode(sid)}") },
+                        onOpenAnime = { lookup -> nav.navigate(lookup.route()) },
                     )
                 }
             }

@@ -103,11 +103,17 @@ class Downloads(private val context: Context) {
     /** Adds [entry] to the queue; downloads go one at a time (accounts often allow one connection). */
     fun start(entry: WatchEntry, url: String) = startAll(listOf(entry to url))
 
+    /** Store source references, and resolve each temporary CDN URL only when its turn starts. */
+    fun startAnime(entries: List<WatchEntry>) {
+        require(entries.all { it.animeRef != null })
+        startAll(entries.map { it to "" })
+    }
+
     /** Adds several (a whole season or series), in order; the queue takes them one by one. */
     fun startAll(list: List<Pair<WatchEntry, String>>) {
         val dir = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: context.filesDir
         val added = list.filter { (e, _) -> !has(e.key) }.map { (entry, url) ->
-            val ext = url.substringAfterLast('.', "mp4").substringBefore('?').take(5).ifBlank { "mp4" }
+            val ext = if (entry.animeRef != null) "mp4" else url.substringAfterLast('.', "mp4").substringBefore('?').take(5).ifBlank { "mp4" }
             val file = File(dir, entry.key.replace(Regex("[^A-Za-z0-9_-]"), "_") + "." + ext)
             file.delete()
             setStatus(entry.key, STATUS_QUEUED)
@@ -121,7 +127,7 @@ class Downloads(private val context: Context) {
     /** Starts the first waiting download, unless one is already running. */
     @Synchronized
     fun startNext() {
-        val items = _items.value.filter { it.systemId < 0 && it.url.isNotBlank() }
+        val items = _items.value.filter { it.systemId < 0 && (it.url.isNotBlank() || entryOf(it)?.animeRef != null) }
         if (items.any { status(it.key) == STATUS_RUNNING }) return
         val next = items.firstOrNull { status(it.key) == STATUS_QUEUED } ?: return
         setStatus(next.key, STATUS_RUNNING)
@@ -142,7 +148,8 @@ class Downloads(private val context: Context) {
 
     /** Back in the queue: it continues from where it stopped when its turn comes. */
     fun resume(key: String) {
-        if (find(key)?.url.isNullOrBlank()) return
+        val download = find(key) ?: return
+        if (download.url.isBlank() && entryOf(download)?.animeRef == null) return
         if (status(key) == STATUS_RUNNING || status(key) == STATUS_DONE) return
         setStatus(key, STATUS_QUEUED)
         startNext()
@@ -172,7 +179,7 @@ class Downloads(private val context: Context) {
         if (wasRunning) startNext()
     }
 
-    fun canPause(d: Download) = d.systemId < 0 && d.url.isNotBlank()
+    fun canPause(d: Download) = d.systemId < 0 && (d.url.isNotBlank() || entryOf(d)?.animeRef != null)
 
     internal fun status(key: String) = prefs.getString("st:$key", STATUS_QUEUED) ?: STATUS_QUEUED
 
@@ -277,8 +284,9 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
 
         val client = Net.streams.newBuilder().readTimeout(60, TimeUnit.SECONDS).callTimeout(0, TimeUnit.SECONDS).build()
         var have = if (file.exists()) file.length() else 0L
-        val request = Request.Builder().url(d.url).apply { if (have > 0) header("Range", "bytes=$have-") }.build()
         try {
+            val url = downloads.entryOf(d)?.animeRef?.let { container.animeify.resolve(it) } ?: d.url
+            val request = Request.Builder().url(url).apply { if (have > 0) header("Range", "bytes=$have-") }.build()
             client.newCall(request).execute().use { res ->
                 if (res.code == 416) {
                     // Nothing left to fetch: it was already complete.

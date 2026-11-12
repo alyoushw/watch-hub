@@ -56,6 +56,7 @@ class PlayerActivity : ComponentActivity() {
     private var queue: List<QueueItem> = emptyList()
     private var position = 0
     private var urlIndex = 0
+    private var resolveJob: Job? = null
     private val loadControl = FlexibleLoadControl()
     private val bandwidth by lazy { androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.Builder(this).build() }
 
@@ -206,7 +207,7 @@ class PlayerActivity : ComponentActivity() {
                 if (state == Player.STATE_ENDED) {
                     saveProgress(important = true)
                     // A series goes on to the next episode; anything else closes.
-                    if (session.hasNext && entry?.kind == WatchEntry.EPISODE) playAt(position + 1) else finish()
+                    if (session.hasNext && entry?.isEpisode == true) playAt(position + 1) else finish()
                 }
             }
 
@@ -268,6 +269,7 @@ class PlayerActivity : ComponentActivity() {
     /** Starts queue item [i]: saves where the current one stopped, then resumes the new one. */
     private fun playAt(i: Int) {
         if (i !in queue.indices) return
+        resolveJob?.cancel()
         retries = 0
         // A new item starts with normal loading ahead and no slow-connection notice.
         preloadJob?.cancel()
@@ -281,6 +283,11 @@ class PlayerActivity : ComponentActivity() {
             if (queue[i].urls.firstOrNull() != local) queue = queue.toMutableList().also { it[i] = it[i].copy(urls = listOf(local) + it[i].urls) }
         }
         if (started) saveProgress(important = true)
+        if (queue[i].entry.animeRef != null || entry?.animeRef != null) {
+            started = false
+            player.stop()
+            player.clearMediaItems()
+        }
         position = i
         urlIndex = 0
         started = false
@@ -312,14 +319,43 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun setMedia(startAt: Long) {
+        val ref = entry?.animeRef
+        if (ref != null) {
+            resolveJob?.cancel()
+            val local = entry?.key?.let(container.downloads::localUrl)
+            if (local != null) {
+                queue = queue.toMutableList().also { it[position] = it[position].copy(urls = listOf(local)) }
+                urlIndex = 0
+                setResolvedMedia(startAt)
+                return
+            }
+            val key = entry?.key
+            resolveJob = lifecycleScope.launch {
+                try {
+                    val url = container.animeify.resolve(ref)
+                    if (entry?.key != key) return@launch
+                    queue = queue.toMutableList().also { it[position] = it[position].copy(urls = listOf(url)) }
+                    urlIndex = 0
+                    setResolvedMedia(startAt)
+                } catch (e: com.alyoushw.watchhub.data.AnimeifyException) {
+                    Toast.makeText(this@PlayerActivity, e.message, Toast.LENGTH_LONG).show()
+                }
+            }
+            return
+        }
+        setResolvedMedia(startAt)
+    }
+
+    private fun setResolvedMedia(startAt: Long) {
         val urls = current?.urls ?: return
+        if (urls.isEmpty()) return
         val item = MediaItem.Builder()
             .setUri(urls[urlIndex.coerceIn(0, urls.lastIndex)])
             .setMediaMetadata(MediaMetadata.Builder().setTitle(entry?.title).build())
             .build()
         if (startAt > 0) player.setMediaItem(item, startAt) else player.setMediaItem(item)
         player.prepare()
-        player.playWhenReady = true
+        player.playWhenReady = lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
     }
 
     /**
@@ -327,6 +363,30 @@ class PlayerActivity : ComponentActivity() {
      */
     private fun loadSeriesQueue() {
         val e = entry ?: return
+        e.animeRef?.let { ref ->
+            if (queue.size > 1) return
+            lifecycleScope.launch {
+                try {
+                    val episodes = container.animeify.episodes(ref.animeId)
+                    val items = episodes.map { ep ->
+                        val next = ref.copy(episode = ep.number)
+                        QueueItem(emptyList(), e.copy(
+                            key = "animeify:${ref.animeId}:${ep.number}", itemId = ep.number,
+                            subtitle = if (ref.type == "MOVIE") "فيلم" else "الموسم ${ref.season} · الحلقة ${ep.number}", animeRef = next,
+                            positionMs = 0, durationMs = 0,
+                        ))
+                    }
+                    val at = items.indexOfFirst { it.entry.key == e.key }
+                    if (at >= 0 && entry?.key == e.key) {
+                        queue = items
+                        position = at
+                        session.hasPrevious = at > 0
+                        session.hasNext = at < items.lastIndex
+                    }
+                } catch (_: com.alyoushw.watchhub.data.AnimeifyException) { }
+            }
+            return
+        }
         if (e.kind != WatchEntry.EPISODE || queue.size > 1) return
         val seriesId = e.seriesId ?: return
         val account = container.settings.xtreamAccount(e.accountId) ?: return
@@ -351,7 +411,7 @@ class PlayerActivity : ComponentActivity() {
     private fun nextPressed() {
         val e = entry
         // Pressed in the last minutes: that is where this series' end credits start.
-        if (e?.kind == WatchEntry.EPISODE && e.seriesId != null && player.duration > 0) {
+        if (e?.isEpisode == true && e.seriesId != null && player.duration > 0) {
             val remaining = player.duration - player.currentPosition
             if (remaining < 240_000) marks.setCredits(seriesKey(e), remaining)
         }
@@ -376,7 +436,7 @@ class PlayerActivity : ComponentActivity() {
         while (true) {
             delay(500)
             val e = entry
-            if (!started || e == null || e.kind != WatchEntry.EPISODE || e.seriesId == null) {
+            if (!started || e == null || !e.isEpisode || e.seriesId == null) {
                 session.skipIntroLabel = null
                 session.upNext = null
                 lastPos = -1L
@@ -559,7 +619,8 @@ class PlayerActivity : ComponentActivity() {
 
         /** Plays [items] starting at [index]: left/right (channels) or next episode move through them. */
         fun start(context: Context, items: List<QueueItem>, index: Int) {
-            if (items.isEmpty() || items.getOrNull(index)?.urls.isNullOrEmpty()) return
+            val selected = items.getOrNull(index) ?: return
+            if (selected.urls.isEmpty() && selected.entry.animeRef == null) return
             PlayerQueue.items = items
             PlayerQueue.index = index
             context.startActivity(Intent(context, PlayerActivity::class.java))

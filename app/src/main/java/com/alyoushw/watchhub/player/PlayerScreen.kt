@@ -105,6 +105,7 @@ private enum class Menu { SUBTITLES, AUDIO, SPEED, SOURCES, INFO, SLEEP, PICTURE
 /** Picture modes for "حجم الصورة": how the video fits, or a fixed shape it is drawn in. */
 private data class PictureMode(val label: String, val resize: Int, val ratio: Float? = null)
 
+@androidx.annotation.OptIn(UnstableApi::class)
 private val PictureModes = listOf(
     PictureMode("ملاءمة الشاشة (بدون قص)", AspectRatioFrameLayout.RESIZE_MODE_FIT),
     PictureMode("ملء الشاشة مع قص الأطراف", AspectRatioFrameLayout.RESIZE_MODE_ZOOM),

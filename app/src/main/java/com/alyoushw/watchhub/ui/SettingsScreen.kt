@@ -210,7 +210,7 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}) {
             SectionTitle("عن التطبيق")
             AppVersionRow()
             Text(
-                "Watch Hub ما يشغّل الفيديو بنفسه (إلا محتوى حساب Xtream Codes إذا أضفته) ولا يحفظ كلمات مرور حساباتك غير هذا الحساب. يجمع لك المحتوى في مكان واحد، " +
+                "Watch Hub يشغّل حلقات Animeify ومحتوى حساب Xtream Codes بالمشغل المدمج ويجمع لك المحتوى في مكان واحد، " +
                     "ولما تضغط «شاهد» يفتح العمل في تطبيق المنصة الرسمي.\n\n" +
                     "كل بياناتك (قائمتك واشتراكاتك) محفوظة على جوالك بس.\n\n" +
                     "This product uses the TMDB API but is not endorsed or certified by TMDB. " +
@@ -1127,6 +1127,11 @@ private fun YouTubeSection() {
 /** This build's number, and a button to look for a newer one now. */
 @Composable
 private fun AppVersionRow() {
+    if (com.alyoushw.watchhub.BuildConfig.IS_PREVIEW) {
+        Text("نسخة خاصة · ${com.alyoushw.watchhub.BuildConfig.VERSION_NAME}")
+        Text("هذه النسخة مستقلة عن التطبيق الرئيسي ولا تستقبل تحديثاته.", style = MaterialTheme.typography.bodySmall)
+        return
+    }
     val updater = appContainer().updater
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf<String?>(null) }
@@ -1164,6 +1169,7 @@ private fun StatsSection() {
             val parts = listOfNotNull(
                 st.byKind["episode"]?.takeIf { it > 0 }?.let { "مسلسلات ${hours(it)}" },
                 st.byKind["movie"]?.takeIf { it > 0 }?.let { "أفلام ${hours(it)}" },
+                st.byKind["anime_episode"]?.takeIf { it > 0 }?.let { "أنمي ${hours(it)}" },
                 st.byKind["live"]?.takeIf { it > 0 }?.let { "مباشر ${hours(it)}" },
             )
             if (parts.isNotEmpty()) Text(parts.joinToString(" · "), style = MaterialTheme.typography.bodySmall)

@@ -42,6 +42,7 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun UpdateNotice() {
+    if (com.alyoushw.watchhub.BuildConfig.IS_PREVIEW) return
     val updater = appContainer().updater
     val scope = rememberCoroutineScope()
     val update by updater.available.collectAsStateWithLifecycle()

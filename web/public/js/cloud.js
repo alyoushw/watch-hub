@@ -226,7 +226,7 @@ async function startSyncing() {
 
 // ---- history
 
-const HISTORY_FIELDS = ["key", "kind", "itemId", "title", "subtitle", "image", "ext", "seriesId", "positionMs", "durationMs", "updatedAt", "accountId", "tmdbId"];
+const HISTORY_FIELDS = ["key", "kind", "itemId", "title", "subtitle", "image", "ext", "seriesId", "positionMs", "durationMs", "updatedAt", "accountId", "tmdbId", "animeRef"];
 
 function historyDoc(e) {
   const out = { deleted: false, device: "المتصفح" };

@@ -253,6 +253,9 @@ class YouTubeTvActivity : ComponentActivity() {
         }
     }
 
+    // This Activity override must delegate unhandled keys to its superclass. AndroidX core
+    // marks that implementation restricted, although delegating from an override is required.
+    @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (web == null) return super.dispatchKeyEvent(event)
         when (event.keyCode) {
