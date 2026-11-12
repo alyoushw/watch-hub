@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -142,6 +143,10 @@ fun PlayerScreen(
     onPickSource: (ChannelSource, List<ChannelSource>) -> Unit,
     /** Starts the player again (after switching the sound decoder). */
     onRestart: () -> Unit = {},
+    onPreload: (Int) -> Unit = {},
+    onAutoPreload: () -> Unit = {},
+    onDismissSlow: () -> Unit = {},
+    onPlayNow: () -> Unit = {},
 ) {
     val title = session.title
     val subtitle = session.subtitle
@@ -369,6 +374,8 @@ fun PlayerScreen(
                 .focusable()
                 .onPreviewKeyEvent { e ->
                     if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    // The slow-connection card and the loading-ahead box take the remote while shown.
+                    if ((session.slowNet != null || session.preloading != null) && !controls && menu == null) return@onPreviewKeyEvent false
                     poke()
                     when (e.key.nativeKeyCode) {
                         KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE -> {
@@ -593,6 +600,22 @@ fun PlayerScreen(
                 }
             }
 
+            session.slowNet?.let { why ->
+                if (!locked && session.preloading == null) {
+                    SlowNetCard(
+                        why = why,
+                        auto = session.autoPreload,
+                        modifier = Modifier.align(Alignment.TopCenter).padding(top = if (controls) 84.dp else 20.dp),
+                        onPreload = onPreload,
+                        onAuto = onAutoPreload,
+                        onDismiss = onDismissSlow,
+                    )
+                }
+            }
+            session.preloading?.let { (ready, wanted) ->
+                PreloadBox(ready, wanted, Modifier.align(Alignment.Center), onPlayNow)
+            }
+
             session.upNext?.let { next ->
                 if (!locked) {
                     UpNextCard(
@@ -672,6 +695,11 @@ fun PlayerScreen(
                 InfoPanel(info, onClose = { menu = null })
             } else if (menu == Menu.QUALITY) {
                 QualityPanel(
+                    autoPreload = session.autoPreload,
+                    onAutoPreload = {
+                        menu = null
+                        onAutoPreload()
+                    },
                     tracks = tracks,
                     auto = player.trackSelectionParameters.overrides.keys.none { it.type == C.TRACK_TYPE_VIDEO },
                     onAuto = {
@@ -1075,6 +1103,62 @@ private fun StepRow(onMinus: () -> Unit, onPlus: () -> Unit, firstFocus: FocusRe
     }
 }
 
+/** "⚠️ النت بطيء": load a few minutes ahead and then go on, always do it by itself, or ignore. */
+@Composable
+private fun SlowNetCard(why: String, auto: Boolean, modifier: Modifier, onPreload: (Int) -> Unit, onAuto: () -> Unit, onDismiss: () -> Unit) {
+    val first = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
+    Column(
+        modifier
+            .widthIn(max = 520.dp)
+            .padding(horizontal = 16.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color(0xF2141210))
+            .border(1.dp, Gold.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("⚠️ النت بطيء والفيديو يقطّع", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text(why, color = Color.White.copy(alpha = 0.75f), fontSize = 13.sp)
+        Text("نوقفه شوي ونحمّل مسبقاً، وبعدها يكمل بدون تقطيع:", color = Color.White.copy(alpha = 0.75f), fontSize = 13.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PillButton("⏳ دقيقة", Modifier.focusRequester(first), small = true) { onPreload(1) }
+            PillButton("⏳ 3 دقايق", small = true) { onPreload(3) }
+            PillButton("⏳ 5 دقايق", small = true) { onPreload(5) }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PillButton(if (auto) "⚡ تلقائي: شغّال" else "⚡ تلقائي دايماً", small = true, onClick = onAuto)
+            PillButton("تجاهل", small = true, onClick = onDismiss)
+        }
+    }
+}
+
+/** "⏳ نجهّز…": how much is ready of what was asked, and "شغّل الحين". */
+@Composable
+private fun PreloadBox(ready: Long, wanted: Long, modifier: Modifier, onPlayNow: () -> Unit) {
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    Column(
+        modifier
+            .width(300.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color.Black.copy(alpha = 0.8f))
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("⏳ نحمّل مسبقاً…", color = Color.White, fontWeight = FontWeight.Bold)
+        LinearProgressIndicator(
+            progress = { (ready.toFloat() / wanted).coerceIn(0f, 1f) },
+            modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+            color = Gold,
+            trackColor = Color.White.copy(alpha = 0.2f),
+        )
+        Text("\u2066${formatTime(ready)} / ${formatTime(wanted)}\u2069", color = Color.White.copy(alpha = 0.8f), fontSize = 13.sp)
+        PillButton("▶ شغّل الحين", Modifier.focusRequester(focus), small = true, onClick = onPlayNow)
+    }
+}
+
 /**
  * "الجودة": automatic (by the connection's speed) or one of the qualities the stream offers.
  * Most films and episodes from an Xtream account are one file in one quality: then it says so.
@@ -1082,6 +1166,8 @@ private fun StepRow(onMinus: () -> Unit, onPlus: () -> Unit, firstFocus: FocusRe
 @OptIn(UnstableApi::class)
 @Composable
 private fun QualityPanel(
+    autoPreload: Boolean,
+    onAutoPreload: () -> Unit,
     tracks: Tracks,
     auto: Boolean,
     onAuto: () -> Unit,
@@ -1112,6 +1198,9 @@ private fun QualityPanel(
         ) {
             Text("الجودة", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
             LazyColumn(contentPadding = PaddingValues(vertical = 6.dp)) {
+                item {
+                    MenuRow("⚡ تحميل مسبق تلقائي لما يقطّع", selected = autoPreload, onClick = onAutoPreload)
+                }
                 if (options.size > 1) {
                     item { MenuRow("تلقائي (حسب سرعة النت)", selected = auto, modifier = Modifier.focusRequester(firstFocus), onClick = onAuto) }
                     items(options.size) { n ->

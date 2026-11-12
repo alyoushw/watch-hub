@@ -53,6 +53,12 @@ class PlayerSession {
     var filter by mutableStateOf<String?>(null)
     /** "تخطي المقدمة" is shown while this is set (the label on the button). */
     var skipIntroLabel by mutableStateOf<String?>(null)
+    /** The video keeps stopping to load: the "النت بطيء" card shows (with this explanation). */
+    var slowNet by mutableStateOf<String?>(null)
+    /** Loading ahead before going on: (ms ready, ms wanted). */
+    var preloading by mutableStateOf<Pair<Long, Long>?>(null)
+    /** "تلقائي دايماً": load ahead by itself whenever it starts to stall. */
+    var autoPreload by mutableStateOf(false)
 }
 
 /**

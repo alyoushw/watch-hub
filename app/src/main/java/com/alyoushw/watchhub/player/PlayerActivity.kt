@@ -56,6 +56,78 @@ class PlayerActivity : ComponentActivity() {
     private var queue: List<QueueItem> = emptyList()
     private var position = 0
     private var urlIndex = 0
+    private val loadControl = FlexibleLoadControl()
+    private val bandwidth by lazy { androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.Builder(this).build() }
+
+    // ---------- slow connection: notice, load ahead ----------
+
+    private var stallStartedAt = 0L
+    private val stalls = mutableListOf<Long>()
+    private var preloadJob: Job? = null
+
+    /** Counts the stops to load while playing a film / episode; two in 3 minutes, or one over 4 s, means a slow connection. */
+    private fun watchStalls(state: Int) {
+        val e = entry ?: return
+        if (e.isLive || !started || session.preloading != null) return
+        val now = System.currentTimeMillis()
+        if (state == Player.STATE_BUFFERING && player.playWhenReady && player.currentPosition > 3_000) {
+            stallStartedAt = now
+            if (session.autoPreload) {
+                preload(2)
+                return
+            }
+            stalls += now
+            stalls.removeAll { now - it > 3 * 60_000 }
+            if (stalls.size >= 2) slowNotice()
+        } else if (state == Player.STATE_READY && stallStartedAt > 0) {
+            if (now - stallStartedAt > 4_000 && !session.autoPreload) slowNotice()
+            stallStartedAt = 0
+        }
+    }
+
+    private fun slowNotice() {
+        if (session.slowNet != null) return
+        val have = bandwidth.bitrateEstimate.takeIf { it > 0 }
+        val need = player.videoFormat?.let { f -> listOf(f.averageBitrate, f.bitrate, f.peakBitrate).firstOrNull { it > 0 } }
+        fun mbps(b: Long) = String.format(java.util.Locale.US, "%.1f Mbps", b / 1_000_000f)
+        session.slowNet = listOfNotNull(
+            have?.let { "سرعة نتك تقريباً ${mbps(it)}" },
+            need?.let { "والفيديو يحتاج ${mbps(it.toLong())}" },
+        ).joinToString("، ").ifBlank { "الفيديو يوقف يحمّل كل شوي" }
+    }
+
+    /** Pauses, loads [minutes] ahead (or to the end), then plays on and keeps that much ready. */
+    private fun preload(minutes: Int) {
+        session.slowNet = null
+        stalls.clear()
+        val wanted = minutes * 60_000L
+        loadControl.aheadMs = wanted + 15_000
+        player.playWhenReady = false
+        preloadJob?.cancel()
+        preloadJob = lifecycleScope.launch {
+            session.preloading = 0L to wanted
+            while (true) {
+                val ready = player.totalBufferedDuration
+                session.preloading = ready to wanted
+                val toEnd = player.duration.takeIf { it > 0 }?.let { it - player.currentPosition } ?: Long.MAX_VALUE
+                if (ready >= wanted || ready >= toEnd - 1_000) break
+                delay(500)
+            }
+            playNowAfterPreload()
+        }
+    }
+
+    private fun playNowAfterPreload() {
+        preloadJob?.cancel()
+        session.preloading = null
+        player.playWhenReady = true
+    }
+
+    private fun setAutoPreload(on: Boolean) {
+        session.autoPreload = on
+        getSharedPreferences("player", MODE_PRIVATE).edit().putBoolean("autoPreload", on).apply()
+        if (on) preload(2) else session.slowNet = null
+    }
     private var retries = 0
     private var started = false
     private var loadJob: Job? = null
@@ -91,16 +163,14 @@ class PlayerActivity : ComponentActivity() {
         // Providers often redirect a stream to another server, sometimes from https to http
         // (OkHttp follows both). Its pool is dropped when the network changes (see Net).
         val http = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(com.alyoushw.watchhub.data.Net.streams)
+        session.autoPreload = getSharedPreferences("player", MODE_PRIVATE).getBoolean("autoPreload", false)
         player = ExoPlayer.Builder(this, com.alyoushw.watchhub.data.playerRenderers(this))
+            .setBandwidthMeter(bandwidth)
             .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http)))
             .setSeekBackIncrementMs(10_000)
             .setSeekForwardIncrementMs(10_000)
-            // Slow connections (the car): keep up to two minutes ready ahead, start after 2.5 s.
-            .setLoadControl(
-                androidx.media3.exoplayer.DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(30_000, 120_000, 2_500, 5_000)
-                    .build(),
-            )
+            // About a minute ahead normally; more when the user asks (see the "النت بطيء" card).
+            .setLoadControl(loadControl)
             .build()
         // Arabic audio and subtitles first when a file has them.
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
@@ -132,6 +202,7 @@ class PlayerActivity : ComponentActivity() {
 
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_READY) retries = 0
+                watchStalls(state)
                 if (state == Player.STATE_ENDED) {
                     saveProgress(important = true)
                     // A series goes on to the next episode; anything else closes.
@@ -176,6 +247,10 @@ class PlayerActivity : ComponentActivity() {
                     onCancelUpNext = { upNextDismissedFor = entry?.key; session.upNext = null },
                     loadSources = ::otherSources,
                     onPickSource = ::playSource,
+                    onPreload = ::preload,
+                    onAutoPreload = { setAutoPreload(!session.autoPreload) },
+                    onDismissSlow = { session.slowNet = null },
+                    onPlayNow = ::playNowAfterPreload,
                     onRestart = {
                         // Same item, same spot, with the other sound decoder.
                         saveProgress(important = true)
@@ -194,6 +269,13 @@ class PlayerActivity : ComponentActivity() {
     private fun playAt(i: Int) {
         if (i !in queue.indices) return
         retries = 0
+        // A new item starts with normal loading ahead and no slow-connection notice.
+        preloadJob?.cancel()
+        session.preloading = null
+        session.slowNet = null
+        stalls.clear()
+        stallStartedAt = 0
+        loadControl.aheadMs = FlexibleLoadControl.NORMAL_MS
         // Saved on the device: play the file (no internet needed), the link stays as a fallback.
         container.downloads.localUrl(queue[i].entry.key)?.let { local ->
             if (queue[i].urls.firstOrNull() != local) queue = queue.toMutableList().also { it[i] = it[i].copy(urls = listOf(local) + it[i].urls) }
