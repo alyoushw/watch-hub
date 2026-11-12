@@ -25,6 +25,7 @@ import org.junit.runner.RunWith
 import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(AndroidJUnit4::class)
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 class TvControlsSmokeTest {
     @get:Rule val compose = createEmptyComposeRule()
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
