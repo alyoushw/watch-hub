@@ -47,7 +47,9 @@ class TvControlsSmokeTest {
                             onOpenAnime = { opened.incrementAndGet() })
                     }
                 } }
+                instrumentation.setInTouchMode(false)
                 compose.onNodeWithText(title).performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+                compose.onNodeWithText(title).assertIsFocused()
                 val downAt = SystemClock.uptimeMillis()
                 send(downAt, KeyEvent.ACTION_DOWN, 0)
                 send(downAt, KeyEvent.ACTION_DOWN, 1)
@@ -56,6 +58,8 @@ class TvControlsSmokeTest {
                 compose.onNodeWithText("المواسم والحلقات · أنمي فاي").assertDoesNotExist()
                 assertEquals(0, opened.get())
                 send(downAt, KeyEvent.ACTION_UP, 0)
+                compose.waitForIdle()
+                assertEquals("Releasing the long press must not activate the title", 0, opened.get())
                 compose.waitUntil(10_000) {
                     compose.onAllNodesWithText("المواسم والحلقات · أنمي فاي").fetchSemanticsNodes().isNotEmpty()
                 }

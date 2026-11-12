@@ -575,7 +575,7 @@ fun Modifier.remoteLongPress(onLongPress: () -> Unit, onClick: () -> Unit): Modi
             }
             ok && down -> {
                 if (e.nativeKeyEvent.repeatCount == 0) { pressed = true; armed = false }
-                else if (pressed) armed = true
+                else { pressed = true; armed = true }
                 if (e.nativeKeyEvent.isLongPress && pressed) armed = true
                 // Own the entire key gesture, so combinedClickable cannot start a second
                 // long-press timer or forward the held key into the new dialog.
