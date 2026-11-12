@@ -1,10 +1,7 @@
 package com.alyoushw.watchhub
 
-import android.app.UiAutomation
 import android.content.Intent
-import android.graphics.Bitmap
 import android.os.SystemClock
-import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
@@ -13,13 +10,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.test.*
+import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.navigation.compose.rememberNavController
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
-import androidx.test.uiautomator.Until
 import com.alyoushw.watchhub.data.*
 import com.alyoushw.watchhub.player.PlayerActivity
 import com.alyoushw.watchhub.player.PlayerQueue
@@ -32,12 +29,14 @@ import okio.Buffer
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Test
+import org.junit.Rule
 import org.junit.runner.RunWith
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
 @RunWith(AndroidJUnit4::class)
 class AnimeFlowSmokeTest {
+    @get:Rule val compose = createEmptyComposeRule()
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val context get() = instrumentation.targetContext
     private val container get() = (context.applicationContext as WatchHubApp).container
@@ -49,60 +48,48 @@ class AnimeFlowSmokeTest {
             title.malId ?: 20, title.malId,
             overview = "بعد المدرسة الإعدادية، مع التنمر والألقاب، تشعر أوكا إيشيموري بالحماس لبدء بداية جديدة في المدرسة الثانوية. يدعم كاي أوكا في جهودها للتأقلم مع زملائها الجدد في الفصل.")
         val device = UiDevice.getInstance(instrumentation)
-        try {
-            device.executeShellCommand("wm size 1312x1884")
-            device.executeShellCommand("wm density 320")
-            instrumentation.uiAutomation.setRotation(UiAutomation.ROTATION_FREEZE_90)
-            // Resize/rotation are asynchronous; wait before attaching the test UI.
-            val displayDeadline = SystemClock.elapsedRealtime() + 10_000
-            while (SystemClock.elapsedRealtime() < displayDeadline && device.displayWidth < 1800) SystemClock.sleep(100)
-            device.waitForIdle(2_000)
-            val opened = AtomicBoolean(false)
-            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-                scenario.onActivity { activity -> activity.setContent {
-                    WatchHubTheme(forceDark = true) {
-                        val nav = rememberNavController()
-                        var showAction by remember { mutableStateOf(true) }
-                        Box {
-                            WatchHubRoot(nav)
-                            if (showAction) Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Text(lookup.title)
-                                    AnimeifyWatchButton(lookup, onOpen = {
-                                        nav.navigate(it.route())
-                                        opened.set(true)
-                                        showAction = false
-                                    })
-                                }
+        val opened = AtomicBoolean(false)
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> activity.setContent {
+                WatchHubTheme(forceDark = true) {
+                    val nav = rememberNavController()
+                    var showAction by remember { mutableStateOf(true) }
+                    Box {
+                        WatchHubRoot(nav)
+                        if (showAction) Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Text(lookup.title)
+                                AnimeifyWatchButton(lookup, onOpen = {
+                                    nav.navigate(it.route())
+                                    opened.set(true)
+                                    showAction = false
+                                })
                             }
                         }
                     }
-                } }
-                try {
-                    assertTrue(device.wait(Until.hasObject(By.text("تشغيل أنمي فاي")), 10_000) == true)
-                    clickAccessibleText("تشغيل أنمي فاي")
-                    instrumentation.waitForIdleSync()
-                    assertTrue("The watch button must invoke its navigation callback", opened.get())
-                    assertTrue("Navigation must show the episode page", device.wait(Until.hasObject(By.textContains("تنزيل الحلقات للمشاهدة بدون نت")), 10_000) == true)
-                    assertTrue("The watch action must navigate to episode cards", device.wait(Until.hasObject(By.textContains("S01 E01")), 30_000) == true)
-                    assertTrue(device.hasObject(By.textContains("تنزيل الحلقات للمشاهدة بدون نت")))
-                    device.waitForIdle(2_000)
-                    saveScreenshot("animeify-episodes")
-                    clickAccessibleText("تنزيل الحلقات للمشاهدة بدون نت")
-                    assertTrue(device.wait(Until.hasObject(By.textContains("تنزيل الموسم")), 10_000) == true)
-                    assertTrue(device.wait(Until.hasObject(By.textContains("MediaFire")), 30_000) == true)
-                    saveScreenshot("animeify-download-picker")
-                } catch (failure: Throwable) {
-                    saveScreenshot("animeify-flow-failure")
-                    val directory = File(context.getExternalFilesDir(null), "screenshots").apply { mkdirs() }
-                    device.dumpWindowHierarchy(File(directory, "animeify-flow-failure.xml"))
-                    throw failure
                 }
+            } }
+            try {
+                waitForText("تشغيل أنمي فاي")
+                compose.onNodeWithText("تشغيل أنمي فاي").performClick()
+                instrumentation.waitForIdleSync()
+                assertTrue("The watch button must invoke its navigation callback", opened.get())
+                waitForText("تنزيل الحلقات للمشاهدة بدون نت", substring = true)
+                waitForText("S01 E01", substring = true, timeout = 30_000)
+                compose.onNodeWithText("📥 تنزيل الحلقات للمشاهدة بدون نت").assertExists()
+                device.waitForIdle(2_000)
+                saveScreenshot("animeify-episodes")
+                compose.onNodeWithText("📥 تنزيل الحلقات للمشاهدة بدون نت").performClick()
+                waitForText("تنزيل الموسم", substring = true)
+                waitForText("MediaFire", substring = true, timeout = 30_000)
+                saveScreenshot("animeify-download-picker")
+            } catch (failure: Throwable) {
+                saveScreenshot("animeify-flow-failure")
+                val directory = File(context.getExternalFilesDir(null), "screenshots").apply { mkdirs() }
+                device.dumpWindowHierarchy(File(directory, "animeify-flow-failure.xml"))
+                device.executeShellCommand("cp ${directory.absolutePath}/animeify-flow-failure.xml /sdcard/Download/watchhub-smoke/")
+                throw failure
             }
-        } finally {
-            instrumentation.uiAutomation.setRotation(UiAutomation.ROTATION_UNFREEZE)
-            device.executeShellCommand("wm size reset")
-            device.executeShellCommand("wm density reset")
         }
     }
 
@@ -161,20 +148,16 @@ class AnimeFlowSmokeTest {
         }
     }
 
-    /** Exercise the real Compose click action without stale coordinates after display changes. */
-    private fun clickAccessibleText(text: String) {
-        var node = instrumentation.uiAutomation.rootInActiveWindow
-            .findAccessibilityNodeInfosByText(text).firstOrNull()
-        while (node != null && !node.isClickable) node = node.parent
-        assertTrue("No clickable accessibility action for $text",
-            node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true)
+    private fun waitForText(text: String, substring: Boolean = false, timeout: Long = 10_000) {
+        compose.waitUntil(timeoutMillis = timeout) {
+            compose.onAllNodes(hasText(text, substring = substring)).fetchSemanticsNodes().isNotEmpty()
+        }
     }
 
     private fun saveScreenshot(name: String) {
-        val directory = File(context.getExternalFilesDir(null), "screenshots").apply { mkdirs() }
-        instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
-            File(directory, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-            bitmap.recycle()
-        }
+        // Gradle uninstalls the tested APK on completion; keep diagnostic files outside its data.
+        val device = UiDevice.getInstance(instrumentation)
+        device.executeShellCommand("mkdir -p /sdcard/Download/watchhub-smoke")
+        device.executeShellCommand("screencap -p /sdcard/Download/watchhub-smoke/$name.png")
     }
 }

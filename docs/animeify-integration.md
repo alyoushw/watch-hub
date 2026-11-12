@@ -31,9 +31,9 @@ Never interchange AnimeId (source string), Id (source database id), MAL id, or T
 Known MAL matches select automatically. TMDB titles show source search results for
 explicit selection; they do not auto-play approximate title matches.
 
-Both TMDB anime details and retained Jikan details offer the source panel. Related
-entries display their actual source season and title, including separately catalogued
-films. Episode lists paginate at 30 items for large series and TV use.
+Both TMDB anime details and retained Jikan details offer the Animeify watch button.
+Related entries display their actual source season and title, including separately
+catalogued films. Episode lists use lazy cards for large series and TV use.
 
 Supported server adapters: MediaFire HD/SD/FHD MP4 (`FRLink`, `FRLowQ`, `FRFhdQ`),
 Sendvid HD/SD, and OK's available stream. Only non-empty source fields are offered;
@@ -51,8 +51,9 @@ Queues and watch history identify an episode by AnimeId + episode, independent o
 server choice. An additive `animeRef` holds stable identifiers only. Resolving the
 source on playback, retry, and resume obtains a fresh CDN URL. Those URLs are kept
 only in the in-memory player queue and never in preferences or cloud history.
-Resume/next/previous/intro/end-credit behavior uses the existing player. The anime
-Home tab has its own continue-watching section; old Xtream entries remain separate.
+Resume/next/previous/intro/end-credit behavior uses the existing player. Animeify
+progress appears in the existing horizontal continue-watching cards, alongside
+eligible Xtream entries.
 The optional source reference is preserved by Android/cloud serialization and the
 web sync field whitelist. Web playback of the new source is outside this Android scope.
 
@@ -65,12 +66,12 @@ credentials are imported. Missing configuration produces a clear source error,
 and publishing is blocked until the release build includes the source token.
 
 Run `./gradlew testDebugUnitTest lintDebug assembleRelease` with Java 17 and SDK 35.
-GitHub Actions runs unit tests/lint before building and uploads verification reports
-and `WatchHub-apk`. Pushes to the feature branch do not publish. After verification,
-a manual run on the reviewed branch follows the existing release mechanism.
-Release tags remain build-N, versionCode remains 100 + run number, versionName is
-0.23.N, and the original signing-key configuration remains unchanged. Release tags
-now explicitly identify the built commit instead of relying on the default branch.
+GitHub Actions runs unit tests/lint and emulator checks before building and uploads
+verification reports. Public APK artifacts are disabled for private previews. Pushes
+to the feature branch do not publish; manual private runs create draft prereleases.
+Stable release tags retain build-N, versionCode remains 100 + run number, regular
+versionName is 0.23.N, and the original signing-key configuration remains unchanged.
+Release tags now explicitly identify the built commit instead of relying on the default branch.
 
 ## Update review
 

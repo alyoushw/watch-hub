@@ -13,4 +13,5 @@ smoke_package="com.alyoushw.watchhub"
 if [ "${WATCHHUB_PREVIEW:-false}" = "true" ]; then smoke_package="$smoke_package.animepreview"; fi
 mkdir -p app/build/reports/screenshots
 adb pull "/sdcard/Android/data/$smoke_package/files/screenshots/." app/build/reports/screenshots/ 2>/dev/null || true
+adb pull /sdcard/Download/watchhub-smoke/. app/build/reports/screenshots/ 2>/dev/null || true
 exit "$smoke_exit_code"
