@@ -4,6 +4,7 @@ import android.app.UiAutomation
 import android.content.Intent
 import android.graphics.Bitmap
 import android.os.SystemClock
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
@@ -33,6 +34,7 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 
 @RunWith(AndroidJUnit4::class)
 class AnimeFlowSmokeTest {
@@ -51,6 +53,11 @@ class AnimeFlowSmokeTest {
             device.executeShellCommand("wm size 1312x1884")
             device.executeShellCommand("wm density 320")
             instrumentation.uiAutomation.setRotation(UiAutomation.ROTATION_FREEZE_90)
+            // Resize/rotation are asynchronous; wait before attaching the test UI.
+            val displayDeadline = SystemClock.elapsedRealtime() + 10_000
+            while (SystemClock.elapsedRealtime() < displayDeadline && device.displayWidth < 1800) SystemClock.sleep(100)
+            device.waitForIdle(2_000)
+            val opened = AtomicBoolean(false)
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 scenario.onActivity { activity -> activity.setContent {
                     WatchHubTheme(forceDark = true) {
@@ -63,6 +70,7 @@ class AnimeFlowSmokeTest {
                                     Text(lookup.title)
                                     AnimeifyWatchButton(lookup, onOpen = {
                                         nav.navigate(it.route())
+                                        opened.set(true)
                                         showAction = false
                                     })
                                 }
@@ -70,16 +78,26 @@ class AnimeFlowSmokeTest {
                         }
                     }
                 } }
-                assertTrue(device.wait(Until.hasObject(By.text("تشغيل أنمي فاي")), 10_000) == true)
-                checkNotNull(device.findObject(By.text("تشغيل أنمي فاي"))).click()
-                assertTrue("The watch action must navigate to episode cards", device.wait(Until.hasObject(By.textContains("S01 E01")), 30_000) == true)
-                assertTrue(device.hasObject(By.textContains("تنزيل الحلقات للمشاهدة بدون نت")))
-                device.waitForIdle(2_000)
-                saveScreenshot("animeify-episodes")
-                checkNotNull(device.findObject(By.textContains("تنزيل الحلقات للمشاهدة بدون نت"))).click()
-                assertTrue(device.wait(Until.hasObject(By.textContains("تنزيل الموسم")), 10_000) == true)
-                assertTrue(device.wait(Until.hasObject(By.textContains("MediaFire")), 30_000) == true)
-                saveScreenshot("animeify-download-picker")
+                try {
+                    assertTrue(device.wait(Until.hasObject(By.text("تشغيل أنمي فاي")), 10_000) == true)
+                    clickAccessibleText("تشغيل أنمي فاي")
+                    instrumentation.waitForIdleSync()
+                    assertTrue("The watch button must invoke its navigation callback", opened.get())
+                    assertTrue("Navigation must show the episode page", device.wait(Until.hasObject(By.textContains("تنزيل الحلقات للمشاهدة بدون نت")), 10_000) == true)
+                    assertTrue("The watch action must navigate to episode cards", device.wait(Until.hasObject(By.textContains("S01 E01")), 30_000) == true)
+                    assertTrue(device.hasObject(By.textContains("تنزيل الحلقات للمشاهدة بدون نت")))
+                    device.waitForIdle(2_000)
+                    saveScreenshot("animeify-episodes")
+                    clickAccessibleText("تنزيل الحلقات للمشاهدة بدون نت")
+                    assertTrue(device.wait(Until.hasObject(By.textContains("تنزيل الموسم")), 10_000) == true)
+                    assertTrue(device.wait(Until.hasObject(By.textContains("MediaFire")), 30_000) == true)
+                    saveScreenshot("animeify-download-picker")
+                } catch (failure: Throwable) {
+                    saveScreenshot("animeify-flow-failure")
+                    val directory = File(context.getExternalFilesDir(null), "screenshots").apply { mkdirs() }
+                    device.dumpWindowHierarchy(File(directory, "animeify-flow-failure.xml"))
+                    throw failure
+                }
             }
         } finally {
             instrumentation.uiAutomation.setRotation(UiAutomation.ROTATION_UNFREEZE)
@@ -141,6 +159,15 @@ class AnimeFlowSmokeTest {
                 PlayerQueue.items = emptyList()
             }
         }
+    }
+
+    /** Exercise the real Compose click action without stale coordinates after display changes. */
+    private fun clickAccessibleText(text: String) {
+        var node = instrumentation.uiAutomation.rootInActiveWindow
+            .findAccessibilityNodeInfosByText(text).firstOrNull()
+        while (node != null && !node.isClickable) node = node.parent
+        assertTrue("No clickable accessibility action for $text",
+            node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true)
     }
 
     private fun saveScreenshot(name: String) {
