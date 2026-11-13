@@ -26,6 +26,19 @@ class AppContainer(context: Context) {
     val links = DirectLinks()
     val jikan = JikanApi()
     val animeify = com.alyoushw.watchhub.data.AnimeifyApi()
+    private val torrentIndex = com.alyoushw.watchhub.data.TpbTorrentIndex()
+    val movizTimeSources = com.alyoushw.watchhub.data.WatchSources({ listOf(com.alyoushw.watchhub.data.MovizTimeSourceProvider()) })
+    val topCinemaSources = com.alyoushw.watchhub.data.WatchSources({ listOf(com.alyoushw.watchhub.data.TopCinemaSourceProvider()) })
+    val egyBestSources = com.alyoushw.watchhub.data.WatchSources({ listOf(com.alyoushw.watchhub.data.EgyBestSourceProvider()) })
+    val watchSources = com.alyoushw.watchhub.data.WatchSources({
+        listOf(com.alyoushw.watchhub.data.OpenFilmSourceProvider(), com.alyoushw.watchhub.data.ArchiveSourceProvider()) +
+            (if (settings.torrentIndexEnabled.value) listOf(com.alyoushw.watchhub.data.TpbSourceProvider(torrentIndex)) else emptyList()) +
+            settings.sourceCatalogue.value.takeIf { it.isNotBlank() }?.let {
+                listOf(com.alyoushw.watchhub.data.ManifestSourceProvider(it))
+            }.orEmpty()
+    })
+    val playbackEngines = com.alyoushw.watchhub.data.PlaybackEngines(listOf(
+        com.alyoushw.watchhub.data.DirectPlaybackEngine(), com.alyoushw.watchhub.data.TorrentPlaybackEngine(context)))
     val assistant = ClaudeAssistant(settings)
     val xtream = XtreamApi(settings)
     val history = WatchHistory(context).also { it.remapAccounts(settings.accountIdChanges) }

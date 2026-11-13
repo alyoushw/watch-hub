@@ -35,6 +35,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 
 /**
  * Full-screen player for the user's Xtream Codes streams: our own controls and gestures
@@ -57,33 +58,21 @@ class PlayerActivity : ComponentActivity() {
     private var position = 0
     private var urlIndex = 0
     private var resolveJob: Job? = null
+    private var activeSourceUri: String? = null
+    @Volatile private var sourceHttpHeaders: Pair<String, Map<String, String>>? = null
+    private var stoppedSourcePosition: Long? = null
     private val loadControl = FlexibleLoadControl()
     private val bandwidth by lazy { androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.Builder(this).build() }
 
     // ---------- slow connection: notice, load ahead ----------
 
-    private var stallStartedAt = 0L
-    private val stalls = mutableListOf<Long>()
     private var preloadJob: Job? = null
 
-    /** Counts the stops to load while playing a film / episode; two in 3 minutes, or one over 4 s, means a slow connection. */
+    /** Extra loading is opt-in; ordinary buffering never opens a prompt or pauses playback. */
     private fun watchStalls(state: Int) {
         val e = entry ?: return
-        if (e.isLive || !started || session.preloading != null) return
-        val now = System.currentTimeMillis()
-        if (state == Player.STATE_BUFFERING && player.playWhenReady && player.currentPosition > 3_000) {
-            stallStartedAt = now
-            if (session.autoPreload) {
-                preload(2)
-                return
-            }
-            stalls += now
-            stalls.removeAll { now - it > 3 * 60_000 }
-            if (stalls.size >= 2) slowNotice()
-        } else if (state == Player.STATE_READY && stallStartedAt > 0) {
-            if (now - stallStartedAt > 4_000 && !session.autoPreload) slowNotice()
-            stallStartedAt = 0
-        }
+        if (!session.autoPreload || e.isLive || !started || session.preloading != null) return
+        if (state == Player.STATE_BUFFERING && player.playWhenReady && player.currentPosition > 3_000) preload(2)
     }
 
     private fun slowNotice() {
@@ -100,7 +89,6 @@ class PlayerActivity : ComponentActivity() {
     /** Pauses, loads [minutes] ahead (or to the end), then plays on and keeps that much ready. */
     private fun preload(minutes: Int) {
         session.slowNet = null
-        stalls.clear()
         val wanted = minutes * 60_000L
         loadControl.aheadMs = wanted + 15_000
         player.playWhenReady = false
@@ -126,8 +114,16 @@ class PlayerActivity : ComponentActivity() {
 
     private fun setAutoPreload(on: Boolean) {
         session.autoPreload = on
-        getSharedPreferences("player", MODE_PRIVATE).edit().putBoolean("autoPreload", on).apply()
-        if (on) preload(2) else session.slowNet = null
+        // A new explicit opt-in; an old saved autoPreload flag must not enable this feature.
+        getSharedPreferences("player", MODE_PRIVATE).edit().putBoolean("stallPreloadOptIn", on).apply()
+        session.slowNet = null
+        if (!on) {
+            val wasPreloading = session.preloading != null
+            preloadJob?.cancel()
+            session.preloading = null
+            loadControl.aheadMs = FlexibleLoadControl.NORMAL_MS
+            if (wasPreloading) player.playWhenReady = lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+        }
     }
     private var retries = 0
     private var started = false
@@ -163,8 +159,17 @@ class PlayerActivity : ComponentActivity() {
 
         // Providers often redirect a stream to another server, sometimes from https to http
         // (OkHttp follows both). Its pool is dropped when the network changes (see Net).
-        val http = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(com.alyoushw.watchhub.data.Net.streams)
-        session.autoPreload = getSharedPreferences("player", MODE_PRIVATE).getBoolean("autoPreload", false)
+        val streamHttp = com.alyoushw.watchhub.data.Net.streams.newBuilder().addNetworkInterceptor { chain ->
+            val request = chain.request()
+            val sessionHeaders = sourceHttpHeaders
+            chain.proceed(if (sessionHeaders != null) request.newBuilder().apply {
+                sessionHeaders.second.forEach { (name, value) ->
+                    if (request.url.host == sessionHeaders.first || name.equals("User-Agent", true)) header(name, value)
+                }
+            }.build() else request)
+        }.build()
+        val http = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(streamHttp)
+        session.autoPreload = getSharedPreferences("player", MODE_PRIVATE).getBoolean("stallPreloadOptIn", false)
         player = ExoPlayer.Builder(this, com.alyoushw.watchhub.data.playerRenderers(this))
             .setBandwidthMeter(bandwidth)
             .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http)))
@@ -180,6 +185,7 @@ class PlayerActivity : ComponentActivity() {
             .build()
         player.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
+                if (session.preparingSource || stoppedSourcePosition != null || isFinishing) return
                 val urls = current?.urls.orEmpty()
                 val at = if (entry?.isLive == true) 0L else player.currentPosition
                 // A dropped connection (network change, a busy server) often comes back: try the
@@ -250,6 +256,10 @@ class PlayerActivity : ComponentActivity() {
                     onPickSource = ::playSource,
                     onPreload = ::preload,
                     onAutoPreload = { setAutoPreload(!session.autoPreload) },
+                    onManualPreload = ::slowNotice,
+                    onSourceQuality = ::selectSourceQuality,
+                    onAttachSubtitle = ::attachSubtitle,
+                    onAttachSubtitleFile = ::attachSubtitleFile,
                     onDismissSlow = { session.slowNet = null },
                     onPlayNow = ::playNowAfterPreload,
                     onRestart = {
@@ -270,20 +280,20 @@ class PlayerActivity : ComponentActivity() {
     private fun playAt(i: Int) {
         if (i !in queue.indices) return
         resolveJob?.cancel()
+        activeSourceUri?.let(container.playbackEngines::release)
+        activeSourceUri = null
         retries = 0
         // A new item starts with normal loading ahead and no slow-connection notice.
         preloadJob?.cancel()
         session.preloading = null
         session.slowNet = null
-        stalls.clear()
-        stallStartedAt = 0
         loadControl.aheadMs = FlexibleLoadControl.NORMAL_MS
         // Saved on the device: play the file (no internet needed), the link stays as a fallback.
         container.downloads.localUrl(queue[i].entry.key)?.let { local ->
             if (queue[i].urls.firstOrNull() != local) queue = queue.toMutableList().also { it[i] = it[i].copy(urls = listOf(local) + it[i].urls) }
         }
         if (started) saveProgress(important = true)
-        if (queue[i].entry.animeRef != null || entry?.animeRef != null) {
+        if (queue[i].entry.animeRef != null || entry?.animeRef != null || queue[i].entry.sourceRef != null || entry?.sourceRef != null) {
             started = false
             player.stop()
             player.clearMediaItems()
@@ -297,21 +307,24 @@ class PlayerActivity : ComponentActivity() {
         introPending = null
         val item = queue[i]
         val e = item.entry
+        session.sourceQualities = emptyList()
+        session.sourceQuality = null
+        session.sourceMessage = null
         session.title = e.title
         session.subtitle = e.subtitle
         session.live = e.isLive
         session.number = item.number
         session.hasPrevious = i > 0
         session.hasNext = i < queue.lastIndex
-        if (e.isLive) preloadIndexes()
+        if (e.isLive && item.recordHistory) preloadIndexes()
         loadJob?.cancel()
         loadJob = lifecycleScope.launch {
             // Another device may have moved on a moment ago: take the newest spot from the account
             // first (at most ~2 s; offline or signed out, this device's own copy is used).
-            cloud.refreshEntry(e.key)
-            val saved = history.get(e.key)
+            if (item.recordHistory) cloud.refreshEntry(e.key)
+            val saved = if (item.recordHistory) history.get(e.key) else null
             val resumeAt = saved?.takeIf { !it.isLive && !it.finished && it.positionMs > 10_000 }?.positionMs ?: 0L
-            history.save(e, important = true)
+            if (item.recordHistory) history.save(e, important = true)
             setMedia(resumeAt)
             started = true
             if (resumeAt > 0) Toast.makeText(this@PlayerActivity, "نكمل من ${formatTime(resumeAt)}", Toast.LENGTH_SHORT).show()
@@ -319,6 +332,56 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun setMedia(startAt: Long) {
+        val sourceRef = entry?.sourceRef
+        if (sourceRef != null) {
+            resolveJob?.cancel()
+            session.preparingSource = true
+            session.sourceProgress = null
+            val key = entry?.key
+            resolveJob = lifecycleScope.launch {
+                try {
+                    val repository = when (sourceRef.providerId) {
+                        "moviz-time" -> container.movizTimeSources
+                        "topcinema" -> container.topCinemaSources
+                        "egybest" -> container.egyBestSources
+                        else -> container.watchSources
+                    }
+                    val resolved = repository.resolve(sourceRef, container.playbackEngines) { progress ->
+                        runOnUiThread { if (entry?.key == key) session.sourceProgress = progress }
+                    }
+                    activeSourceUri?.takeIf { it != resolved.uri }?.let(container.playbackEngines::release)
+                    activeSourceUri = resolved.uri
+                    val subtitles = coroutineScope {
+                        resolved.source.subtitles.take(8).map { subtitle -> async {
+                            try { com.alyoushw.watchhub.data.SubtitleFiles.fetch(this@PlayerActivity, subtitle.url, subtitle.language, subtitle.label).copy(id = subtitle.id) }
+                            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                            catch (_: Exception) { null }
+                        } }.awaitAll().filterNotNull()
+                    }
+                    if (entry?.key != key || entry?.sourceRef != sourceRef) {
+                        container.playbackEngines.release(resolved.uri)
+                        return@launch
+                    }
+                    val mime = when (resolved.variant.transport) {
+                        com.alyoushw.watchhub.data.SourceTransport.HLS -> androidx.media3.common.MimeTypes.APPLICATION_M3U8
+                        com.alyoushw.watchhub.data.SourceTransport.MP4 -> androidx.media3.common.MimeTypes.VIDEO_MP4
+                        com.alyoushw.watchhub.data.SourceTransport.MKV -> androidx.media3.common.MimeTypes.VIDEO_MATROSKA
+                        else -> null
+                    }
+                    queue = queue.toMutableList().also { it[position] = it[position].copy(urls = listOf(resolved.uri), subtitles = subtitles,
+                        mimeType = mime, httpHeaders = resolved.variant.httpHeaders) }
+                    session.sourceQualities = resolved.source.variants.map { it.id to it.label }
+                    session.sourceQuality = resolved.variant.id
+                    urlIndex = 0
+                    setResolvedMedia(startAt)
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (e: Exception) {
+                    session.sourceMessage = e.message ?: "تعذّر تشغيل المصدر؛ اختر مصدراً آخر"
+                    Toast.makeText(this@PlayerActivity, session.sourceMessage, Toast.LENGTH_LONG).show()
+                } finally { if (isActive) session.preparingSource = false }
+            }
+            return
+        }
         val ref = entry?.animeRef
         if (ref != null) {
             resolveJob?.cancel()
@@ -346,12 +409,65 @@ class PlayerActivity : ComponentActivity() {
         setResolvedMedia(startAt)
     }
 
+    private fun selectSourceQuality(id: String) {
+        val ref = entry?.sourceRef ?: return
+        if (id == ref.variantId || session.sourceQualities.none { it.first == id }) return
+        val at = player.currentPosition
+        player.pause()
+        queue = queue.toMutableList().also { it[position] = it[position].copy(entry = it[position].entry.copy(sourceRef = ref.copy(variantId = id))) }
+        setMedia(at)
+    }
+
+    private fun attachSubtitle(url: String, language: String) {
+        lifecycleScope.launch {
+            try {
+                val key = entry?.key
+                val subtitle = com.alyoushw.watchhub.data.SubtitleFiles.fetch(this@PlayerActivity, url, language, "ترجمة مضافة")
+                if (entry?.key != key) return@launch
+                applySubtitle(subtitle)
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { Toast.makeText(this@PlayerActivity, e.message ?: "تعذّر تحميل الترجمة", Toast.LENGTH_LONG).show() }
+        }
+    }
+
+    private fun attachSubtitleFile(uri: android.net.Uri, language: String) {
+        lifecycleScope.launch {
+            try {
+                val key = entry?.key
+                val subtitle = com.alyoushw.watchhub.data.SubtitleFiles.fromUri(this@PlayerActivity, uri, language)
+                if (entry?.key == key) applySubtitle(subtitle)
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { Toast.makeText(this@PlayerActivity, e.message ?: "تعذّر قراءة الترجمة", Toast.LENGTH_LONG).show() }
+        }
+    }
+
+    private fun applySubtitle(subtitle: com.alyoushw.watchhub.data.SourceSubtitle) {
+        val at = player.currentPosition
+        queue = queue.toMutableList().also { it[position] = it[position].copy(subtitles = it[position].subtitles + subtitle) }
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).setPreferredTextLanguage(subtitle.language).build()
+        setResolvedMedia(at)
+        Toast.makeText(this, "أُضيف ملف الترجمة", Toast.LENGTH_SHORT).show()
+    }
+
     private fun setResolvedMedia(startAt: Long) {
         val urls = current?.urls ?: return
         if (urls.isEmpty()) return
+        val uri = urls[urlIndex.coerceIn(0, urls.lastIndex)]
+        sourceHttpHeaders = current?.httpHeaders?.takeIf { it.isNotEmpty() }?.let { headers ->
+            android.net.Uri.parse(uri).host?.let { host -> host to headers }
+        }
         val item = MediaItem.Builder()
             .setUri(urls[urlIndex.coerceIn(0, urls.lastIndex)])
+            .setMimeType(current?.mimeType)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(entry?.title).build())
+            .setSubtitleConfigurations(current?.subtitles.orEmpty().mapIndexed { index, subtitle ->
+                MediaItem.SubtitleConfiguration.Builder(android.net.Uri.parse(subtitle.url))
+                    .setId(subtitle.id).setLabel(subtitle.label).setLanguage(subtitle.language)
+                    .setSelectionFlags(if (subtitle.language == "ar" || index == 0 && current?.subtitles.orEmpty().none { it.language == "ar" }) C.SELECTION_FLAG_DEFAULT else 0)
+                    .setMimeType(if (subtitle.format == "srt") androidx.media3.common.MimeTypes.APPLICATION_SUBRIP else androidx.media3.common.MimeTypes.TEXT_VTT)
+                    .build()
+            })
             .build()
         if (startAt > 0) player.setMediaItem(item, startAt) else player.setMediaItem(item)
         player.prepare()
@@ -363,6 +479,7 @@ class PlayerActivity : ComponentActivity() {
      */
     private fun loadSeriesQueue() {
         val e = entry ?: return
+        if (e.sourceRef != null) return
         e.animeRef?.let { ref ->
             if (queue.size > 1) return
             lifecycleScope.launch {
@@ -581,7 +698,7 @@ class PlayerActivity : ComponentActivity() {
 
     private fun saveProgress(important: Boolean = false) {
         val e = entry ?: return
-        if (e.isLive || !started) return
+        if (current?.recordHistory == false || e.isLive || !started) return
         val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: return
         val saved = e.copy(positionMs = player.currentPosition.coerceAtLeast(0), durationMs = duration)
         if (saved.finished) container.stats.recordFinished(e.key)
@@ -590,6 +707,7 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        stoppedSourcePosition?.let { position -> stoppedSourcePosition = null; setMedia(position) }
         if (::player.isInitialized) {
             player.playWhenReady = true
             handler.postDelayed(saver, 5_000)
@@ -602,11 +720,19 @@ class PlayerActivity : ComponentActivity() {
         if (::player.isInitialized) {
             saveProgress(important = true)
             player.pause()
+            if (entry?.sourceRef != null) {
+                stoppedSourcePosition = player.currentPosition
+                resolveJob?.cancel()
+                activeSourceUri?.let(container.playbackEngines::release)
+                activeSourceUri = null
+            }
         }
     }
 
     override fun onDestroy() {
+        resolveJob?.cancel()
         if (::player.isInitialized) player.release()
+        activeSourceUri?.let(container.playbackEngines::release)
         super.onDestroy()
     }
 
@@ -620,7 +746,7 @@ class PlayerActivity : ComponentActivity() {
         /** Plays [items] starting at [index]: left/right (channels) or next episode move through them. */
         fun start(context: Context, items: List<QueueItem>, index: Int) {
             val selected = items.getOrNull(index) ?: return
-            if (selected.urls.isEmpty() && selected.entry.animeRef == null) return
+            if (selected.urls.isEmpty() && selected.entry.animeRef == null && selected.entry.sourceRef == null) return
             PlayerQueue.items = items
             PlayerQueue.index = index
             context.startActivity(Intent(context, PlayerActivity::class.java))

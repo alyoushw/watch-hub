@@ -82,7 +82,8 @@ class PlaybackSmokeTest {
                 assertTrue(activity.window.decorView.isShown)
                 assertNotNull((activity.application as WatchHubApp).container.updater)
                 assertEquals(BuildConfig.APPLICATION_ID, activity.packageName)
-                if (BuildConfig.IS_PREVIEW) assertTrue(activity.packageName.endsWith(".animepreview"))
+                assertEquals("Watch Hub", activity.applicationInfo.loadLabel(activity.packageManager).toString())
+                if (BuildConfig.IS_PREVIEW) assertTrue(activity.packageName.endsWith(".smartpreview"))
                 else assertEquals("com.alyoushw.watchhub", activity.packageName)
             }
         }

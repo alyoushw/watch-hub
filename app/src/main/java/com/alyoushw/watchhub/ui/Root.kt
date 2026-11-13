@@ -1,6 +1,8 @@
 package com.alyoushw.watchhub.ui
 
 import android.net.Uri
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -47,6 +49,7 @@ fun appContainer(): AppContainer =
 
 private enum class Tab(val route: String, val label: String, val icon: ImageVector) {
     HOME("home", "الرئيسية", Icons.Filled.Home),
+    KORA("kora", "كوره", Icons.Filled.DateRange),
     SEARCH("search", "البحث", Icons.Filled.Search),
     WATCHLIST("watchlist", "قائمتي", Icons.AutoMirrored.Filled.List),
     SUBSCRIPTIONS("subscriptions", "اشتراكاتي", Icons.Filled.DateRange),
@@ -108,7 +111,7 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
       ) {
         if (rail) {
             // On TV the tabs sit in a rail on the side, easy to reach with the remote.
-            NavigationRail {
+            NavigationRail(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 tabs.forEach { tab ->
                     NavigationRailItem(
                     modifier = Modifier.focusFrame(),
@@ -165,6 +168,7 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
                 WatchlistScreen(onOpen = { type, id -> nav.openDetail(type, id) })
             }
             composable(Tab.SUBSCRIPTIONS.route) { SubscriptionsScreen() }
+            composable(Tab.KORA.route) { KoraScreen(onBack = { nav.switchTab(Tab.HOME.route) }) }
             composable(Tab.YOUTUBE.route) { YouTubeLauncher() }
             composable(Tab.SETTINGS.route) { SettingsScreen(onOpenXtream = { nav.switchTab(Tab.XTREAM.route) }) }
             composable(Tab.XTREAM.route) {
@@ -178,6 +182,11 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
                 arguments = listOf(navArgument("id") { type = NavType.StringType }),
             ) { entry ->
                 XtreamSeriesScreen(seriesId = entry.arguments?.getString("id").orEmpty(), onBack = { nav.popBackStack() })
+            }
+            composable("watch-sources/{lookup}", arguments = listOf(navArgument("lookup") { type = NavType.StringType })) { entry ->
+                val lookup = runCatching { decodeSourceLookup(entry.arguments?.getString("lookup").orEmpty()) }.getOrNull()
+                if (lookup != null) SourceWatchScreen(lookup, onBack = { nav.popBackStack() })
+                else MessageBox("تعذّر فتح مصادر المشاهدة", actionLabel = "رجوع", onAction = { nav.popBackStack() })
             }
             composable(
                 route = "animeify/{lookup}",
@@ -205,6 +214,7 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
                     )
                 } else {
                     DetailScreen(
+                        onOpenSources = { lookup -> nav.navigate(lookup.route()) },
                         type = type,
                         id = id,
                         onBack = { nav.popBackStack() },

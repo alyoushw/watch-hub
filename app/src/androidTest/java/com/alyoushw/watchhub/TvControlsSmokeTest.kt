@@ -1,5 +1,15 @@
 package com.alyoushw.watchhub
 
+import com.alyoushw.watchhub.player.QueueItem
+
+import com.alyoushw.watchhub.player.PlayerQueue
+
+import com.alyoushw.watchhub.player.PlayerActivity
+
+import android.content.Intent
+
+import android.content.Context
+
 import android.os.SystemClock
 import android.view.KeyEvent
 import androidx.activity.compose.setContent
@@ -102,6 +112,37 @@ class TvControlsSmokeTest {
             }
         } finally { container.history.remove(entry.key) }
     }
+
+    @Test fun preloadStartsDisabledDespiteLegacyPreferenceAndRequiresExplicitSelection() {
+        val prefs = context.getSharedPreferences("player", Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("autoPreload", true).remove("stallPreloadOptIn").commit()
+        val file = File(context.cacheDir, "preload-smoke.mp4")
+        instrumentation.context.assets.open("player-smoke.mp4").use { input -> file.outputStream().use { output -> input.copyTo(output) } }
+        val entry = WatchEntry("test:preload:opt-in", WatchEntry.MOVIE, "fixture", "اختبار التحميل الاختياري")
+        PlayerQueue.items = listOf(QueueItem(listOf(file.toURI().toString()), entry))
+        PlayerQueue.index = 0
+        try {
+            ActivityScenario.launch<PlayerActivity>(Intent(context, PlayerActivity::class.java)).use {
+                compose.onNodeWithContentDescription("الجودة").performClick()
+                compose.onNodeWithText("⚡ تحميل مسبق تلقائي لما يقطّع").assert(hasText("✓").not())
+                assertFalse(prefs.getBoolean("stallPreloadOptIn", false))
+                compose.onNodeWithText("⚡ تحميل مسبق تلقائي لما يقطّع").performClick()
+                compose.waitForIdle()
+                assertTrue(prefs.getBoolean("stallPreloadOptIn", false))
+                compose.onNodeWithContentDescription("الجودة").performClick()
+                compose.onNodeWithText("⚡ تحميل مسبق تلقائي لما يقطّع").assert(hasText("✓"))
+                compose.onNodeWithText("⚡ تحميل مسبق تلقائي لما يقطّع").performClick()
+                compose.waitForIdle()
+                assertFalse(prefs.getBoolean("stallPreloadOptIn", true))
+            }
+        } finally {
+            container.history.remove(entry.key)
+            prefs.edit().remove("autoPreload").remove("stallPreloadOptIn").apply()
+            PlayerQueue.items = emptyList()
+            file.delete()
+        }
+    }
+
 
     private fun focus(text: String) {
         compose.waitUntil(10_000) {

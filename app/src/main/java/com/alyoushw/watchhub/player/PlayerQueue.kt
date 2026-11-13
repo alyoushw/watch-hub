@@ -23,6 +23,12 @@ data class QueueItem(
     val number: Int? = null,
     /** For channels: the item itself (used to find the same channel in other accounts). */
     val channel: XtreamItem? = null,
+    val subtitles: List<com.alyoushw.watchhub.data.SourceSubtitle> = emptyList(),
+    val mimeType: String? = null,
+    /** Ephemeral provider session headers; never persisted in viewing history. */
+    val httpHeaders: Map<String, String> = emptyMap(),
+    /** Temporary web sessions must not be saved as permanent/replayable stream sources. */
+    val recordHistory: Boolean = true,
 )
 
 /**
@@ -59,6 +65,11 @@ class PlayerSession {
     var preloading by mutableStateOf<Pair<Long, Long>?>(null)
     /** "تلقائي دايماً": load ahead by itself whenever it starts to stall. */
     var autoPreload by mutableStateOf(false)
+    var preparingSource by mutableStateOf(false)
+    var sourceProgress by mutableStateOf<Float?>(null)
+    var sourceQualities by mutableStateOf<List<Pair<String, String>>>(emptyList())
+    var sourceQuality by mutableStateOf<String?>(null)
+    var sourceMessage by mutableStateOf<String?>(null)
 }
 
 /**

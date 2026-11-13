@@ -30,8 +30,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       WATCHHUB_ANIMEIFY_TOKEN: ${{ secrets.WATCHHUB_ANIMEIFY_TOKEN }}
-      WATCHHUB_PREVIEW: ${{ (inputs.distribution != 'validation' && ((github.ref != 'refs/heads/main' && github.ref != 'refs/heads/ccr-3b14310b-u6y40j') || (github.event_name == 'workflow_dispatch' && inputs.distribution == 'private'))) && 'true' || 'false' }}
-      APK_NAME: ${{ (inputs.distribution != 'validation' && ((github.ref != 'refs/heads/main' && github.ref != 'refs/heads/ccr-3b14310b-u6y40j') || (github.event_name == 'workflow_dispatch' && inputs.distribution == 'private'))) && 'WatchHub-Anime-Preview.apk' || 'WatchHub.apk' }}
+      WATCHHUB_PREVIEW: ${{ (github.ref == 'refs/heads/feat/smart-watch-sources' || (inputs.distribution != 'validation' && ((github.ref != 'refs/heads/main' && github.ref != 'refs/heads/ccr-3b14310b-u6y40j') || (github.event_name == 'workflow_dispatch' && inputs.distribution == 'private')))) && 'true' || 'false' }}
+      APK_NAME: ${{ (github.ref == 'refs/heads/feat/smart-watch-sources' || (inputs.distribution != 'validation' && ((github.ref != 'refs/heads/main' && github.ref != 'refs/heads/ccr-3b14310b-u6y40j') || (github.event_name == 'workflow_dispatch' && inputs.distribution == 'private')))) && 'WatchHub-Smart-Preview.apk' || 'WatchHub.apk' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -160,7 +160,7 @@ jobs:
           fi
 
       - name: Publish release
-        if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || ((github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ccr-3b14310b-u6y40j') && github.event_name == 'workflow_dispatch' && inputs.distribution == 'stable')
+        if: env.WATCHHUB_PREVIEW != 'true' && ((github.ref == 'refs/heads/main' && github.event_name == 'push') || ((github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ccr-3b14310b-u6y40j') && github.event_name == 'workflow_dispatch' && inputs.distribution == 'stable'))
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
@@ -174,8 +174,8 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && (inputs.distribution == 'private' || inputs.distribution == 'validation')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.distribution == 'validation' && 'stable-candidate' || 'anime-preview' }}-${{ github.run_number }}
-          name: Watch Hub - private ${{ inputs.distribution == 'validation' && 'update candidate' || 'anime preview' }} ${{ github.run_number }}
+          tag_name: ${{ inputs.distribution == 'validation' && 'stable-candidate' || 'smart-preview' }}-${{ github.run_number }}
+          name: Watch Hub - private ${{ inputs.distribution == 'validation' && 'update candidate' || 'smart preview' }} ${{ github.run_number }}
           files: ${{ env.APK_NAME }}
           draft: true
           prerelease: true

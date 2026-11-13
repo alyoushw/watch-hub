@@ -146,6 +146,7 @@ data class DetailInfo(
     val genreIds: List<Int> = emptyList(),
     /** Production countries as ISO codes, e.g. ["SA"]. */
     val countries: List<String> = emptyList(),
+    val originalTitle: String = "",
 ) {
     /** "🇸🇦 سعودي" style label(s) for the header. */
     val countryText: String?
@@ -193,6 +194,7 @@ data class DetailInfo(
                 id = ar.id,
                 title = ar.displayTitle.ifBlank { en?.displayTitle.orEmpty() },
                 searchTitle = en?.displayTitle?.ifBlank { null } ?: ar.displayTitle,
+                originalTitle = ar.originalTitle ?: ar.originalName ?: en?.originalTitle ?: en?.originalName ?: en?.displayTitle.orEmpty(),
                 year = ar.year,
                 tagline = (ar.tagline?.ifBlank { null } ?: en?.tagline?.ifBlank { null }),
                 overview = overview,
@@ -406,6 +408,7 @@ fun DetailScreen(
     onOpenPerson: (Int) -> Unit = {},
     onOpenXtreamSeries: (String) -> Unit = {},
     onOpenAnime: (AnimeLookup) -> Unit = {},
+    onOpenSources: (SourceLookup) -> Unit = {},
 ) {
     val container = appContainer()
     val vm: DetailViewModel = viewModel { DetailViewModel(container, type, id) }
@@ -428,7 +431,7 @@ fun DetailScreen(
             when (val s = vm.state) {
                 DetailState.Loading -> CenteredLoading()
                 is DetailState.Failed -> MessageBox(s.message, actionLabel = "حاول مرة ثانية", onAction = vm::load)
-                is DetailState.Loaded -> DetailContent(s.info, vm.links, vm.similar, onAdd = { vm.addToWatchlist(s.info) }, onOpen = onOpen, onOpenPerson = onOpenPerson, onOpenXtreamSeries = onOpenXtreamSeries, onOpenAnime = onOpenAnime)
+                is DetailState.Loaded -> DetailContent(s.info, vm.links, vm.similar, onAdd = { vm.addToWatchlist(s.info) }, onOpen = onOpen, onOpenPerson = onOpenPerson, onOpenXtreamSeries = onOpenXtreamSeries, onOpenAnime = onOpenAnime, onOpenSources = onOpenSources)
             }
         }
     }
@@ -445,6 +448,7 @@ private fun DetailContent(
     onOpenPerson: (Int) -> Unit,
     onOpenXtreamSeries: (String) -> Unit,
     onOpenAnime: (AnimeLookup) -> Unit,
+    onOpenSources: (SourceLookup) -> Unit,
 ) {
     val container = appContainer()
     val context = LocalContext.current
@@ -471,6 +475,23 @@ private fun DetailContent(
         }
 
         item { WatchButtons(info, links, subscribedKeys, onWatch) }
+
+        item { Column(Modifier.padding(horizontal = 16.dp)) { SourceWatchButton(info.sourceLookup(), onOpenSources, Modifier.fillMaxWidth()) } }
+
+        item { Column(Modifier.padding(horizontal = 16.dp)) {
+            SourceWatchButton(info.sourceLookup().copy(providerId = "moviz-time"), onOpenSources,
+                Modifier.fillMaxWidth(), label = "تشغيل Moviz Time")
+        } }
+
+        item { Column(Modifier.padding(horizontal = 16.dp)) {
+            SourceWatchButton(info.sourceLookup().copy(providerId = "topcinema"), onOpenSources,
+                Modifier.fillMaxWidth(), label = "تشغيل TopCinema")
+        } }
+
+        item { Column(Modifier.padding(horizontal = 16.dp)) {
+            SourceWatchButton(info.sourceLookup().copy(providerId = "egybest"), onOpenSources,
+                Modifier.fillMaxWidth(), label = "تشغيل EgyBest")
+        } }
 
         if (16 in info.genreIds && (info.originalLanguage == "ja" || "JP" in info.countries)) {
             item {

@@ -112,6 +112,7 @@ sealed interface SearchState {
         /** The filter behind these results, if any, for editing, saving and paging. */
         val filter: DiscoverFilter? = null,
         val canLoadMore: Boolean = false,
+        val titleQuery: String? = null,
     ) : SearchState
 
     data class Failed(val message: String) : SearchState
@@ -175,19 +176,27 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
 
     fun loadMore() {
         val current = state as? SearchState.Results ?: return
-        val filter = current.filter ?: return
+        val filter = current.filter
+        if (filter == null && current.titleQuery == null) return
         if (loadingMore) return
-        viewModelScope.launch {
-            loadingMore = true
+        loadingMore = true
+        job = viewModelScope.launch {
             try {
-                val more = strictPages(filter, wanted = 12)
-                state = current.copy(
+                val more = if (filter != null) strictPages(filter, wanted = 12) else {
+                    val response = container.api.searchPage(current.titleQuery!!, page + 1)
+                    page = response.page.coerceAtLeast(page + 1)
+                    totalPages = response.totalPages.coerceIn(1, 500)
+                    response.results
+                }
+                if (state === current) state = current.copy(
                     items = (current.items + more).distinctBy { "${it.mediaType}:${it.id}" },
                     canLoadMore = page < totalPages,
                 )
             } catch (_: ApiException) {
+                if (state === current) notice = "تعذر تحميل المزيد. اضغط «اعرض أكثر» للمحاولة مرة ثانية."
+            } finally {
+                loadingMore = false
             }
-            loadingMore = false
         }
     }
 
@@ -233,7 +242,12 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
         }
         state = guard {
             when (val q = query) {
-                is SmartQuery.Plain -> SearchState.Results(container.api.search(q.text))
+                is SmartQuery.Plain -> {
+                    val response = container.api.searchPage(q.text)
+                    page = response.page.coerceAtLeast(1)
+                    totalPages = response.totalPages.coerceIn(1, 500)
+                    SearchState.Results(response.results, canLoadMore = page < totalPages, titleQuery = q.text)
+                }
                 is SmartQuery.Filter -> filterResults(q.filter, heading)
                 is SmartQuery.Similar -> similar(q)
                 SmartQuery.FromWatchlist -> fromWatchlist()
@@ -442,7 +456,7 @@ fun SearchScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, o
                 )
 
                 else -> when (val s = vm.state) {
-                    SearchState.Idle -> IdleHints(onAsk = vm::ask, onVoice = startVoice)
+                    SearchState.Idle -> IdleHints(onAsk = vm::ask, onVoice = startVoice, onCatalogue = vm::applyFilter)
                     SearchState.Loading -> CenteredLoading()
                     is SearchState.Failed -> MessageBox(s.message, actionLabel = "حاول مرة ثانية", onAction = vm::submit)
                     is SearchState.Results -> LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
@@ -525,11 +539,31 @@ fun SearchScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, o
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun IdleHints(onAsk: (String) -> Unit, onVoice: () -> Unit) {
+private fun IdleHints(onAsk: (String) -> Unit, onVoice: () -> Unit, onCatalogue: (DiscoverFilter, String) -> Unit) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        Text("تصفّح كتالوج TMDB", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(
+            "تصفّح حسب الفئة أو ابحث باسم أي عمل. استخدم الفلاتر لتحديد السنة والنوع والبلد. توفر المشاهدة والترجمة يعتمد على المصدر.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(
+                "الأفلام" to DiscoverFilter(type = MediaType.MOVIE),
+                "المسلسلات" to DiscoverFilter(type = MediaType.TV),
+                "أفلام الأنمي" to DiscoverFilter(type = MediaType.MOVIE, genres = setOf(Genre.ANIMATION), origin = Origin.JAPANESE),
+                "مسلسلات الأنمي" to DiscoverFilter(type = MediaType.TV, genres = setOf(Genre.ANIMATION), origin = Origin.JAPANESE),
+            ).forEach { (label, filter) ->
+                AssistChip(
+                    modifier = Modifier.focusFrame(),
+                    onClick = { onCatalogue(filter, "كتالوج TMDB · $label") },
+                    label = { Text(label) },
+                )
+            }
+        }
         Text("اطلب بكلامك العادي", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Text(
             "اكتب أو اضغط المايك وقول وش مزاجك اليوم: النوع، البلد، المنصة، أو شي مشابه لعمل عجبك. " +

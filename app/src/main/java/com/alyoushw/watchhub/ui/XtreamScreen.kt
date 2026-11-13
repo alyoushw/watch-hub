@@ -836,7 +836,7 @@ fun ContinueWatchingRow(
         container.history.continueList().filter { e ->
             e.kind in kinds && if (e.animeRef != null) {
                 animeMovies == null || (e.animeRef.type == "MOVIE") == animeMovies
-            } else e.accountId in ids
+            } else if (e.sourceRef != null) true else e.accountId in ids
         }.take(20)
     }
     if (list.isEmpty()) return
@@ -847,6 +847,7 @@ fun ContinueWatchingRow(
     }
 
     fun openSeries(e: WatchEntry) {
+        e.sourceRef?.let { onOpenTitle(it.query.type, it.query.tmdbId); return }
         if (e.animeRef != null) { openAnime(e); return }
         e.accountId?.let { container.settings.setActiveXtream(it) }
         e.seriesId?.let(onOpenSeries)
@@ -854,6 +855,7 @@ fun ContinueWatchingRow(
 
     /** The title's page on the platform side (TMDB): its known id, else found by its name. */
     fun openPlatformPage(e: WatchEntry) {
+        e.sourceRef?.let { onOpenTitle(it.query.type, it.query.tmdbId); return }
         e.animeRef?.let { onOpenTitle(MediaType.fromPath(it.detailType) ?: MediaType.ANIME, it.detailId); return }
         val type = if (e.kind == WatchEntry.EPISODE) MediaType.TV else MediaType.MOVIE
         val known = e.tmdbId
@@ -874,7 +876,7 @@ fun ContinueWatchingRow(
 
     // Long press: open the title's own page, or drop it from the row.
     menuFor?.let { e ->
-        val openLabel = when (e.kind) {
+        val openLabel = if (e.sourceRef != null) "الحلقات ومعلومات العمل" else when (e.kind) {
             WatchEntry.ANIME -> "المواسم والحلقات · أنمي فاي"
             WatchEntry.EPISODE -> "حلقات المسلسل في الحساب"
             WatchEntry.MOVIE -> "معلومات الفيلم (المنصة)"
@@ -900,7 +902,7 @@ fun ContinueWatchingRow(
                             }
                         },
                     ) { Text(openLabel) }
-                    if (e.kind == WatchEntry.EPISODE) {
+                    if (e.kind == WatchEntry.EPISODE && e.sourceRef == null) {
                         OutlinedButton(
                             modifier = Modifier.fillMaxWidth().focusFrame(),
                             onClick = {
@@ -909,18 +911,20 @@ fun ContinueWatchingRow(
                             },
                         ) { Text("معلومات المسلسل (المنصة)") }
                     }
-                    OutlinedButton(
-                        modifier = Modifier.fillMaxWidth().focusFrame(),
-                        onClick = {
-                            menuFor = null
-                            if (e.animeRef != null) scope.launch {
-                                try { streamShare = e.title to container.animeify.resolve(e.animeRef) }
-                                catch (x: com.alyoushw.watchhub.data.AnimeifyException) {
-                                    android.widget.Toast.makeText(context, x.message, android.widget.Toast.LENGTH_LONG).show()
-                                }
-                            } else container.xtream.playUrls(e).firstOrNull()?.let { streamShare = e.title to it }
-                        },
-                    ) { Text("▶ مشاركة رابط التشغيل") }
+                    if (e.sourceRef == null) {
+                        OutlinedButton(
+                            modifier = Modifier.fillMaxWidth().focusFrame(),
+                            onClick = {
+                                menuFor = null
+                                if (e.animeRef != null) scope.launch {
+                                    try { streamShare = e.title to container.animeify.resolve(e.animeRef) }
+                                    catch (x: com.alyoushw.watchhub.data.AnimeifyException) {
+                                        android.widget.Toast.makeText(context, x.message, android.widget.Toast.LENGTH_LONG).show()
+                                    }
+                                } else container.xtream.playUrls(e).firstOrNull()?.let { streamShare = e.title to it }
+                            },
+                        ) { Text("▶ مشاركة رابط التشغيل") }
+                    }
                     if (e.kind != WatchEntry.LIVE && e.animeRef == null) {
                         OutlinedButton(
                             modifier = Modifier.fillMaxWidth().focusFrame(),
@@ -953,7 +957,10 @@ fun ContinueWatchingRow(
             items(list, key = { it.key }) { e ->
                 val shape = RoundedCornerShape(12.dp)
                 val resume = {
-                    if (e.animeRef != null) {
+                    if (e.sourceRef != null) {
+                        if (e.finished) openPlatformPage(e)
+                        else PlayerActivity.start(context, listOf(com.alyoushw.watchhub.player.QueueItem(emptyList(), e)), 0)
+                    } else if (e.animeRef != null) {
                         if (e.finished) openAnime(e)
                         else PlayerActivity.start(context, listOf(com.alyoushw.watchhub.player.QueueItem(emptyList(), e)), 0)
                     } else if (e.kind == WatchEntry.EPISODE && e.finished && e.seriesId != null) {
@@ -1009,9 +1016,11 @@ fun ContinueWatchingRow(
                     }
                     // Same height for every card (empty line when there is nothing to say).
                     Text(sub ?: " ", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (e.animeRef != null) {
+                    if (e.sourceRef != null) {
+                        Text(e.sourceRef.providerName ?: "مصادر المشاهدة", style = MaterialTheme.typography.labelSmall, color = Gold, maxLines = 1)
+                    } else if (e.animeRef != null) {
                         Text("أنمي فاي", style = MaterialTheme.typography.labelSmall, color = Gold, maxLines = 1)
-                    } else if (accounts.size > 1 || list.any { it.animeRef != null }) {
+                    } else if (accounts.size > 1 || list.any { it.animeRef != null || it.sourceRef != null }) {
                         accounts.firstOrNull { it.id == e.accountId }?.let {
                             Text(it.label, style = MaterialTheme.typography.labelSmall, color = Gold, maxLines = 1)
                         }
