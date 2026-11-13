@@ -56,6 +56,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 fun KoraScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val windows = remember { mutableListOf<WebView>() }
     var web by remember { mutableStateOf<WebView?>(null) }
     var loading by remember { mutableStateOf(true) }
     var canGoBack by remember { mutableStateOf(false) }
@@ -77,8 +78,58 @@ fun KoraScreen(onBack: () -> Unit) {
         catch (_: android.content.ActivityNotFoundException) { error = "لا يوجد متصفح لفتح الرابط على هذا الجهاز." }
         catch (_: SecurityException) { error = "تعذر فتح الرابط على هذا الجهاز." }
     }
+    fun configure(view: WebView) {
+        view.setBackgroundColor(android.graphics.Color.BLACK)
+        view.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            allowFileAccess = false
+            allowContentAccess = false
+            useWideViewPort = true
+            loadWithOverviewMode = true
+            mediaPlaybackRequiresUserGesture = true
+            setSupportMultipleWindows(true)
+            javaScriptCanOpenWindowsAutomatically = false
+        }
+        CookieManager.getInstance().setAcceptThirdPartyCookies(view, true)
+        view.setDownloadListener { url, _, _, _, _ -> openBrowser(url) }
+    }
+    fun activateWindow(window: WebView) {
+        if (window !in windows || web == window) return
+        closeFullscreen()
+        web?.apply { onPause(); visibility = View.GONE }
+        web = window
+        window.apply { visibility = View.VISIBLE; onResume(); requestFocus() }
+        canGoBack = window.canGoBack() || windows.size > 1
+        loading = false
+        error = null
+    }
+    fun closeWindow(window: WebView?) {
+        if (window == null || window !in windows || window == windows.firstOrNull()) return
+        val active = window == web
+        if (active) closeFullscreen()
+        windows.remove(window)
+        (window.parent as? ViewGroup)?.removeView(window)
+        window.stopLoading()
+        window.destroy()
+        if (active) {
+            web = null
+            activateWindow(windows.last())
+        }
+        canGoBack = web?.canGoBack() == true || windows.size > 1
+    }
+    fun back() {
+        when {
+            web?.canGoBack() == true -> web?.goBack()
+            windows.size > 1 -> {
+                if (web == windows.firstOrNull()) while (windows.size > 1) closeWindow(windows.last())
+                else closeWindow(web)
+            }
+            else -> onBack()
+        }
+    }
 
-    BackHandler(enabled = canGoBack && fullscreen == null) { web?.goBack() }
+    BackHandler(enabled = canGoBack && fullscreen == null) { back() }
     DisposableEffect(lifecycle, web) {
         val view = web
         val observer = LifecycleEventObserver { _, event ->
@@ -94,17 +145,26 @@ fun KoraScreen(onBack: () -> Unit) {
     DisposableEffect(Unit) {
         onDispose {
             closeFullscreen()
-            web?.apply { stopLoading(); loadUrl("about:blank"); removeAllViews(); destroy() }
+            val remaining = windows.toList()
+            windows.clear()
+            remaining.asReversed().forEach { view ->
+                (view.parent as? ViewGroup)?.removeView(view)
+                view.apply { stopLoading(); removeAllViews(); destroy() }
+            }
         }
     }
 
     Scaffold(contentWindowInsets = WindowInsets(0), topBar = {
         TopAppBar(title = { Text("كوره") }, navigationIcon = {
-            IconButton(onClick = { if (web?.canGoBack() == true) web?.goBack() else onBack() }, modifier = Modifier.focusFrame()) {
+            IconButton(onClick = ::back, modifier = Modifier.focusFrame()) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع")
             }
         }, actions = {
-            TextButton(onClick = { web?.loadUrl(KORA_HOME) }, modifier = Modifier.focusFrame()) { Text("الرئيسية") }
+            if (web != windows.firstOrNull() && windows.size > 1) TextButton(onClick = { closeWindow(web) }, modifier = Modifier.focusFrame()) { Text("إغلاق النافذة") }
+            TextButton(onClick = {
+                while (windows.size > 1) closeWindow(windows.last())
+                web?.loadUrl(KORA_HOME)
+            }, modifier = Modifier.focusFrame()) { Text("الرئيسية") }
             TextButton(onClick = { error = null; web?.reload() }, modifier = Modifier.focusFrame()) { Text("تحديث") }
         })
     }) { padding ->
@@ -112,33 +172,28 @@ fun KoraScreen(onBack: () -> Unit) {
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(12.dp)) }
             AndroidView(modifier = Modifier.weight(1f).fillMaxWidth(), factory = { host ->
-                WebView(host).apply {
-                    setBackgroundColor(android.graphics.Color.BLACK)
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.allowFileAccess = false
-                    settings.allowContentAccess = false
-                    settings.mediaPlaybackRequiresUserGesture = true
-                    settings.setSupportMultipleWindows(true)
-                    settings.javaScriptCanOpenWindowsAutomatically = false
-                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                val site = WebView(host).apply {
+                    configure(this)
                     webChromeClient = object : WebChromeClient() {
                         override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message): Boolean {
-                            if (!isUserGesture) return false
-                            val popup = WebView(view.context)
-                            popup.webViewClient = object : WebViewClient() {
-                                override fun shouldOverrideUrlLoading(child: WebView, request: WebResourceRequest): Boolean {
-                                    if (request.url.scheme in listOf("https", "http")) {
-                                        view.loadUrl(request.url.toString(), mapOf("Referer" to view.url.orEmpty()))
-                                    }
-                                    child.post { child.destroy() }
-                                    return true
-                                }
+                            val hostView = view.parent as? ViewGroup ?: return false
+                            if (!isUserGesture || windows.size >= 4) return false
+                            val popup = WebView(view.context).apply {
+                                configure(this)
+                                webViewClient = view.webViewClient
+                                webChromeClient = view.webChromeClient
                             }
+                            hostView.addView(popup, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                            windows += popup
+                            activateWindow(popup)
+                            loading = true
+                            error = null
                             (resultMsg.obj as WebView.WebViewTransport).webView = popup
                             resultMsg.sendToTarget()
                             return true
                         }
+                        override fun onCloseWindow(window: WebView?) = closeWindow(window)
+                        override fun onRequestFocus(view: WebView) = activateWindow(view)
                         override fun onShowCustomView(view: View, callback: CustomViewCallback) {
                             if (fullscreen != null) { callback.onCustomViewHidden(); return }
                             fullscreenCallback = callback
@@ -148,26 +203,30 @@ fun KoraScreen(onBack: () -> Unit) {
                     }
                     webViewClient = object : WebViewClient() {
                         override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
-                            loading = true
-                            error = null
+                            if (view == web) { loading = true; error = null }
                         }
                         override fun onPageFinished(view: WebView, url: String?) {
-                            loading = false
-                            canGoBack = view.canGoBack()
+                            if (view == web) {
+                                loading = false
+                                canGoBack = view.canGoBack() || windows.size > 1
+                            }
                         }
                         override fun onReceivedError(view: WebView, request: WebResourceRequest, failure: WebResourceError) {
-                            if (request.isForMainFrame) { loading = false; error = "تعذر تحميل الصفحة. تحقق من الاتصال ثم اضغط تحديث." }
+                            if (view == web && request.isForMainFrame) { loading = false; error = "تعذر تحميل الصفحة. تحقق من الاتصال ثم اضغط تحديث." }
                         }
                         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                             val scheme = request.url.scheme
                             if (scheme == "http" || scheme == "https") return false
-                            if (request.isForMainFrame) error = "هذا الرابط يتطلب تطبيقاً خارجياً؛ يمكنك العودة للمباريات."
+                            if (view == web && request.isForMainFrame) error = "هذا الرابط يتطلب تطبيقاً خارجياً؛ يمكنك العودة للمباريات."
                             return true
                         }
                     }
-                    setDownloadListener { url, _, _, _, _ -> openBrowser(url) }
-                    web = this
-                    loadUrl(KORA_HOME)
+                }
+                FrameLayout(host).apply {
+                    addView(site, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                    windows += site
+                    web = site
+                    site.loadUrl(KORA_HOME)
                 }
             })
         }

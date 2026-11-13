@@ -7,6 +7,14 @@ access rules, advertising flow and server-side updates. No API key or native-app
 attestation from the uploaded APK is copied into Watch Hub.
 
 The page provides back, site home, refresh and HTML video fullscreen controls.
+User-initiated secondary windows are attached to the visible browser container,
+with their own normal navigation, shared browser clients and focus/close events.
+The active window is shown in front; background windows are paused/hidden.
+Back or the close-window action restores the previous window. Returning to the
+site home closes secondary windows, and leaving Kora destroys every window.
+This replaces the original temporary, unattached popup view and parent-page
+redirection, which could lose the website's window/opener flow or leave media
+in an unseen WebView. Viewport/overview settings follow browser page sizing.
 First-party storage and third-party player cookies support the site's normal
 session flow. Web navigation stays in the page for HTTP(S); unsupported app-only
 links display a message. User-initiated file downloads open a browser. No native
