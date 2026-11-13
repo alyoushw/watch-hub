@@ -21,6 +21,7 @@ internal class TorrentStreamServer(
     private val verified: (Int) -> Boolean,
     private val prioritize: (Long, Long) -> Unit,
     private val failure: () -> Boolean = { false },
+    private val onError: (Exception) -> Unit = {},
 ) : Closeable {
     private val closed = AtomicBoolean(false)
     private val listener = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
@@ -34,7 +35,9 @@ internal class TorrentStreamServer(
                 val socket = listener.accept()
                 if (clients.size >= 4) { socket.close(); continue }
                 clients += socket
-                workers.execute { try { serve(socket) } catch (_: Exception) { } finally { clients -= socket; runCatching { socket.close() } } }
+                workers.execute { try { serve(socket) } catch (error: Exception) {
+                    if (!closed.get() && error !is InterruptedException && error.message != "Reader disconnected") onError(error)
+                } finally { clients -= socket; runCatching { socket.close() } } }
             } catch (_: Exception) { if (!closed.get()) close() }
         }
     }, "torrent-http-accept").apply { isDaemon = true; start() }

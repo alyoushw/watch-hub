@@ -199,15 +199,14 @@ class WatchSourceSmokeTest {
 
     @Test fun existingPlayerStartsAndSeeksWhileTorrentIsStillIncomplete() = runBlocking<Unit> {
         MockWebServer().use { server ->
-            val padding = 8 * 1024 * 1024
-            val bytes = asset("player-smoke.mp4") + java.nio.ByteBuffer.allocate(8).putInt(padding + 8).put("free".toByteArray()).array() + ByteArray(padding).apply { java.util.Random(73).nextBytes(this) }
+            val bytes = asset("torrent-stream-smoke.mp4")
             val seed = File(context.cacheDir, "owned-progressive.mp4").apply { writeBytes(bytes) }
             val torrent = TorrentBuilder().path(seed).pieceSize(64 * 1024).addUrlSeed(server.url("/seed/").toString()).generate().entry().bencode()
             val hash = TorrentInfo(torrent).infoHash().toHex()
             server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse =
                     if (request.requestUrl?.encodedPath == "/fixture.torrent") MockResponse().setBody(Buffer().write(torrent))
-                    else response(bytes, request, "video/mp4").throttleBody(32 * 1024, 120, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    else response(bytes, request, "video/mp4").throttleBody(16 * 1024, 120, java.util.concurrent.TimeUnit.MILLISECONDS)
             }
             val engine = TorrentPlaybackEngine(context)
             var uri: String? = null
@@ -225,8 +224,13 @@ class WatchSourceSmokeTest {
                     assertTrue("The existing player must decode before download completion", (container.history.get(key)?.positionMs ?: 0) >= 500)
                     val ready = checkNotNull(engine.downloadedBytes(uri))
                     assertTrue("Playback must start with verified partial data", ready in 1 until bytes.size.toLong())
+                    android.util.Log.i("TorrentSmoke", "Playback with $ready/${bytes.size} downloaded bytes; position=${container.history.get(key)?.positionMs}")
+                    compose.waitForIdle()
+                    val before = container.history.get(key)?.positionMs ?: 0
                     compose.onNodeWithContentDescription("تقديم 10 ثواني").performClick()
-                    compose.waitUntil(5000) { (container.history.get(key)?.positionMs ?: 0) >= 9000 }
+                    awaitCaptured("torrent-seek", 7000) { (container.history.get(key)?.positionMs ?: 0) >= before + 10_500 }
+                    assertTrue("Playback after seeking must still precede complete download", checkNotNull(engine.downloadedBytes(uri)) < bytes.size)
+                    android.util.Log.i("TorrentSmoke", "Seek completed; downloaded=${engine.downloadedBytes(uri)}/${bytes.size}; position=${container.history.get(key)?.positionMs}")
                     UiDevice.getInstance(instrumentation).executeShellCommand("mkdir -p /sdcard/Download/watchhub-smoke")
                     UiDevice.getInstance(instrumentation).executeShellCommand("screencap -p /sdcard/Download/watchhub-smoke/torrent-playing-before-complete.png")
                 }

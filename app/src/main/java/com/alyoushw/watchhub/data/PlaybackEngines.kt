@@ -122,7 +122,8 @@ class TorrentPlaybackEngine(context: Context) : PlaybackEngine {
                             val endPiece = ((offset + last) / info.pieceLength()).toInt()
                             for (piece in startPiece..endPiece) handle.setPieceDeadline(piece, (piece - startPiece) * 50)
                         }
-                    } }, failure = { !handle.isValid || handle.status().errorCode().isError })
+                    } }, failure = { !handle.isValid || handle.status().errorCode().isError },
+                    onError = { if (com.alyoushw.watchhub.BuildConfig.DEBUG) android.util.Log.w("TorrentStream", "Stream request failed", it) })
                 coroutineContext.ensureActive()
                 val ready = Active(session, bridge, handle, selected, size)
                 synchronized(this@TorrentPlaybackEngine) { active = ready }
