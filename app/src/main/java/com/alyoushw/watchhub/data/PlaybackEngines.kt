@@ -10,9 +10,10 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import org.libtorrent4j.AddTorrentParams
+import org.libtorrent4j.BDecodeNode
 import org.libtorrent4j.Priority
 import org.libtorrent4j.SessionManager
-import org.libtorrent4j.TorrentInfo
 import java.io.File
 import java.util.Locale
 import kotlin.coroutines.coroutineContext
@@ -56,7 +57,12 @@ class TorrentPlaybackEngine(context: Context) : PlaybackEngine {
                     else runInterruptible { session.fetchMagnet(variant.url, 45, root) } ?: throw SourceException("تعذّر جلب بيانات التورنت من الأقران")
                 } else SourceHttp.bytes(SourceHttp.client, variant.url, 8 * 1024 * 1024)
                 coroutineContext.ensureActive()
-                val info = try { TorrentInfo(bytes) } catch (_: Exception) { throw SourceException("ملف Torrent غير صالح") }
+                // libtorrent 2.1 keeps trackers/web seeds in add_torrent_params, not torrent_info.
+                val params = try {
+                    val node = BDecodeNode.bdecode(bytes)
+                    AddTorrentParams(org.libtorrent4j.swig.libtorrent.load_torrent_parsed(node.swig()))
+                } catch (_: Exception) { throw SourceException("ملف Torrent غير صالح") }
+                val info = params.torrentInfo ?: throw SourceException("ملف Torrent غير صالح")
                 if (info.infoHash().isAllZeros) throw SourceException("يلزم تورنت v1 أو تورنت هجين لهذا المحرك")
                 val hash = info.infoHash().toHex()
                 if (variant.transport == SourceTransport.MAGNET && hash != magnetHash(variant.url)) throw SourceException("بيانات التورنت لا تطابق الرابط")
@@ -71,7 +77,9 @@ class TorrentPlaybackEngine(context: Context) : PlaybackEngine {
                 val selected = chooseVideoFile(paths, (0 until storage.numFiles()).map { storage.fileSize(it) }, query)
                     ?: throw SourceException("لا يوجد ملف فيديو يطابق الموسم والحلقة المطلوبين")
                 if (storage.fileSize(selected) > directory.usableSpace) throw SourceException("المساحة المتوفرة لا تكفي لملف الفيديو")
-                session.download(info, directory)
+                params.savePath = directory.absolutePath
+                params.filePriorities(Array(storage.numFiles()) { if (it == selected) Priority.DEFAULT else Priority.IGNORE })
+                session.swig().async_add_torrent(params.swig())
                 val handle = withTimeout(15_000) {
                     var found = session.find(info.infoHash())
                     while (found == null || !found.isValid) { delay(100); found = session.find(info.infoHash()) }

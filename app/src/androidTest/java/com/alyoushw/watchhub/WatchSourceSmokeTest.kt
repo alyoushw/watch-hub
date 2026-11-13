@@ -22,7 +22,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
-import androidx.test.uiautomator.Until
 import com.alyoushw.watchhub.data.*
 import com.alyoushw.watchhub.player.CaptionOverlay
 import com.alyoushw.watchhub.player.PlayerActivity
@@ -101,6 +100,7 @@ class WatchSourceSmokeTest {
                                 compose.waitUntil(15_000) {
                                     compose.onAllNodes(hasText("Fixture English", substring = true)).fetchSemanticsNodes().isNotEmpty()
                                 }
+                                compose.onNode(hasText("Fixture English", substring = true)).performClick()
                             }
                             val deadline = SystemClock.elapsedRealtime() + 30_000
                             while (SystemClock.elapsedRealtime() < deadline && (container.history.get(key)?.positionMs ?: 0) < 500) SystemClock.sleep(100)
@@ -110,9 +110,10 @@ class WatchSourceSmokeTest {
                             assertEquals(ref, played.sourceRef)
                             if (variant.id == "mp4") {
                                 val device = UiDevice.getInstance(instrumentation)
-                                device.pressBack()
                                 device.pressDPadUp()
+                                compose.waitForIdle()
                                 compose.onNodeWithContentDescription("الجودة").performClick()
+                                awaitCaptured("source-quality", 5000) { compose.onAllNodesWithTag("quality-options").fetchSemanticsNodes().isNotEmpty() }
                                 compose.onNodeWithTag("quality-options").performScrollToNode(hasText("HLS"))
                                 compose.onNodeWithText("HLS").performClick()
                                 val switched = SystemClock.elapsedRealtime() + 15_000
@@ -189,25 +190,44 @@ class WatchSourceSmokeTest {
                         WatchHubTheme(forceDark = true) {
                             Box(Modifier.fillMaxSize()) {
                                 AndroidView(factory = { PlayerView(it).apply { this.player = media; useController = false; subtitleView?.visibility = View.GONE } }, modifier = Modifier.fillMaxSize())
-                                CaptionOverlay(media, true, 1000, "en", true, 0.065f, android.graphics.Color.YELLOW, true, Modifier.fillMaxSize()) {}
+                                CaptionOverlay(media, true, 1000, "en", true, 0.065f, android.graphics.Color.YELLOW, true, Modifier.fillMaxSize()) {
+                                    android.util.Log.i("CaptionSmoke", it.orEmpty())
+                                }
                             }
                         }
                     }
                     media.prepare()
                     media.playWhenReady = true
                 }
-                assertTrue("Translated Arabic must reach the actual subtitle view", device.wait(Until.hasObject(By.descContains(arabic)), 20_000) == true)
+                awaitCaptured("arabic-caption", 20_000) { device.hasObject(By.descContains(arabic)) }
                 scenario.onActivity { assertTrue(checkNotNull(player).currentPosition >= 1800) }
                 device.executeShellCommand("mkdir -p /sdcard/Download/watchhub-smoke")
                 device.executeShellCommand("screencap -p /sdcard/Download/watchhub-smoke/arabic-translated-caption.png")
                 scenario.onActivity { checkNotNull(player).pause(); checkNotNull(player).seekTo(0) }
-                assertTrue("Seeking must clear delayed captions from the previous position", device.wait(Until.gone(By.descContains(arabic)), 5000) == true)
+                compose.waitUntil(5000) { !device.hasObject(By.descContains(arabic)) }
                 scenario.onActivity { checkNotNull(player).release(); player = null }
             }
         } finally {
             if (player != null) instrumentation.runOnMainSync { player?.release() }
             video.delete()
             captions.delete()
+        }
+    }
+
+    private fun awaitCaptured(name: String, timeout: Long, condition: () -> Boolean) {
+        // Native video keeps real time while Compose effects use the test clock.
+        try { compose.waitUntil(timeout) { compose.mainClock.advanceTimeBy(50); condition() } }
+        catch (failure: Throwable) {
+            runCatching {
+                val device = UiDevice.getInstance(instrumentation)
+                device.executeShellCommand("mkdir -p /sdcard/Download/watchhub-smoke")
+                device.executeShellCommand("screencap -p /sdcard/Download/watchhub-smoke/$name-failure.png")
+                val file = File(context.getExternalFilesDir(null), "$name-failure.xml")
+                device.dumpWindowHierarchy(file)
+                device.executeShellCommand("cp ${file.absolutePath} /sdcard/Download/watchhub-smoke/")
+                compose.onRoot(useUnmergedTree = true).printToLog("SmartSmoke")
+            }
+            throw failure
         }
     }
 
