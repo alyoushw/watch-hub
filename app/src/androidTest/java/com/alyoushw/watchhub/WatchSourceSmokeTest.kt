@@ -57,7 +57,7 @@ class WatchSourceSmokeTest {
     private val context get() = instrumentation.targetContext
     private val container get() = (context.applicationContext as WatchHubApp).container
 
-    @Test fun authorizedManifestPlaysMp4HlsAndMkvWithSubtitlesInTheExistingPlayer() = runBlocking {
+    @Test fun authorizedManifestPlaysMp4HlsAndMkvWithSubtitlesInTheExistingPlayer() = runBlocking<Unit> {
         MockWebServer().use { server ->
             val query = SourceQuery(MediaType.MOVIE, 99999999, "Watch Hub owned test fixture", 2025)
             val subtitles = listOf(SourceSubtitle("english", "Fixture English", "en", server.url("/captions.srt").toString(), "srt"))
@@ -130,7 +130,7 @@ class WatchSourceSmokeTest {
         }
     }
 
-    @Test fun nativeTorrentAndMagnetPreparePieceVerifiedVideoInsteadOfPlayingTheMagnet() = runBlocking {
+    @Test fun nativeTorrentAndMagnetPreparePieceVerifiedVideoInsteadOfPlayingTheMagnet() = runBlocking<Unit> {
         MockWebServer().use { server ->
             val bytes = asset("player-smoke.mp4")
             val seed = File(context.cacheDir, "owned-torrent-fixture.mp4").apply { writeBytes(bytes) }
@@ -167,7 +167,7 @@ class WatchSourceSmokeTest {
         }
     }
 
-    @Test fun realOnDeviceArabicCaptionsAppearAtDelayedVideoTimeAndClearAfterSeek() = runBlocking {
+    @Test fun realOnDeviceArabicCaptionsAppearAtDelayedVideoTimeAndClearAfterSeek() = runBlocking<Unit> {
         val phrase = "Hello world."
         val translator = CaptionTranslator()
         val arabic = try { withTimeout(180_000) { translator.translate(phrase, "en") } } finally { translator.close() }

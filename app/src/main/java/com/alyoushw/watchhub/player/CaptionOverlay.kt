@@ -75,6 +75,7 @@ internal fun CaptionOverlay(
         view.setStyle(CaptionStyleCompat(color, if (background) 0x99000000.toInt() else android.graphics.Color.TRANSPARENT,
             android.graphics.Color.TRANSPARENT, CaptionStyleCompat.EDGE_TYPE_OUTLINE, android.graphics.Color.BLACK, null))
         view.setCues(rendered)
+        view.importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_YES
         view.contentDescription = rendered.mapNotNull { it.text?.toString() }.joinToString("\n")
     }, modifier = modifier)
 }

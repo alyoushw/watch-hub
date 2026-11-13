@@ -43,7 +43,7 @@ class WatchSourcesTest {
         assertFalse(StreamProbe.signatureMatches(SourceTransport.HLS, "#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES\n#EXTINF:4,\na.ts".toByteArray()))
     }
 
-    @Test fun freshResolutionAndHistoryNeverPersistTransientPlaybackUrls() = runBlocking {
+    @Test fun freshResolutionAndHistoryNeverPersistTransientPlaybackUrls() = runBlocking<Unit> {
         var calls = 0
         val provider = object : WatchSourceProvider {
             override suspend fun search(query: SourceQuery): List<WatchSource> = listOf(source(url = "https://example.org/video.mp4?lease=${++calls}"))
@@ -64,7 +64,7 @@ class WatchSourcesTest {
         assertNull(Json.decodeFromString(WatchEntry.serializer(), """{"key":"old","kind":"movie","itemId":"1","title":"Old"}""").sourceRef)
     }
 
-    @Test fun manifestsAndProbesRejectMalformedServerResponses() = runBlocking {
+    @Test fun manifestsAndProbesRejectMalformedServerResponses() = runBlocking<Unit> {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setBody("<html>offline</html>"))
             assertThrows(SourceException::class.java) { runBlocking { ManifestSourceProvider(server.url("/catalogue").toString()).search(movie) } }
@@ -73,7 +73,7 @@ class WatchSourcesTest {
         }
     }
 
-    @Test fun magnetAndTorrentAreHandledByPreparationEngineOnly() = runBlocking {
+    @Test fun magnetAndTorrentAreHandledByPreparationEngineOnly() = runBlocking<Unit> {
         val magnet = "magnet:?xt=urn:btih:" + "a".repeat(40)
         assertEquals("a".repeat(40), magnetHash(magnet))
         assertEquals("ff".repeat(20), magnetHash("magnet:?xt=urn:btih:" + "7".repeat(32)))
@@ -90,7 +90,7 @@ class WatchSourcesTest {
         assertEquals(1, TorrentPlaybackEngine.chooseVideoFile(listOf("Another.2010.mkv", "Sintel.2010.mp4"), listOf(9999, 100), movie))
     }
 
-    @Test fun indexCannotIntroduceAnUnauthorizedTorrentHash() = runBlocking {
+    @Test fun indexCannotIntroduceAnUnauthorizedTorrentHash() = runBlocking<Unit> {
         val allowed = "a".repeat(40)
         val foreign = "b".repeat(40)
         val authorized = source().copy(variants = listOf(SourceVariant("torrent", "Torrent", "magnet:?xt=urn:btih:$allowed", SourceTransport.MAGNET)))

@@ -46,7 +46,7 @@ class TorrentPlaybackEngine(context: Context) : PlaybackEngine {
         withContext(Dispatchers.IO) {
             if (!supports(variant.transport)) throw SourceException("مصدر تورنت غير صالح")
             root.mkdirs()
-            val session = SessionManager()
+            val session = try { SessionManager() } catch (_: LinkageError) { throw SourceException("محرك التورنت غير متاح على هذا الجهاز") }
             try {
                 session.start()
                 val bytes = if (variant.transport == SourceTransport.MAGNET) {
@@ -86,7 +86,7 @@ class TorrentPlaybackEngine(context: Context) : PlaybackEngine {
                         if (status.errorCode().isError) throw SourceException("تعذّر تجهيز ملف التورنت")
                         val ready = handle.fileProgress().getOrElse(selected) { 0L }
                         progress(if (wanted > 0) (ready.toFloat() / wanted).coerceIn(0f, 1f) else 0f)
-                        if (wanted > 0 && ready >= wanted) break
+                        if (wanted > 0 && ready >= wanted && status.isFinished) break
                         delay(300)
                     }
                 }
@@ -97,8 +97,9 @@ class TorrentPlaybackEngine(context: Context) : PlaybackEngine {
                 file.toURI().toString()
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (e: SourceException) { throw e }
+            catch (_: LinkageError) { throw SourceException("محرك التورنت غير متاح على هذا الجهاز") }
             catch (_: Exception) { throw SourceException("فشل محرك التورنت؛ جرّب مصدراً آخر") }
-            finally { withContext(NonCancellable + Dispatchers.IO) { session.stop() } }
+            finally { withContext(NonCancellable + Dispatchers.IO) { runCatching { session.stop() } } }
         }
     }
 

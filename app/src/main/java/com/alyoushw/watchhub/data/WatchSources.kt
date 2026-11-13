@@ -72,6 +72,7 @@ class ManifestSourceProvider(
     private val endpoint: String,
     private val http: OkHttpClient = SourceHttp.client,
 ) : WatchSourceProvider {
+    private val json = catalogueJson
     override suspend fun search(query: SourceQuery): List<WatchSource> = withContext(Dispatchers.IO) {
         val base = endpoint.toHttpUrlOrNull() ?: throw SourceException("أدخل رابط HTTP أو HTTPS لكتالوج المصادر")
         val url = base.newBuilder().setQueryParameter("tmdb_id", query.tmdbId.toString())
@@ -83,11 +84,13 @@ class ManifestSourceProvider(
                 query.imdbId?.let { setQueryParameter("imdb_id", it) }
             }.build()
         val payload = SourceHttp.read(http, url.toString(), 2 * 1024 * 1024)
-        val entries = try { Json { ignoreUnknownKeys = true }.decodeFromString(ListSerializer(WatchSource.serializer()), payload) }
+        val entries = try { json.decodeFromString(ListSerializer(WatchSource.serializer()), payload) }
         catch (_: Exception) { throw SourceException("صيغة كتالوج المصادر غير صالحة") }
         entries.filter { it.compatible(query) }
     }
 }
+
+private val catalogueJson = Json { ignoreUnknownKeys = true }
 
 /** Redistributable Blender open movies; no entitlement or subscription stream extraction. */
 class OpenFilmSourceProvider : WatchSourceProvider {

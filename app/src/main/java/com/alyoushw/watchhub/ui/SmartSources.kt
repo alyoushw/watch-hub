@@ -71,6 +71,7 @@ fun SmartWatchSources(info: DetailInfo) {
                         if (source.variants.any { it.transport in setOf(SourceTransport.TORRENT, SourceTransport.MAGNET) })
                             Text("يُحمَّل ملف الفيديو المختار كاملاً قبل التشغيل. الرجوع من المشغل يلغي التجهيز.", style = MaterialTheme.typography.bodySmall)
                         Text(source.attribution, style = MaterialTheme.typography.labelSmall)
+                        TextButton(onClick = { context.openUrl(source.licenceUrl) }, modifier = Modifier.focusFrame()) { Text("المصدر والترخيص") }
                     }
                 }
             }
