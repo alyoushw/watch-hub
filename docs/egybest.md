@@ -1,26 +1,38 @@
 # EgyBest private preview
 
-The separate **تشغيل EgyBest** button below TopCinema uses the existing
-season, episode and server UI and the existing Watch Hub player. The provider
-searches https://egytbest.live/ and resolves public server pages afresh on replay.
-Only the stable WordPress post identifier is saved as a source reference.
-Temporary video URLs and required HTTP headers remain in memory.
+The separate **تشغيل EgyBest** button uses the existing season/episode/server
+screen and native Watch Hub player. The provider searches https://egytbest.live/
+and resolves public post references afresh. Only source identity is persisted;
+video URLs and session headers remain in memory.
 
-Title, production/debut year and season/episode must match. Episode numbers
-come from displayed titles, never URL slugs, which were inconsistent on sampled
-pages. Publication dates are not production dates. Episodes that advertise only
-a later season's year are omitted unless an IMDb link confirms their identity.
-Consequently some available website episodes will deliberately not be returned.
-The page URL is attribution and does not assert any distribution licence.
+Titles, production/debut or selected TMDB season year, and season/episode must
+match. WordPress publication dates and episode URL slugs are not identity
+proof. Search tries precise episode queries and title-only alternatives,
+follows same-host next-page links (up to four pages per query), isolates failed
+candidate pages, and checks episode links on matching season pages. Series
+with an omitted season label are considered only for season one. No claim is
+made that every title in the external catalogue has been individually tested.
 
-Supported embedded hosts are explicitly limited. Existing static media parsing
-is reused with an additional MP4Upload player.src pattern scoped to those hosts;
-TopCinema's default host selection stays unchanged. Each resulting MP4/HLS/MKV
-candidate must pass StreamProbe before it is offered. Deleted, gated or
-incompatible servers are omitted; no CAPTCHA, DRM or access gate is bypassed.
+All published HTTPS watch-server and download-page links on a matching page
+are retained, independently of native-playback support. SourceWebLink keeps
+website pages separate from SourceVariant video URIs. Compatible media use the
+main player; original links open the existing in-app web viewer with clearly
+labelled watch/download actions. Deleted/gated links may still fail in their
+own website player. File-download gestures follow the viewer's existing browser
+handling. No CAPTCHA, DRM or access gate is bypassed.
 
-Live inspection found valid film and episode pages, deleted servers, and a
-public MP4Upload movie source whose range request returned HTTP 206 with an
-MP4 ftyp header. This verifies media accessibility, not complete playback on
-the owner's phone/TV. No new tests, workflows, emulator run or local Gradle
-build were introduced. The main release and updater are unchanged.
+The previous implementation dropped a matched title when its hosts were not
+on the native-parser allowlist, tried only four hosts and returned at most two
+working variants. Those provider limits are removed. Native parsing uses an
+explicit expanded host list and at most four concurrent host operations;
+only signature-probed MP4/HLS/MKV candidates are presented as native streams.
+WatchSources preserves matched pages even when none of their streams pass the
+probe. This avoids falsely reporting that an existing movie is absent.
+
+Live inspection reproduced Project Hail Mary (2026): nine watch-server URLs
+and sixteen download-page URLs; its public Forafile MP4 returned HTTP 206 with
+an ftyp header. Also reviewed Deep Blue Sea 2 (2018), My Adventures with
+Superman episode pages, and Die Kaiserin season-three search results. These
+are representative site/media checks, not on-device playback or exhaustive
+catalogue verification. No new tests/workflows or local Gradle/emulator run.
+The main release, login, Animeify and APK-update settings are unchanged.

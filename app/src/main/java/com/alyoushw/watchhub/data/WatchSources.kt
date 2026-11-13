@@ -19,6 +19,7 @@ import java.util.concurrent.TimeUnit
 data class SourceQuery(
     val type: MediaType, val tmdbId: Int, val originalTitle: String, val year: Int,
     val season: Int? = null, val episode: Int? = null, val imdbId: String? = null, val searchTitle: String? = null,
+    val seasonYear: Int? = null,
 ) {
     val valid: Boolean get() = type in setOf(MediaType.MOVIE, MediaType.TV) && tmdbId > 0 &&
         originalTitle.isNotBlank() && year in 1888..2200 &&
@@ -45,15 +46,20 @@ data class SourceVariant(val id: String, val label: String, val url: String, val
 @Serializable
 data class SourceSubtitle(val id: String, val label: String, val language: String, val url: String, val format: String = "vtt")
 
+/** A website page is an alternative to a native stream, never a video URI. */
+@Serializable
+data class SourceWebLink(val label: String, val url: String, val download: Boolean = false)
+
 @Serializable
 data class WatchSource(
     val id: String, val providerId: String, val providerName: String, val query: SourceQuery,
     val variants: List<SourceVariant>, val subtitles: List<SourceSubtitle> = emptyList(),
     val attribution: String, val licenceUrl: String,
+    val webLinks: List<SourceWebLink> = emptyList(),
 ) {
     fun compatible(query: SourceQuery): Boolean = this.query.matches(query) && Regex("[\\p{L}\\p{N}_.:-]{1,160}").matches(id) &&
         Regex("[a-zA-Z0-9_.:-]{1,80}").matches(providerId) && attribution.isNotBlank() && licenceUrl.toHttpUrlOrNull() != null &&
-        variants.isNotEmpty() && variants.all { variant ->
+        (variants.isNotEmpty() || webLinks.isNotEmpty()) && webLinks.all { it.label.isNotBlank() && it.url.toHttpUrlOrNull()?.isHttps == true } && variants.all { variant ->
             variant.id.isNotBlank() && if (variant.transport == SourceTransport.MAGNET) magnetHash(variant.url) != null
             else variant.url.toHttpUrlOrNull() != null
         } && subtitles.all { it.url.toHttpUrlOrNull() != null && it.format in setOf("srt", "vtt") }
@@ -128,7 +134,7 @@ class WatchSources(private val providers: () -> List<WatchSourceProvider>, priva
             val variants = source.variants.mapNotNull { variant ->
                 if (variant.transport in setOf(SourceTransport.TORRENT, SourceTransport.MAGNET) || probe.compatible(variant)) variant else null
             }
-            source.copy(variants = variants).takeIf { variants.isNotEmpty() }
+            source.copy(variants = variants).takeIf { variants.isNotEmpty() || source.webLinks.isNotEmpty() }
         } }.awaitAll().filterNotNull()
         SourceSearch(valid, results.flatMap { it.errors })
     }

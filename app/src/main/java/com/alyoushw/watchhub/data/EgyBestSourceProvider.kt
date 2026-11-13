@@ -1,6 +1,11 @@
 package com.alyoushw.watchhub.data
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -17,33 +22,42 @@ class EgyBestSourceProvider : WatchSourceProvider {
     override suspend fun search(query: SourceQuery): List<WatchSource> = withContext(Dispatchers.IO) {
         if (!query.valid) return@withContext emptyList()
         val titles = aliases(query)
-        for (title in titles.take(2)) {
-            for (page in 1..2) {
-                val search = if (query.type == MediaType.TV) "$title الموسم ${ORDINALS.getOrNull((query.season ?: 1) - 1) ?: query.season} الحلقة ${query.episode}" else title
-                val url = BASE.toHttpUrl().newBuilder().addQueryParameter("s", search)
-                    .addQueryParameter("type", if (query.type == MediaType.TV) "series" else "movies")
-                    .apply { if (page > 1) addQueryParameter("paged", page.toString()) }.build()
-                val doc = read(url.toString())
+        val searches = titles.take(2).flatMap { title ->
+            if (query.type == MediaType.TV) listOf("$title الموسم ${ORDINALS.getOrNull((query.season ?: 1) - 1) ?: query.season} الحلقة ${query.episode}", title)
+            else listOf(title)
+        }.distinct()
+        val visited = mutableSetOf<String>()
+        for (search in searches) {
+            var next = BASE.toHttpUrl().newBuilder().addQueryParameter("s", search)
+                .addQueryParameter("type", if (query.type == MediaType.TV) "series" else "movies").build().toString()
+            for (page in 1..4) {
+                val doc = read(next)
                 val candidates = doc.select("a.block[href]").filter {
                     it.absUrl("href").toHttpUrlOrNull()?.host == HOST &&
                         titleMatches(it.selectFirst("h3.title")?.text().orEmpty(), query, titles, false)
                 }.distinctBy { it.absUrl("href") }
-                for (candidate in candidates.take(3)) {
-                    val details = read(candidate.absUrl("href"))
-                    val source = safelyResolve(details, query, titles)
-                    if (source != null) return@withContext listOf(source)
-                    // Season pages contain links to the actual individual episode pages.
+                for (candidate in candidates) {
+                    if (!visited.add(candidate.absUrl("href"))) continue
+                    val details = try { read(candidate.absUrl("href")) }
+                        catch (e: CancellationException) { throw e }
+                        catch (_: Exception) { continue }
+                    safelyResolve(details, query, titles)?.let { return@withContext listOf(it) }
                     if (query.type == MediaType.TV) {
-                        val episode = details.select("a.block[href]").firstOrNull {
+                        val episodes = details.select("a.block[href]").filter {
                             it.absUrl("href").toHttpUrlOrNull()?.host == HOST &&
                                 titleMatches(it.selectFirst("h3.title")?.text().orEmpty(), query, titles, true)
                         }
-                        if (episode != null) {
-                            safelyResolve(read(episode.absUrl("href")), query, titles)?.let { return@withContext listOf(it) }
+                        for (episode in episodes) {
+                            if (!visited.add(episode.absUrl("href"))) continue
+                            try {
+                                safelyResolve(read(episode.absUrl("href")), query, titles)?.let { return@withContext listOf(it) }
+                            } catch (e: CancellationException) { throw e }
+                            catch (_: Exception) { /* Continue to another matching episode page. */ }
                         }
                     }
                 }
-                if (doc.select("a.block[href]").isEmpty() || doc.select("a.next, a.next-page, .pagination a").isEmpty()) break
+                next = doc.select("a.next, a.next-page, a.next.page-numbers, a[rel=next]")
+                    .map { it.absUrl("href") }.firstOrNull { it.toHttpUrlOrNull()?.host == HOST } ?: break
             }
         }
         emptyList()
@@ -66,30 +80,38 @@ class EgyBestSourceProvider : WatchSourceProvider {
         if (!titleMatches(title, query, titles, true)) return null
         val imdb = doc.select("a[href*=imdb.com/title/]").mapNotNull { Regex("tt\\d{7,10}").find(it.attr("href"))?.value }
         if (!query.imdbId.isNullOrBlank() && imdb.isNotEmpty() && query.imdbId !in imdb) return null
-        // Never treat the WordPress publication date as the production/debut year.
-        // If an episode advertises only its season year, omit it unless IMDb confirms identity.
+        // A later season's air year differs from the series debut year in TMDB.
+        // Compare against TMDB's selected season year, never the WordPress publication date.
         val years = Regex("\\b(?:18|19|20|21)\\d{2}\\b").findAll(arabic(title)).mapNotNull { it.value.toIntOrNull() }.toList()
-        if (query.year !in years && (query.imdbId.isNullOrBlank() || query.imdbId !in imdb)) return null
+        val yearMatches = query.year in years || query.type == MediaType.TV && query.seasonYear != null && query.seasonYear in years
+        if (!yearMatches && (query.imdbId.isNullOrBlank() || query.imdbId !in imdb)) return null
         val post = doc.selectFirst("link[rel=shortlink]")?.absUrl("href")?.toHttpUrlOrNull()?.queryParameter("p")
             ?.takeIf { it.matches(Regex("\\d{1,10}")) } ?: return null
         val servers = doc.select("#WatchServers [data-embed-url]").mapNotNull {
-            val url = it.attr("data-embed-url").toHttpUrlOrNull()?.takeIf { parsed -> parsed.isHttps && parsed.host in EMBED_HOSTS }
-            url?.toString()?.let { value -> value to it.text() }
-        }.distinctBy { it.first }.sortedBy { if ("mp4upload" in it.first) 0 else 1 }
-        val variants = mutableListOf<SourceVariant>()
-        for ((index, server) in servers.take(4).withIndex()) {
-            try {
-                val media = embeds.resolveEmbed(server.first, page.toString(), server.second, index.toString(), EMBED_HOSTS)
-                for (variant in media) {
-                    if (probe.compatible(variant)) { variants += variant; break }
+            val url = it.attr("data-embed-url").toHttpUrlOrNull()?.takeIf { parsed -> parsed.isHttps } ?: return@mapNotNull null
+            SourceWebLink(it.text().ifBlank { url.host }, url.toString())
+        }.distinctBy { it.url }
+        val downloads = doc.select(".download-section .tr, .downloads .tr").mapNotNull { row ->
+            val url = row.selectFirst("a[href]")?.absUrl("href")?.toHttpUrlOrNull()?.takeIf { it.isHttps } ?: return@mapNotNull null
+            val label = row.children().take(2).joinToString(" · ") { it.text() }.ifBlank { url.host }
+            SourceWebLink(label, url.toString(), download = true)
+        }.distinctBy { it.url }
+        val limit = Semaphore(4)
+        val variants = coroutineScope {
+            servers.withIndex().filter { it.value.url.toHttpUrlOrNull()?.host in EMBED_HOSTS }.map { (index, server) -> async {
+                limit.withPermit {
+                    try {
+                        embeds.resolveEmbed(server.url, page.toString(), server.label, index.toString(), EMBED_HOSTS)
+                            .filter { probe.compatible(it) }
+                    } catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { emptyList() }
                 }
-                if (variants.size >= 2) break
-            } catch (e: CancellationException) { throw e }
-            catch (_: Exception) { /* Deleted or blocked servers must not hide a working alternative. */ }
+            } }.awaitAll().flatten().distinctBy { it.url }
         }
-        if (variants.isEmpty()) return null
+        if (variants.isEmpty() && servers.isEmpty() && downloads.isEmpty()) return null
         return WatchSource("egybest-$post", "egybest", "EgyBest", query, variants,
-            attribution = "EgyBest · ${query.originalTitle} (${query.year}) · $page", licenceUrl = page.toString())
+            attribution = "EgyBest · ${query.originalTitle} (${query.year}) · $page", licenceUrl = page.toString(),
+            webLinks = servers + downloads)
     }
 
     private fun titleMatches(raw: String, query: SourceQuery, titles: List<String>, requireEpisode: Boolean): Boolean {
@@ -99,12 +121,12 @@ class EgyBestSourceProvider : WatchSourceProvider {
         if (!series && !text.startsWith("فيلم ")) return false
         text = text.substringAfter(' ')
         if (series) {
-            val season = Regex("الموسم\\s+(.+?)(?:\\s+الحلقه|\\s+مترجم|\\s+مدبلج|$)").find(text) ?: return false
-            val value = season.groupValues[1].trim().let { it.toIntOrNull() ?: ORDINALS.indexOf(it).takeIf { i -> i >= 0 }?.plus(1) }
+            val season = Regex("الموسم\\s+(.+?)(?:\\s+الحلقه|\\s+مترجم|\\s+مدبلج|$)").find(text)
+            val value = season?.groupValues?.get(1)?.trim()?.let { it.toIntOrNull() ?: ORDINALS.indexOf(it).takeIf { i -> i >= 0 }?.plus(1) } ?: 1
             if (value != query.season) return false
             val episode = Regex("الحلقه\\s*(\\d+)").find(text)?.groupValues?.get(1)?.toIntOrNull()
             if ((requireEpisode || episode != null) && episode != query.episode) return false
-            text = text.substringBefore("الموسم").trim()
+            text = text.substringBefore("الموسم").substringBefore("الحلقه").trim()
         } else {
             text = text.substringBefore("مترجم").substringBefore("مدبلج").substringBefore("اونلاين").trim()
                 .removeSuffix(query.year.toString()).trim().trim('(', ')', ' ')
@@ -133,7 +155,8 @@ class EgyBestSourceProvider : WatchSourceProvider {
         private const val HOST = "egytbest.live"
         private const val BASE = "https://egytbest.live/"
         private const val AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
-        private val EMBED_HOSTS = setOf("uqload.vc", "uqload.net", "www.mp4upload.com", "mp4upload.com", "vidspeed.org", "vidmoly.org", "1vid.xyz", "mp4plus.org")
+        private val EMBED_HOSTS = setOf("uqload.vc", "uqload.net", "www.mp4upload.com", "mp4upload.com", "vidspeed.org", "vidmoly.org", "1vid.xyz", "mp4plus.org",
+            "forafile.com", "smoothpre.com", "minochinos.com", "stmruby.com", "streamruby.com", "hgcloud.to", "playmogo.com", "mixdrop.top", "mixdrop.ps", "voe.sx")
         private val ORDINALS = listOf("الاول", "الثاني", "الثالث", "الرابع", "الخامس", "السادس", "السابع", "الثامن", "التاسع", "العاشر",
             "الحادي عشر", "الثاني عشر", "الثالث عشر", "الرابع عشر", "الخامس عشر", "السادس عشر", "السابع عشر", "الثامن عشر", "التاسع عشر", "العشرون")
     }

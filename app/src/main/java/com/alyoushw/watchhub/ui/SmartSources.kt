@@ -31,7 +31,7 @@ import com.alyoushw.watchhub.player.QueueItem
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
-@Serializable data class SourceSeason(val number: Int, val episodes: Int)
+@Serializable data class SourceSeason(val number: Int, val episodes: Int, val year: Int? = null)
 @Serializable data class SourceLookup(
     val query: SourceQuery, val title: String, val overview: String = "", val overviewIsEnglish: Boolean = false,
     val poster: String? = null, val backdrop: String? = null, val seasons: List<SourceSeason> = emptyList(),
@@ -45,7 +45,7 @@ fun DetailInfo.sourceLookup(): SourceLookup {
     return SourceLookup(SourceQuery(type, id, originalTitle.ifBlank { searchTitle }, year?.toIntOrNull() ?: 0,
         season.takeIf { type == MediaType.TV }, 1.takeIf { type == MediaType.TV }, imdbId, searchTitle), title, overview, overviewIsEnglish,
         posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }, backdropPath?.let { "https://image.tmdb.org/t/p/w1280$it" },
-        seasonDetails.map { SourceSeason(it.number, it.episodes) })
+        seasonDetails.map { SourceSeason(it.number, it.episodes, it.year?.toIntOrNull()) })
 }
 
 @Composable
@@ -84,9 +84,16 @@ fun SourceWatchScreen(
     var chooseSource by rememberSaveable { mutableStateOf(false) }
     var retry by remember { mutableIntStateOf(0) }
     val series = lookup.query.type == MediaType.TV
-    val query = lookup.query.copy(season = season.takeIf { series }, episode = number.takeIf { series })
+    val query = lookup.query.copy(season = season.takeIf { series }, episode = number.takeIf { series },
+        seasonYear = lookup.seasons.firstOrNull { it.number == season }?.year.takeIf { series })
     var loading by remember(query, catalogue, indexed, retry) { mutableStateOf(query.valid) }
     var result by remember(query, catalogue, indexed, retry) { mutableStateOf<SourceSearch?>(null) }
+    var openedLink by remember(query) { mutableStateOf<SourceWebLink?>(null) }
+    openedLink?.let { link ->
+        androidx.activity.compose.BackHandler { openedLink = null }
+        KoraScreen(onBack = { openedLink = null }, homeUrl = link.url, pageTitle = link.label)
+        return
+    }
     LaunchedEffect(query, catalogue, indexed, retry) {
         result = null
         if (!query.valid) return@LaunchedEffect
@@ -110,7 +117,8 @@ fun SourceWatchScreen(
                         if (lookup.overview.isNotBlank()) TranslatedText(lookup.overview, isEnglish = lookup.overviewIsEnglish,
                             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text((if (series) "الموسم $season" else "فيلم") + (website?.let { " · $it" } ?: " · تورنت"), color = Gold, style = MaterialTheme.typography.labelMedium)
-                        Text(if (website != null) "اختر الفيلم أو الحلقة لعرض سيرفرات $website المتوافقة. تُجلب روابط التشغيل من الموقع عند كل مشاهدة."
+                        Text(if (lookup.providerId == "egybest") "تظهر روابط المشاهدة والتحميل كما يعلنها الموقع. الروابط المتوافقة تُشغّل بالمشغّل الرئيسي، والبقية تفتح بمشغّل الموقع داخل التطبيق."
+                            else if (website != null) "اختر الفيلم أو الحلقة لعرض سيرفرات $website المتوافقة. تُجلب روابط التشغيل من الموقع عند كل مشاهدة."
                             else "يبدأ التشغيل بعد تجهيز الأجزاء الأولى ويستمر التنزيل أثناء المشاهدة. سرعة البداية تعتمد على الأقران والاتصال.",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -158,6 +166,16 @@ fun SourceWatchScreen(
                         }
                         Text(variant.label, style = MaterialTheme.typography.bodySmall)
                         Text(source.attribution, style = MaterialTheme.typography.labelSmall)
+                    }
+                    if (source.webLinks.isNotEmpty()) {
+                        if (source.variants.isEmpty()) Text("العمل موجود في الموقع، ولم يتوفر رابط فيديو متوافق مع المشغّل الرئيسي. يمكنك تجربة روابط الموقع أدناه.")
+                        else Text("روابط الموقع الأصلية · قد تتطلب تفاعلاً أو تكون غير متاحة")
+                        source.webLinks.forEach { link ->
+                            OutlinedButton(onClick = { openedLink = link; chooseSource = false },
+                                modifier = Modifier.fillMaxWidth().focusFrame()) {
+                                Text((if (link.download) "صفحة تحميل · " else "مشغّل الموقع · ") + link.label)
+                            }
+                        }
                     }
                 }
                 result?.errors?.firstOrNull()?.let { Text(it, color = MaterialTheme.colorScheme.error) }

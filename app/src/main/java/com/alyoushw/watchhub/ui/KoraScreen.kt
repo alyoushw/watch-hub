@@ -61,7 +61,7 @@ import kotlinx.coroutines.launch
 @SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun KoraScreen(onBack: () -> Unit) {
+fun KoraScreen(homeUrl: String = KORA_HOME, pageTitle: String = "كوره", onBack: () -> Unit) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val scope = rememberCoroutineScope()
@@ -176,7 +176,7 @@ fun KoraScreen(onBack: () -> Unit) {
                     // Remove the web player before starting Media3 so two audio streams cannot overlap.
                     closeFullscreen()
                     while (windows.size > 1) closeWindow(windows.last())
-                    web?.loadUrl(KORA_HOME)
+                    web?.loadUrl(homeUrl)
                     nativePaused = false
                     nativeStarted = true
                     PlayerActivity.start(context, listOf(item), 0)
@@ -223,7 +223,7 @@ fun KoraScreen(onBack: () -> Unit) {
     }
 
     Scaffold(contentWindowInsets = WindowInsets(0), topBar = {
-        TopAppBar(title = { Text("كوره") }, navigationIcon = {
+        TopAppBar(title = { Text(pageTitle, maxLines = 1) }, navigationIcon = {
             IconButton(onClick = ::back, modifier = Modifier.focusFrame()) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع")
             }
@@ -231,7 +231,7 @@ fun KoraScreen(onBack: () -> Unit) {
             if (web != windows.firstOrNull() && windows.size > 1) TextButton(onClick = { closeWindow(web) }, modifier = Modifier.focusFrame()) { Text("إغلاق النافذة") }
             TextButton(onClick = {
                 while (windows.size > 1) closeWindow(windows.last())
-                web?.loadUrl(KORA_HOME)
+                web?.loadUrl(homeUrl)
             }, modifier = Modifier.focusFrame()) { Text("الرئيسية") }
             TextButton(onClick = { error = null; web?.reload() }, modifier = Modifier.focusFrame()) { Text("تحديث") }
         })
@@ -299,7 +299,7 @@ fun KoraScreen(onBack: () -> Unit) {
                     addView(site, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
                     windows += site
                     web = site
-                    site.loadUrl(KORA_HOME)
+                    site.loadUrl(homeUrl)
                 }
             })
         }
