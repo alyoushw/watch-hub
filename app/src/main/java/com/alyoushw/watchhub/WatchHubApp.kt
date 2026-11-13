@@ -27,6 +27,7 @@ class AppContainer(context: Context) {
     val jikan = JikanApi()
     val animeify = com.alyoushw.watchhub.data.AnimeifyApi()
     private val torrentIndex = com.alyoushw.watchhub.data.TpbTorrentIndex()
+    val movizTimeSources = com.alyoushw.watchhub.data.WatchSources({ listOf(com.alyoushw.watchhub.data.MovizTimeSourceProvider()) })
     val watchSources = com.alyoushw.watchhub.data.WatchSources({
         listOf(com.alyoushw.watchhub.data.OpenFilmSourceProvider(), com.alyoushw.watchhub.data.ArchiveSourceProvider()) +
             (if (settings.torrentIndexEnabled.value) listOf(com.alyoushw.watchhub.data.TpbSourceProvider(torrentIndex)) else emptyList()) +

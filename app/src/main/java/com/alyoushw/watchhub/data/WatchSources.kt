@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit
 @Serializable
 data class SourceQuery(
     val type: MediaType, val tmdbId: Int, val originalTitle: String, val year: Int,
-    val season: Int? = null, val episode: Int? = null, val imdbId: String? = null,
+    val season: Int? = null, val episode: Int? = null, val imdbId: String? = null, val searchTitle: String? = null,
 ) {
     val valid: Boolean get() = type in setOf(MediaType.MOVIE, MediaType.TV) && tmdbId > 0 &&
         originalTitle.isNotBlank() && year in 1888..2200 &&
@@ -39,7 +39,8 @@ data class SourceQuery(
 @Serializable enum class SourceTransport { MP4, HLS, MKV, TORRENT, MAGNET }
 
 @Serializable
-data class SourceVariant(val id: String, val label: String, val url: String, val transport: SourceTransport)
+data class SourceVariant(val id: String, val label: String, val url: String, val transport: SourceTransport,
+    val httpHeaders: Map<String, String> = emptyMap())
 
 @Serializable
 data class SourceSubtitle(val id: String, val label: String, val language: String, val url: String, val format: String = "vtt")
@@ -152,7 +153,17 @@ class StreamProbe(private val http: OkHttpClient = SourceHttp.client) : SourcePr
     override suspend fun compatible(variant: SourceVariant): Boolean = withContext(Dispatchers.IO) {
         if (variant.transport !in setOf(SourceTransport.MP4, SourceTransport.HLS, SourceTransport.MKV)) return@withContext false
         try {
-            http.newCall(Request.Builder().url(variant.url).header("Range", "bytes=0-4095").build()).execute().use { response ->
+            val host = variant.url.toHttpUrlOrNull()?.host
+            val transport = if (variant.httpHeaders.isEmpty()) http else http.newBuilder().addNetworkInterceptor { chain ->
+                val request = chain.request()
+                chain.proceed(request.newBuilder().apply {
+                    variant.httpHeaders.forEach { (name, value) ->
+                        if (request.url.host == host || name.equals("User-Agent", true)) header(name, value)
+                    }
+                }.build())
+            }.build()
+            val request = Request.Builder().url(variant.url).header("Range", "bytes=0-4095").build()
+            transport.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@use false
                 val body = response.body ?: return@use false
                 val source = body.source()

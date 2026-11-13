@@ -478,6 +478,11 @@ private fun DetailContent(
 
         item { Column(Modifier.padding(horizontal = 16.dp)) { SourceWatchButton(info.sourceLookup(), onOpenSources, Modifier.fillMaxWidth()) } }
 
+        item { Column(Modifier.padding(horizontal = 16.dp)) {
+            SourceWatchButton(info.sourceLookup().copy(providerId = "moviz-time"), onOpenSources,
+                Modifier.fillMaxWidth(), label = "تشغيل Moviz Time")
+        } }
+
         if (16 in info.genreIds && (info.originalLanguage == "ja" || "JP" in info.countries)) {
             item {
                 Column(Modifier.padding(horizontal = 16.dp)) {

@@ -59,6 +59,7 @@ class PlayerActivity : ComponentActivity() {
     private var urlIndex = 0
     private var resolveJob: Job? = null
     private var activeSourceUri: String? = null
+    @Volatile private var sourceHttpHeaders: Pair<String, Map<String, String>>? = null
     private var stoppedSourcePosition: Long? = null
     private val loadControl = FlexibleLoadControl()
     private val bandwidth by lazy { androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.Builder(this).build() }
@@ -158,7 +159,16 @@ class PlayerActivity : ComponentActivity() {
 
         // Providers often redirect a stream to another server, sometimes from https to http
         // (OkHttp follows both). Its pool is dropped when the network changes (see Net).
-        val http = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(com.alyoushw.watchhub.data.Net.streams)
+        val streamHttp = com.alyoushw.watchhub.data.Net.streams.newBuilder().addNetworkInterceptor { chain ->
+            val request = chain.request()
+            val sessionHeaders = sourceHttpHeaders
+            chain.proceed(if (sessionHeaders != null) request.newBuilder().apply {
+                sessionHeaders.second.forEach { (name, value) ->
+                    if (request.url.host == sessionHeaders.first || name.equals("User-Agent", true)) header(name, value)
+                }
+            }.build() else request)
+        }.build()
+        val http = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(streamHttp)
         session.autoPreload = getSharedPreferences("player", MODE_PRIVATE).getBoolean("stallPreloadOptIn", false)
         player = ExoPlayer.Builder(this, com.alyoushw.watchhub.data.playerRenderers(this))
             .setBandwidthMeter(bandwidth)
@@ -330,7 +340,8 @@ class PlayerActivity : ComponentActivity() {
             val key = entry?.key
             resolveJob = lifecycleScope.launch {
                 try {
-                    val resolved = container.watchSources.resolve(sourceRef, container.playbackEngines) { progress ->
+                    val repository = if (sourceRef.providerId == "moviz-time") container.movizTimeSources else container.watchSources
+                    val resolved = repository.resolve(sourceRef, container.playbackEngines) { progress ->
                         runOnUiThread { if (entry?.key == key) session.sourceProgress = progress }
                     }
                     activeSourceUri?.takeIf { it != resolved.uri }?.let(container.playbackEngines::release)
@@ -352,7 +363,8 @@ class PlayerActivity : ComponentActivity() {
                         com.alyoushw.watchhub.data.SourceTransport.MKV -> androidx.media3.common.MimeTypes.VIDEO_MATROSKA
                         else -> null
                     }
-                    queue = queue.toMutableList().also { it[position] = it[position].copy(urls = listOf(resolved.uri), subtitles = subtitles, mimeType = mime) }
+                    queue = queue.toMutableList().also { it[position] = it[position].copy(urls = listOf(resolved.uri), subtitles = subtitles,
+                        mimeType = mime, httpHeaders = resolved.variant.httpHeaders) }
                     session.sourceQualities = resolved.source.variants.map { it.id to it.label }
                     session.sourceQuality = resolved.variant.id
                     urlIndex = 0
@@ -436,6 +448,10 @@ class PlayerActivity : ComponentActivity() {
     private fun setResolvedMedia(startAt: Long) {
         val urls = current?.urls ?: return
         if (urls.isEmpty()) return
+        val uri = urls[urlIndex.coerceIn(0, urls.lastIndex)]
+        sourceHttpHeaders = current?.httpHeaders?.takeIf { it.isNotEmpty() }?.let { headers ->
+            android.net.Uri.parse(uri).host?.let { host -> host to headers }
+        }
         val item = MediaItem.Builder()
             .setUri(urls[urlIndex.coerceIn(0, urls.lastIndex)])
             .setMimeType(current?.mimeType)

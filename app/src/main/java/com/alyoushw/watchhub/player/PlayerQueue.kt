@@ -25,6 +25,8 @@ data class QueueItem(
     val channel: XtreamItem? = null,
     val subtitles: List<com.alyoushw.watchhub.data.SourceSubtitle> = emptyList(),
     val mimeType: String? = null,
+    /** Ephemeral provider session headers; never persisted in viewing history. */
+    val httpHeaders: Map<String, String> = emptyMap(),
 )
 
 /**

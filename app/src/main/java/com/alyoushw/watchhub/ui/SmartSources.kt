@@ -35,6 +35,7 @@ import kotlinx.serialization.json.Json
 @Serializable data class SourceLookup(
     val query: SourceQuery, val title: String, val overview: String = "", val overviewIsEnglish: Boolean = false,
     val poster: String? = null, val backdrop: String? = null, val seasons: List<SourceSeason> = emptyList(),
+    val providerId: String? = null,
 )
 private val sourceNavigationJson = Json { ignoreUnknownKeys = true }
 fun SourceLookup.route(): String = "watch-sources/" + Uri.encode(sourceNavigationJson.encodeToString(SourceLookup.serializer(), this))
@@ -42,19 +43,19 @@ fun decodeSourceLookup(value: String): SourceLookup = sourceNavigationJson.decod
 fun DetailInfo.sourceLookup(): SourceLookup {
     val season = seasonDetails.firstOrNull { it.number > 0 }?.number ?: seasonDetails.firstOrNull()?.number ?: 1
     return SourceLookup(SourceQuery(type, id, originalTitle.ifBlank { searchTitle }, year?.toIntOrNull() ?: 0,
-        season.takeIf { type == MediaType.TV }, 1.takeIf { type == MediaType.TV }, imdbId), title, overview, overviewIsEnglish,
+        season.takeIf { type == MediaType.TV }, 1.takeIf { type == MediaType.TV }, imdbId, searchTitle), title, overview, overviewIsEnglish,
         posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }, backdropPath?.let { "https://image.tmdb.org/t/p/w1280$it" },
         seasonDetails.map { SourceSeason(it.number, it.episodes) })
 }
 
 @Composable
-fun SourceWatchButton(lookup: SourceLookup, onOpen: (SourceLookup) -> Unit, modifier: Modifier = Modifier) {
+fun SourceWatchButton(lookup: SourceLookup, onOpen: (SourceLookup) -> Unit, modifier: Modifier = Modifier, label: String = "تشغيل تورنت") {
     Button(onClick = { onOpen(lookup) },
         colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Color(0xFF1C1206)),
         modifier = modifier.height(44.dp).focusFrame()) {
         Icon(Icons.Filled.PlayArrow, contentDescription = null)
         Spacer(Modifier.width(6.dp))
-        Text("تشغيل تورنت", fontWeight = FontWeight.Bold)
+        Text(label, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -68,7 +69,8 @@ fun SourceWatchScreen(
 ) {
     val container = appContainer()
     val context = LocalContext.current
-    val repository = sources ?: container.watchSources
+    val moviz = lookup.providerId == "moviz-time"
+    val repository = sources ?: if (moviz) container.movizTimeSources else container.watchSources
     val catalogue by container.settings.sourceCatalogue.collectAsStateWithLifecycle()
     val indexed by container.settings.torrentIndexEnabled.collectAsStateWithLifecycle()
     val history by container.history.entries.collectAsStateWithLifecycle()
@@ -102,8 +104,9 @@ fun SourceWatchScreen(
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         if (lookup.overview.isNotBlank()) TranslatedText(lookup.overview, isEnglish = lookup.overviewIsEnglish,
                             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(if (series) "الموسم $season · تورنت" else "فيلم · تورنت", color = Gold, style = MaterialTheme.typography.labelMedium)
-                        Text("يبدأ التشغيل بعد تجهيز الأجزاء الأولى ويستمر التنزيل أثناء المشاهدة. سرعة البداية تعتمد على الأقران والاتصال.",
+                        Text((if (series) "الموسم $season" else "فيلم") + if (moviz) " · Moviz Time" else " · تورنت", color = Gold, style = MaterialTheme.typography.labelMedium)
+                        Text(if (moviz) "اختر الفيلم أو الحلقة لعرض سيرفرات Moviz Time المتوافقة. تُجلب روابط التشغيل من الموقع عند كل مشاهدة."
+                            else "يبدأ التشغيل بعد تجهيز الأجزاء الأولى ويستمر التنزيل أثناء المشاهدة. سرعة البداية تعتمد على الأقران والاتصال.",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
