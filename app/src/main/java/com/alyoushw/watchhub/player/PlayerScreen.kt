@@ -1275,10 +1275,15 @@ private fun QualityPanel(
                 }
                 if (sourceQualities.size > 1) {
                     item { SectionLabel("جودات المصدر") }
-                    items(sourceQualities) { (id, label) -> MenuRow(label, selected = id == sourceQuality) { onSourceQuality(id) } }
+                    items(sourceQualities.size) { index ->
+                        val (id, label) = sourceQualities[index]
+                        MenuRow(label, selected = id == sourceQuality,
+                            modifier = if (index == 0) Modifier.focusRequester(firstFocus) else Modifier) { onSourceQuality(id) }
+                    }
                 }
                 if (options.size > 1) {
-                    item { MenuRow("تلقائي (حسب سرعة النت)", selected = auto, modifier = Modifier.focusRequester(firstFocus), onClick = onAuto) }
+                    item { MenuRow("تلقائي (حسب سرعة النت)", selected = auto,
+                        modifier = if (sourceQualities.size <= 1) Modifier.focusRequester(firstFocus) else Modifier, onClick = onAuto) }
                     items(options.size) { n ->
                         val (g, i, f) = options[n]
                         MenuRow(label(f), selected = !auto && g.isTrackSelected(i)) { onPick(g, i, "${minOf(f.height, f.width.takeIf { w -> w > 0 } ?: f.height)}p") }

@@ -113,8 +113,8 @@ class WatchSourceSmokeTest {
                                 device.pressDPadUp()
                                 compose.waitForIdle()
                                 compose.onNodeWithContentDescription("الجودة").performClick()
-                                awaitCaptured("source-quality", 5000) { compose.onAllNodesWithTag("quality-options").fetchSemanticsNodes().isNotEmpty() }
-                                compose.onNodeWithTag("quality-options").performScrollToNode(hasText("HLS"))
+                                awaitCaptured("source-quality", 5000) { compose.onAllNodesWithTag("quality-options", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+                                compose.onNodeWithTag("quality-options", useUnmergedTree = true).performScrollToNode(hasText("HLS"))
                                 compose.onNodeWithText("HLS").performClick()
                                 val switched = SystemClock.elapsedRealtime() + 15_000
                                 while (SystemClock.elapsedRealtime() < switched && container.history.get(key)?.sourceRef?.variantId != "hls") SystemClock.sleep(100)
