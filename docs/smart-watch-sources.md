@@ -18,8 +18,9 @@ series year and coordinates when the index has no IMDb data. Combined episodes,
 season packs and reported zero-seeder results are excluded. This conservative
 matching can omit releases whose names lack required identity information.
 
-Selecting a result re-fetches that index entry and verifies its ID, info hash and
-content identity. Its Magnet goes to the existing separate preparation engine;
+Selecting a result repeats the index query and finds that exact entry again by
+ID and info hash, then checks content identity. The client honours HTTP 429
+Retry-After cooldowns instead of retrying automatically. Its Magnet goes to the existing separate preparation engine;
 it is not sent to the player as a direct video URL. Reported peers are historical
 index metadata and cannot guarantee a reachable swarm or successful preparation.
 Index listings are shown as source pages, not licensing declarations. The app does
@@ -102,7 +103,7 @@ The Android smoke test verifies actual Arabic caption rendering, timing and seek
 ## Verification
 
 Local checks: `testDebugUnitTest lintDebug compileDebugAndroidTestKotlin` with
-`WATCHHUB_PREVIEW=true` (26 JVM tests). GitHub Actions additionally runs Android 11
+`WATCHHUB_PREVIEW=true` (27 JVM tests). GitHub Actions additionally runs Android 11
 smoke tests for the existing player, Animeify, TV gestures, opt-in preload, direct
 MP4/HLS/MKV playback, torrent/Magnet preparation and on-device Arabic subtitle
 translation. A private APK is created only after those checks pass.

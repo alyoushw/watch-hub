@@ -81,6 +81,8 @@ class WatchSourceSmokeTest {
                 }
             }
             val previous = container.settings.sourceCatalogue.value
+            val previousIndex = container.settings.torrentIndexEnabled.value
+            container.settings.setTorrentIndexEnabled(false)
             container.settings.setSourceCatalogue(server.url("/catalogue").toString())
             try {
                 val found = container.watchSources.search(query).sources.single()
@@ -126,6 +128,7 @@ class WatchSourceSmokeTest {
                 }
             } finally {
                 container.settings.setSourceCatalogue(previous)
+                container.settings.setTorrentIndexEnabled(previousIndex)
                 PlayerQueue.items = emptyList()
             }
         }

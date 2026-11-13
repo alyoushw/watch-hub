@@ -22,8 +22,24 @@ interface TorrentIndex {
 /** Search index metadata; availability/rights are not established by an index entry. */
 class TpbTorrentIndex(
     private val endpoint: String = "https://apibay.org/",
-    private val http: OkHttpClient = SourceHttp.client,
+    http: OkHttpClient = SourceHttp.client,
 ) : TorrentIndex {
+    @Volatile private var retryAt = 0L
+    private val http = http.newBuilder().addInterceptor { chain ->
+        if (System.currentTimeMillis() < retryAt) throw java.io.IOException("الفهرس يحد الطلبات مؤقتاً؛ أعد المحاولة لاحقاً")
+        val response = chain.proceed(chain.request())
+        if (response.code == 429) {
+            val header = response.header("Retry-After")
+            val seconds = header?.toLongOrNull() ?: runCatching {
+                (java.time.ZonedDateTime.parse(header, java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME)
+                    .toInstant().toEpochMilli() - System.currentTimeMillis()) / 1000
+            }.getOrDefault(60)
+            retryAt = System.currentTimeMillis() + seconds.coerceIn(1, 86400) * 1000
+            response.close()
+            throw java.io.IOException("الفهرس يحد الطلبات مؤقتاً؛ أعد المحاولة لاحقاً")
+        }
+        response
+    }.build()
     override suspend fun search(query: SourceQuery): List<TorrentIndexRecord> = withContext(Dispatchers.IO) {
         if (!query.valid) return@withContext emptyList()
         val suffix = if (query.type == MediaType.TV) "S${query.season.toString().padStart(2, '0')}E${query.episode.toString().padStart(2, '0')}" else query.year.toString()
@@ -32,16 +48,12 @@ class TpbTorrentIndex(
         parse(SourceHttp.read(http, url.toString(), 2 * 1024 * 1024), query)
     }
 
-    override suspend fun find(query: SourceQuery, id: String, hash: String): TorrentIndexRecord? = withContext(Dispatchers.IO) {
-        if (!query.valid || !Regex("[1-9][0-9]*").matches(id)) return@withContext null
-        val url = endpoint.toHttpUrl().newBuilder().addPathSegment("t.php").addQueryParameter("id", id).build()
-        parse(SourceHttp.read(http, url.toString(), 2 * 1024 * 1024), query).firstOrNull { it.id == id && it.hash == hash }
-    }
 
     companion object {
         fun parse(payload: String, query: SourceQuery): List<TorrentIndexRecord> {
             if (!query.valid) return emptyList()
-            val array = Json.parseToJsonElement(payload) as? JsonArray ?: throw SourceException("فهرس التورنت أعاد بيانات غير صالحة")
+            val array = try { Json.parseToJsonElement(payload) as? JsonArray }
+                catch (_: Exception) { null } ?: throw SourceException("فهرس التورنت أعاد بيانات غير صالحة")
             val expectedImdb = query.imdbId?.removePrefix("tt")?.takeIf { it.isNotBlank() }
             val title = SourceQuery.titleKey(query.originalTitle)
             return array.mapNotNull { value ->
@@ -62,7 +74,7 @@ class TpbTorrentIndex(
                     // A subtitle or episode of a similarly named series is not the requested film.
                     if (Regex("(?i)(?:s[0-9]+e[0-9]+|[0-9]+x[0-9]+)").containsMatchIn(name)) return@mapNotNull null
                     val year = Regex("(?<![0-9])(?:18|19|20|21)[0-9]{2}(?![0-9])").find(suffix)?.value?.toIntOrNull()
-                    if (year != query.year) return@mapNotNull null
+                    if (year != query.year || suffix.substringBefore(' ') != query.year.toString()) return@mapNotNull null
                 } else {
                     val markers = Regex("(?i)(?:s([0-9]{1,3})e([0-9]{1,4})(?![0-9])|(?<![0-9])([0-9]{1,3})x([0-9]{1,4})(?![0-9]))").findAll(name).toList()
                     if (markers.size != 1) return@mapNotNull null
@@ -71,8 +83,9 @@ class TpbTorrentIndex(
                     val episode = (marker.groupValues[2].ifEmpty { marker.groupValues[4] }).toIntOrNull()
                     if (season != query.season || episode != query.episode) return@mapNotNull null
                     // Reject combined episodes; the player has no per-episode boundary information.
-                    if (Regex("(?i)^(?:[-_. ]?e[0-9]|[-_][0-9])").containsMatchIn(name.substring(marker.range.last + 1))) return@mapNotNull null
+                    if (Regex("(?i)^(?:[-_. ]?e[0-9]|[-_][0-9]{1,3}(?![0-9pP]))").containsMatchIn(name.substring(marker.range.last + 1))) return@mapNotNull null
                     if (expectedImdb == null || imdb == null) {
+                        if (!Regex("(?i)^(?:${query.year}(?: |$)|s[0-9]+e[0-9]+(?: |$)|[0-9]+x[0-9]+(?: |$))").containsMatchIn(suffix)) return@mapNotNull null
                         val year = Regex("(?<![0-9])(?:18|19|20|21)[0-9]{2}(?![0-9])").find(suffix)?.value?.toIntOrNull()
                         if (year != query.year) return@mapNotNull null
                     }
@@ -91,7 +104,7 @@ class TpbSourceProvider(private val index: TorrentIndex = TpbTorrentIndex()) : W
     override suspend fun search(query: SourceQuery): List<WatchSource> = index.search(query).take(20).mapNotNull { source(it, query) }
     override suspend fun find(query: SourceQuery, id: String): WatchSource? {
         val parts = id.split(':')
-        if (parts.size != 2) return null
+        if (parts.size != 2 || !Regex("[1-9][0-9]*").matches(parts[0])) return null
         return index.find(query, parts[0], parts[1])?.let { source(it, query) }
     }
 

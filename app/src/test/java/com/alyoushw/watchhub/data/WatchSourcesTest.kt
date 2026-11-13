@@ -125,7 +125,9 @@ class WatchSourcesTest {
             assertTrue(prepared)
             assertEquals("file:///owned-fixture.mp4", resolved.uri)
             assertTrue(resolved.source.attribution.contains("8"))
-            assertEquals("123", server.takeRequest().requestUrl?.queryParameter("id"))
+            val refreshed = server.takeRequest()
+            assertEquals("/q.php", refreshed.requestUrl?.encodedPath)
+            assertEquals("Sintel 2010", refreshed.requestUrl?.queryParameter("q"))
         }
     }
 
@@ -134,6 +136,7 @@ class WatchSourcesTest {
         fun row(name: String, imdb: String = "tt1727587", peers: Int = 5, category: Int = 207) =
             """{"id":"123","info_hash":"$hash","name":"$name","imdb":"$imdb","seeders":"$peers","category":"$category"}"""
         assertTrue(TpbTorrentIndex.parse("[" + row("Sintel.2011.1080p") + "]", movie).isEmpty())
+        assertTrue(TpbTorrentIndex.parse("[" + row("Sintel.The.Sequel.2010.1080p", imdb = "") + "]", movie).isEmpty())
         assertTrue(TpbTorrentIndex.parse("[" + row("Sintel.2010", "tt9999999") + "]", movie).isEmpty())
         assertTrue(TpbTorrentIndex.parse("[" + row("Sintel.2010", peers = 0) + "]", movie).isEmpty())
         assertTrue(TpbTorrentIndex.parse("[" + row("Sintel.2010", category = 101) + "]", movie).isEmpty())
@@ -143,6 +146,8 @@ class WatchSourcesTest {
         assertEquals(1, TpbTorrentIndex.parse("[" + row("Sintel.2010.720p", imdb = "") + "]", movie.copy(imdbId = null)).size)
         fun tv(name: String, imdb: String = "tt1234567") = TpbTorrentIndex.parse("[" + row(name, imdb, category = 208) + "]", episode)
         assertEquals(1, tv("Fixture.Series.S02E03.1080p").size)
+        assertEquals(1, tv("Fixture.Series.S02E03-1080p").size)
+        assertTrue(tv("Fixture.Series.S02E03-04.1080p").isEmpty())
         assertTrue(tv("Fixture.Series.S02E04.1080p").isEmpty())
         assertTrue(tv("Fixture.Series.S02E03E04.1080p").isEmpty())
         assertTrue(tv("Fixture.Series.S02E03-S02E04.1080p").isEmpty())
@@ -150,6 +155,17 @@ class WatchSourcesTest {
         assertEquals(1, tv("Fixture.Series.2020.2x03.1080p", imdb = "").size)
         assertEquals(1, TpbTorrentIndex.parse("[" + row("1917.2019.1080p", imdb = "") + "]",
             SourceQuery(MediaType.MOVIE, 530915, "1917", 2019)).size)
+    }
+
+    @Test fun indexHonorsRetryAfterInsteadOfRepeatedlyHittingARateLimitedService() = runBlocking<Unit> {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(429).addHeader("Retry-After", "300"))
+            val index = TpbTorrentIndex(server.url("/").toString())
+            repeat(2) {
+                assertThrows(java.io.IOException::class.java) { runBlocking { index.search(movie) } }
+            }
+            assertEquals(1, server.requestCount)
+        }
     }
 
     @Test fun indexLookupCannotSilentlyChangeTheSelectedTorrentHash() = runBlocking<Unit> {
