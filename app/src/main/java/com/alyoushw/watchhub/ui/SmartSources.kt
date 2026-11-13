@@ -185,7 +185,7 @@ fun SourceSettingsSection() {
     var url by remember(saved) { mutableStateOf(saved) }
     var message by remember { mutableStateOf<String?>(null) }
     SectionTitle("مصادر المشاهدة")
-    Text("ابحث عن العمل ثم افتح «تشغيل تورنت» للمواسم والحلقات واختيار المصدر. الكتالوج الإضافي اختياري.", style = MaterialTheme.typography.bodySmall)
+    Text("ابحث عن العمل ثم افتح «تشغيل تورنت» للمواسم والحلقات واختيار المصدر. البحث في Internet Archive للأفلام تلقائي؛ الكتالوج الإضافي اختياري.", style = MaterialTheme.typography.bodySmall)
     FilterChip(selected = indexed, onClick = { settings.setTorrentIndexEnabled(!indexed) },
         label = { Text("البحث التلقائي في The Pirate Bay") }, modifier = Modifier.focusFrame())
     OutlinedTextField(url, { url = it; message = null }, label = { Text("كتالوج إضافي اختياري") }, singleLine = true,

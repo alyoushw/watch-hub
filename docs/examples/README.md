@@ -1,5 +1,15 @@
 # Playable films and complete television seasons
 
+The private app now also discovers films automatically from Internet Archive;
+this optional JSON is no longer the only direct-file source. The provider checks
+exact title/year, a declared Creative Commons/public-domain URL, contradictory
+IMDb identifiers when present, and actual MP4 responses through the existing
+source probe. It resolves canonical archive URLs again on playback. Archive
+licence fields are uploader declarations, not an independent rights audit.
+Automatic discovery currently covers films, including shorts, with at least
+five minutes of video. Series still use the catalogue or the existing torrent
+provider; no claim is made that every TMDB title or Arabic subtitle is available.
+
 Paste this URL into Watch Hub's optional source catalogue setting and save:
 
 https://raw.githubusercontent.com/alyoushw/watch-hub/refs/heads/feat/smart-watch-sources/docs/examples/open-catalogue.json
