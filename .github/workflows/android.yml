@@ -44,8 +44,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           cache-read-only: false
-        with:
-          cache-read-only: ${{ github.event_name == 'pull_request' }}
 
       - name: Verify reusable app test results
         id: prior_checks
