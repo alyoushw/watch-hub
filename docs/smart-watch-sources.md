@@ -7,7 +7,7 @@ not be promoted through the original application's update channel.
 ## Automatic index search
 
 The Pirate Bay search is enabled by default in this private preview and requires
-no catalogue. Opening a detail page searches its video index via `apibay.org` with
+no catalogue. Opening the «تشغيل تورنت» page searches its video index via `apibay.org` with
 the original title plus release year, or exact season/episode. It shows up to 20
 matching results, ordered by reported seeders, with full release names and sizes.
 The setting can disable index search. Existing saved choices are retained.
@@ -77,12 +77,25 @@ background daily update service. Existing Animeify resolution remains separate.
 
 ## Torrent preparation
 
-Torrent/Magnet values are never passed to ExoPlayer as video URLs. A separate engine
-fetches metadata, selects the exact episode, downloads and verifies the chosen file,
-then opens the local MP4/MKV in the existing player. This first implementation waits
-for the complete selected file; it is not sequential streaming. Preparation can be
-cancelled by leaving the player and is limited to 30 minutes. Pure v2-only torrents
-are not supported. Downloaded files currently remain in the app-private `source-torrents` directory until app data is cleared.
+Torrent/Magnet values are never passed to ExoPlayer as video URLs. The separate
+engine fetches metadata, selects the exact episode and retains a live libtorrent
+session. A token-protected loopback HTTP endpoint supports GET/HEAD and byte ranges.
+It waits for each requested piece to be verified before reading any of its bytes;
+sparse file size alone is never treated as readiness. Sequential download and
+piece deadlines prioritize the player's current range, including seeks and MP4
+metadata near the file end. The existing Media3 player starts after its normal
+initial buffer rather than waiting for the complete file.
+
+Leaving the player or switching source closes the bridge/connections and stops
+the associated torrent session. Startup still depends on reachable metadata and
+peers; this is not a promise of zero-delay playback. Pure v2-only torrents are not
+supported. Cached pieces remain in app-private storage; there is no background
+playback/download service in this preview.
+
+The detail page now has a gold «تشغيل تورنت» action matching Animeify. It opens a
+separate poster/story/seasons/episode-card page; selecting an episode opens a
+scrollable source/quality dialog. The user explicitly chooses a source before
+playback. Existing Animeify screens and downloads are retained.
 
 Tests generate an original synthetic video and torrent with a local web seed;
 index search and selected-result resolution are also tested without a catalogue.
@@ -103,7 +116,8 @@ The Android smoke test verifies actual Arabic caption rendering, timing and seek
 ## Verification
 
 Local checks: `testDebugUnitTest lintDebug compileDebugAndroidTestKotlin` with
-`WATCHHUB_PREVIEW=true` (27 JVM tests). GitHub Actions additionally runs Android 11
+`WATCHHUB_PREVIEW=true` (30 JVM tests). GitHub Actions additionally runs Android 11
 smoke tests for the existing player, Animeify, TV gestures, opt-in preload, direct
-MP4/HLS/MKV playback, torrent/Magnet preparation and on-device Arabic subtitle
-translation. A private APK is created only after those checks pass.
+MP4/HLS/MKV playback, real torrent/Magnet streaming, playback and seeking before
+full torrent completion, the source-page/quality-dialog flow and on-device Arabic
+subtitle translation. A private APK is created only after those checks pass.

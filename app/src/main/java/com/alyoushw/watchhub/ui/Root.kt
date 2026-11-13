@@ -179,6 +179,11 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
             ) { entry ->
                 XtreamSeriesScreen(seriesId = entry.arguments?.getString("id").orEmpty(), onBack = { nav.popBackStack() })
             }
+            composable("watch-sources/{lookup}", arguments = listOf(navArgument("lookup") { type = NavType.StringType })) { entry ->
+                val lookup = runCatching { decodeSourceLookup(entry.arguments?.getString("lookup").orEmpty()) }.getOrNull()
+                if (lookup != null) SourceWatchScreen(lookup, onBack = { nav.popBackStack() })
+                else MessageBox("تعذّر فتح مصادر المشاهدة", actionLabel = "رجوع", onAction = { nav.popBackStack() })
+            }
             composable(
                 route = "animeify/{lookup}",
                 arguments = listOf(navArgument("lookup") { type = NavType.StringType }),
@@ -205,6 +210,7 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
                     )
                 } else {
                     DetailScreen(
+                        onOpenSources = { lookup -> nav.navigate(lookup.route()) },
                         type = type,
                         id = id,
                         onBack = { nav.popBackStack() },

@@ -58,6 +58,8 @@ class PlayerActivity : ComponentActivity() {
     private var position = 0
     private var urlIndex = 0
     private var resolveJob: Job? = null
+    private var activeSourceUri: String? = null
+    private var stoppedSourcePosition: Long? = null
     private val loadControl = FlexibleLoadControl()
     private val bandwidth by lazy { androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.Builder(this).build() }
 
@@ -173,6 +175,7 @@ class PlayerActivity : ComponentActivity() {
             .build()
         player.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
+                if (session.preparingSource || stoppedSourcePosition != null || isFinishing) return
                 val urls = current?.urls.orEmpty()
                 val at = if (entry?.isLive == true) 0L else player.currentPosition
                 // A dropped connection (network change, a busy server) often comes back: try the
@@ -267,6 +270,8 @@ class PlayerActivity : ComponentActivity() {
     private fun playAt(i: Int) {
         if (i !in queue.indices) return
         resolveJob?.cancel()
+        activeSourceUri?.let(container.playbackEngines::release)
+        activeSourceUri = null
         retries = 0
         // A new item starts with normal loading ahead and no slow-connection notice.
         preloadJob?.cancel()
@@ -328,6 +333,8 @@ class PlayerActivity : ComponentActivity() {
                     val resolved = container.watchSources.resolve(sourceRef, container.playbackEngines) { progress ->
                         runOnUiThread { if (entry?.key == key) session.sourceProgress = progress }
                     }
+                    activeSourceUri?.takeIf { it != resolved.uri }?.let(container.playbackEngines::release)
+                    activeSourceUri = resolved.uri
                     val subtitles = coroutineScope {
                         resolved.source.subtitles.take(8).map { subtitle -> async {
                             try { com.alyoushw.watchhub.data.SubtitleFiles.fetch(this@PlayerActivity, subtitle.url, subtitle.language, subtitle.label).copy(id = subtitle.id) }
@@ -335,7 +342,10 @@ class PlayerActivity : ComponentActivity() {
                             catch (_: Exception) { null }
                         } }.awaitAll().filterNotNull()
                     }
-                    if (entry?.key != key || entry?.sourceRef != sourceRef) return@launch
+                    if (entry?.key != key || entry?.sourceRef != sourceRef) {
+                        container.playbackEngines.release(resolved.uri)
+                        return@launch
+                    }
                     val mime = when (resolved.variant.transport) {
                         com.alyoushw.watchhub.data.SourceTransport.HLS -> androidx.media3.common.MimeTypes.APPLICATION_M3U8
                         com.alyoushw.watchhub.data.SourceTransport.MP4 -> androidx.media3.common.MimeTypes.VIDEO_MP4
@@ -676,6 +686,7 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        stoppedSourcePosition?.let { position -> stoppedSourcePosition = null; setMedia(position) }
         if (::player.isInitialized) {
             player.playWhenReady = true
             handler.postDelayed(saver, 5_000)
@@ -688,11 +699,19 @@ class PlayerActivity : ComponentActivity() {
         if (::player.isInitialized) {
             saveProgress(important = true)
             player.pause()
+            if (entry?.sourceRef != null) {
+                stoppedSourcePosition = player.currentPosition
+                resolveJob?.cancel()
+                activeSourceUri?.let(container.playbackEngines::release)
+                activeSourceUri = null
+            }
         }
     }
 
     override fun onDestroy() {
+        resolveJob?.cancel()
         if (::player.isInitialized) player.release()
+        activeSourceUri?.let(container.playbackEngines::release)
         super.onDestroy()
     }
 

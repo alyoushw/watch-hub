@@ -20,6 +20,7 @@ import kotlin.coroutines.coroutineContext
 
 interface PlaybackEngine {
     fun supports(transport: SourceTransport): Boolean
+    fun release(uri: String) {}
     suspend fun prepare(variant: SourceVariant, query: SourceQuery, progress: (Float) -> Unit): String
 }
 
@@ -32,6 +33,7 @@ class DirectPlaybackEngine(private val probe: SourceProbe = StreamProbe()) : Pla
 }
 
 class PlaybackEngines(private val engines: List<PlaybackEngine>) {
+    fun release(uri: String) { engines.forEach { it.release(uri) } }
     suspend fun prepare(variant: SourceVariant, query: SourceQuery, progress: (Float) -> Unit = {}): String =
         (engines.firstOrNull { it.supports(variant.transport) } ?: throw SourceException("لا يوجد محرك يدعم هذا المصدر"))
             .prepare(variant, query, progress)
@@ -41,13 +43,33 @@ class PlaybackEngines(private val engines: List<PlaybackEngine>) {
 class TorrentPlaybackEngine(context: Context) : PlaybackEngine {
     private val root = File(context.filesDir, "source-torrents")
     private val lock = Mutex()
+    private data class Active(val session: SessionManager, val server: TorrentStreamServer, val handle: org.libtorrent4j.TorrentHandle, val selected: Int, val size: Long) {
+        fun close() { server.close(); runCatching { session.stop() } }
+    }
+    @Volatile private var active: Active? = null
+    private val cleanup = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "torrent-cleanup").apply { isDaemon = true } }
+    @Volatile private var pendingCleanup: java.util.concurrent.Future<*>? = null
+    internal suspend fun awaitReleased() = withContext(Dispatchers.IO) { pendingCleanup?.get(15, java.util.concurrent.TimeUnit.SECONDS); Unit }
+    override fun release(uri: String) {
+        val current = synchronized(this) { active?.takeIf { it.server.uri == uri }?.also { active = null } } ?: return
+        current.server.close()
+        pendingCleanup = cleanup.submit { current.close() }
+    }
+    internal fun downloadedBytes(uri: String): Long? = active?.takeIf { it.server.uri == uri }?.let {
+        it.handle.fileProgress().getOrElse(it.selected) { 0L }
+    }
     override fun supports(transport: SourceTransport) = transport in setOf(SourceTransport.TORRENT, SourceTransport.MAGNET)
 
     override suspend fun prepare(variant: SourceVariant, query: SourceQuery, progress: (Float) -> Unit): String = lock.withLock {
-        withContext(Dispatchers.IO) {
+        var offeredUri: String? = null
+        try { withContext(Dispatchers.IO) {
+            awaitReleased()
             if (!supports(variant.transport)) throw SourceException("مصدر تورنت غير صالح")
+            synchronized(this@TorrentPlaybackEngine) { active.also { active = null } }?.close()
             root.mkdirs()
             val session = try { SessionManager() } catch (_: LinkageError) { throw SourceException("محرك التورنت غير متاح على هذا الجهاز") }
+            var handedOff = false
+            var bridge: TorrentStreamServer? = null
             try {
                 session.start()
                 val bytes = if (variant.transport == SourceTransport.MAGNET) {
@@ -86,28 +108,38 @@ class TorrentPlaybackEngine(context: Context) : PlaybackEngine {
                     found
                 }
                 handle.prioritizeFiles(Array(storage.numFiles()) { if (it == selected) Priority.DEFAULT else Priority.IGNORE })
-                withTimeout(30 * 60_000L) {
-                    val wanted = storage.fileSize(selected)
-                    while (true) {
-                        coroutineContext.ensureActive()
-                        val status = handle.status()
-                        if (status.errorCode().isError) throw SourceException("تعذّر تجهيز ملف التورنت")
-                        val ready = handle.fileProgress().getOrElse(selected) { 0L }
-                        progress(if (wanted > 0) (ready.toFloat() / wanted).coerceIn(0f, 1f) else 0f)
-                        if (wanted > 0 && ready >= wanted && status.isFinished) break
-                        delay(300)
-                    }
-                }
-                // Close disk handles before handing the completed, piece-verified file to the player.
-                handle.pause()
-                val file = File(directory, paths[selected])
-                if (!file.isFile || file.length() != storage.fileSize(selected)) throw SourceException("ملف التورنت لم يكتمل")
-                file.toURI().toString()
+                handle.setFlags(org.libtorrent4j.TorrentFlags.SEQUENTIAL_DOWNLOAD)
+                val offset = storage.fileOffset(selected)
+                val size = storage.fileSize(selected)
+                if (size <= 0) throw SourceException("ملف الفيديو فارغ")
+                val scheduler = Any()
+                bridge = TorrentStreamServer(File(directory, paths[selected]), size, offset, info.pieceLength(),
+                    verified = { handle.isValid && handle.havePiece(it) },
+                    prioritize = { first, last -> synchronized(scheduler) {
+                        if (handle.isValid) {
+                            handle.clearPieceDeadlines()
+                            val startPiece = ((offset + first) / info.pieceLength()).toInt()
+                            val endPiece = ((offset + last) / info.pieceLength()).toInt()
+                            for (piece in startPiece..endPiece) handle.setPieceDeadline(piece, (piece - startPiece) * 50)
+                        }
+                    } }, failure = { !handle.isValid || handle.status().errorCode().isError })
+                coroutineContext.ensureActive()
+                val ready = Active(session, bridge, handle, selected, size)
+                synchronized(this@TorrentPlaybackEngine) { active = ready }
+                handedOff = true
+                progress(0f)
+                ready.server.uri.also { offeredUri = it }
+
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (e: SourceException) { throw e }
             catch (_: LinkageError) { throw SourceException("محرك التورنت غير متاح على هذا الجهاز") }
             catch (_: Exception) { throw SourceException("فشل محرك التورنت؛ جرّب مصدراً آخر") }
-            finally { withContext(NonCancellable + Dispatchers.IO) { runCatching { session.stop() } } }
+            finally { if (!handedOff) withContext(NonCancellable + Dispatchers.IO) {
+                bridge?.close(); runCatching { session.stop() }
+            } }
+        } } catch (e: kotlinx.coroutines.CancellationException) {
+            offeredUri?.let(::release)
+            throw e
         }
     }
 

@@ -160,10 +160,12 @@ class WatchSourceSmokeTest {
                     File(context.filesDir, "source-torrents/$hash").deleteRecursively()
                     val before = requests.get()
                     val uri = withTimeout(90_000) { engine.prepare(variant, query) {} }
-                    assertTrue(uri.startsWith("file:"))
+                    assertTrue(uri.startsWith("http://127.0.0.1:"))
                     assertFalse(uri.startsWith("magnet:"))
-                    val file = File(java.net.URI(uri))
-                    assertArrayEquals(MessageDigest.getInstance("SHA-256").digest(bytes), MessageDigest.getInstance("SHA-256").digest(file.readBytes()))
+                    val downloaded = SourceHttp.bytes(SourceHttp.client, uri, bytes.size)
+                    assertArrayEquals(MessageDigest.getInstance("SHA-256").digest(bytes), MessageDigest.getInstance("SHA-256").digest(downloaded))
+                    engine.release(uri)
+                    engine.awaitReleased()
                     assertTrue("The torrent engine must download and verify real fixture bytes", requests.get() > before)
                 }
                 // The index requires no catalogue. Local BEP-9 metadata keeps this test off public swarms.
@@ -183,11 +185,54 @@ class WatchSourceSmokeTest {
                 val resolved = withTimeout(90_000) {
                     repository.resolve(WatchSourceRef("tpb", result.id, query, "magnet"), PlaybackEngines(listOf(engine)))
                 }
-                val downloaded = File(java.net.URI(resolved.uri))
-                assertArrayEquals(MessageDigest.getInstance("SHA-256").digest(bytes), MessageDigest.getInstance("SHA-256").digest(downloaded.readBytes()))
+                val downloaded = SourceHttp.bytes(SourceHttp.client, resolved.uri, bytes.size)
+                assertArrayEquals(MessageDigest.getInstance("SHA-256").digest(bytes), MessageDigest.getInstance("SHA-256").digest(downloaded))
+                engine.release(resolved.uri)
+                engine.awaitReleased()
                 assertTrue(requests.get() > before)
             } finally {
                 seed.delete()
+                File(context.filesDir, "source-torrents/$hash").deleteRecursively()
+            }
+        }
+    }
+
+    @Test fun existingPlayerStartsAndSeeksWhileTorrentIsStillIncomplete() = runBlocking<Unit> {
+        MockWebServer().use { server ->
+            val padding = 8 * 1024 * 1024
+            val bytes = asset("player-smoke.mp4") + java.nio.ByteBuffer.allocate(8).putInt(padding + 8).put("free".toByteArray()).array() + ByteArray(padding).apply { java.util.Random(73).nextBytes(this) }
+            val seed = File(context.cacheDir, "owned-progressive.mp4").apply { writeBytes(bytes) }
+            val torrent = TorrentBuilder().path(seed).pieceSize(64 * 1024).addUrlSeed(server.url("/seed/").toString()).generate().entry().bencode()
+            val hash = TorrentInfo(torrent).infoHash().toHex()
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse =
+                    if (request.requestUrl?.encodedPath == "/fixture.torrent") MockResponse().setBody(Buffer().write(torrent))
+                    else response(bytes, request, "video/mp4").throttleBody(32 * 1024, 120, java.util.concurrent.TimeUnit.MILLISECONDS)
+            }
+            val engine = TorrentPlaybackEngine(context)
+            var uri: String? = null
+            val key = "test:torrent:progressive"
+            try {
+                File(context.filesDir, "source-torrents/$hash").deleteRecursively()
+                uri = withTimeout(30_000) { engine.prepare(SourceVariant("torrent", "MP4", server.url("/fixture.torrent").toString(), SourceTransport.TORRENT),
+                    SourceQuery(MediaType.MOVIE, 99999998, "Owned progressive", 2025)) {} }
+                assertTrue("Preparation must return before the complete torrent is downloaded", checkNotNull(engine.downloadedBytes(uri)) < bytes.size)
+                val entry = WatchEntry(key, WatchEntry.MOVIE, "fixture", "Progressive torrent fixture")
+                PlayerQueue.items = listOf(QueueItem(listOf(uri), entry)); PlayerQueue.index = 0
+                ActivityScenario.launch<PlayerActivity>(Intent(context, PlayerActivity::class.java)).use {
+                    val deadline = SystemClock.elapsedRealtime() + 25_000
+                    while (SystemClock.elapsedRealtime() < deadline && (container.history.get(key)?.positionMs ?: 0) < 500) SystemClock.sleep(100)
+                    assertTrue("The existing player must decode before download completion", (container.history.get(key)?.positionMs ?: 0) >= 500)
+                    val ready = checkNotNull(engine.downloadedBytes(uri))
+                    assertTrue("Playback must start with verified partial data", ready in 1 until bytes.size.toLong())
+                    compose.onNodeWithContentDescription("تقديم 10 ثواني").performClick()
+                    compose.waitUntil(5000) { (container.history.get(key)?.positionMs ?: 0) >= 9000 }
+                    UiDevice.getInstance(instrumentation).executeShellCommand("mkdir -p /sdcard/Download/watchhub-smoke")
+                    UiDevice.getInstance(instrumentation).executeShellCommand("screencap -p /sdcard/Download/watchhub-smoke/torrent-playing-before-complete.png")
+                }
+            } finally {
+                uri?.let(engine::release); engine.awaitReleased()
+                container.history.remove(key); PlayerQueue.items = emptyList(); seed.delete()
                 File(context.filesDir, "source-torrents/$hash").deleteRecursively()
             }
         }
