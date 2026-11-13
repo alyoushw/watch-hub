@@ -1,0 +1,196 @@
+[
+  {
+    "id": "sintel-2010",
+    "providerId": "open-examples",
+    "providerName": "كتالوج التجربة · Blender",
+    "query": {
+      "type": "MOVIE",
+      "tmdbId": 45745,
+      "originalTitle": "Sintel",
+      "year": 2010
+    },
+    "variants": [
+      {
+        "id": "1080p-mkv",
+        "label": "1080p · MKV",
+        "url": "https://download.blender.org/durian/movies/Sintel.2010.1080p.mkv",
+        "transport": "MKV"
+      }
+    ],
+    "subtitles": [],
+    "attribution": "Sintel © Blender Foundation · CC BY 3.0 · retain the complete film credits",
+    "licenceUrl": "https://durian.blender.org/sharing/"
+  },
+  {
+    "id": "big-buck-bunny-2008",
+    "providerId": "open-examples",
+    "providerName": "كتالوج التجربة · Blender",
+    "query": {
+      "type": "MOVIE",
+      "tmdbId": 10378,
+      "originalTitle": "Big Buck Bunny",
+      "year": 2008
+    },
+    "variants": [
+      {
+        "id": "hls",
+        "label": "HLS · جودة متكيّفة",
+        "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+        "transport": "HLS"
+      }
+    ],
+    "subtitles": [],
+    "attribution": "Big Buck Bunny © Blender Foundation · CC BY 3.0 · retain the complete film credits",
+    "licenceUrl": "https://peach.blender.org/about/"
+  },
+  {
+    "id": "pioneer-one-s01e01",
+    "providerId": "open-examples",
+    "providerName": "كتالوج التجربة · Pioneer One",
+    "query": {
+      "type": "TV",
+      "tmdbId": 33050,
+      "originalTitle": "Pioneer One",
+      "year": 2010,
+      "season": 1,
+      "episode": 1,
+      "imdbId": "tt1748166"
+    },
+    "variants": [
+      {
+        "id": "mp4",
+        "label": "S01 E01 · MP4",
+        "url": "https://archive.org/download/pioneer-one-ep.-1-earthfall-pilot/PIONEER%20ONE%20Ep.1%20Earthfall-Pilot.ia.mp4",
+        "transport": "MP4"
+      }
+    ],
+    "subtitles": [],
+    "attribution": "Pioneer One © Josh Bernhard & Bracey Smith · CC BY-NC-SA 3.0 · personal/non-commercial use; retain credits",
+    "licenceUrl": "https://creativecommons.org/licenses/by-nc-sa/3.0/"
+  },
+  {
+    "id": "pioneer-one-s01e02",
+    "providerId": "open-examples",
+    "providerName": "كتالوج التجربة · Pioneer One",
+    "query": {
+      "type": "TV",
+      "tmdbId": 33050,
+      "originalTitle": "Pioneer One",
+      "year": 2010,
+      "season": 1,
+      "episode": 2,
+      "imdbId": "tt1748166"
+    },
+    "variants": [
+      {
+        "id": "mp4",
+        "label": "S01 E02 · MP4",
+        "url": "https://archive.org/download/pioneer-one-ep.-2-the-man-from-mars_202608/PIONEER%20ONE%20Ep.2%20The%20Man%20From%20Mars.ia.mp4",
+        "transport": "MP4"
+      }
+    ],
+    "subtitles": [],
+    "attribution": "Pioneer One © Josh Bernhard & Bracey Smith · CC BY-NC-SA 3.0 · personal/non-commercial use; retain credits",
+    "licenceUrl": "https://creativecommons.org/licenses/by-nc-sa/3.0/"
+  },
+  {
+    "id": "pioneer-one-s01e03",
+    "providerId": "open-examples",
+    "providerName": "كتالوج التجربة · Pioneer One",
+    "query": {
+      "type": "TV",
+      "tmdbId": 33050,
+      "originalTitle": "Pioneer One",
+      "year": 2010,
+      "season": 1,
+      "episode": 3,
+      "imdbId": "tt1748166"
+    },
+    "variants": [
+      {
+        "id": "mp4",
+        "label": "S01 E03 · MP4",
+        "url": "https://archive.org/download/pioneer-one-ep.-3-alone-in-the-night/PIONEER%20ONE%20Ep.3%20Alone%20in%20the%20Night.ia.mp4",
+        "transport": "MP4"
+      }
+    ],
+    "subtitles": [],
+    "attribution": "Pioneer One © Josh Bernhard & Bracey Smith · CC BY-NC-SA 3.0 · personal/non-commercial use; retain credits",
+    "licenceUrl": "https://creativecommons.org/licenses/by-nc-sa/3.0/"
+  },
+  {
+    "id": "pioneer-one-s01e04",
+    "providerId": "open-examples",
+    "providerName": "كتالوج التجربة · Pioneer One",
+    "query": {
+      "type": "TV",
+      "tmdbId": 33050,
+      "originalTitle": "Pioneer One",
+      "year": 2010,
+      "season": 1,
+      "episode": 4,
+      "imdbId": "tt1748166"
+    },
+    "variants": [
+      {
+        "id": "mp4",
+        "label": "S01 E04 · MP4",
+        "url": "https://archive.org/download/pioneer-one-ep.-4-triangular-diploma/PIONEER%20ONE%20Ep.4%20Triangular%20Diploma.ia.mp4",
+        "transport": "MP4"
+      }
+    ],
+    "subtitles": [],
+    "attribution": "Pioneer One © Josh Bernhard & Bracey Smith · CC BY-NC-SA 3.0 · personal/non-commercial use; retain credits",
+    "licenceUrl": "https://creativecommons.org/licenses/by-nc-sa/3.0/"
+  },
+  {
+    "id": "pioneer-one-s01e05",
+    "providerId": "open-examples",
+    "providerName": "كتالوج التجربة · Pioneer One",
+    "query": {
+      "type": "TV",
+      "tmdbId": 33050,
+      "originalTitle": "Pioneer One",
+      "year": 2010,
+      "season": 1,
+      "episode": 5,
+      "imdbId": "tt1748166"
+    },
+    "variants": [
+      {
+        "id": "mp4",
+        "label": "S01 E05 · MP4",
+        "url": "https://archive.org/download/pioneer-one-ep.-5-sea-change/PIONEER%20ONE%20Ep.5%20Sea%20Change.mp4",
+        "transport": "MP4"
+      }
+    ],
+    "subtitles": [],
+    "attribution": "Pioneer One © Josh Bernhard & Bracey Smith · CC BY-NC-SA 3.0 · personal/non-commercial use; retain credits",
+    "licenceUrl": "https://creativecommons.org/licenses/by-nc-sa/3.0/"
+  },
+  {
+    "id": "pioneer-one-s01e06",
+    "providerId": "open-examples",
+    "providerName": "كتالوج التجربة · Pioneer One",
+    "query": {
+      "type": "TV",
+      "tmdbId": 33050,
+      "originalTitle": "Pioneer One",
+      "year": 2010,
+      "season": 1,
+      "episode": 6,
+      "imdbId": "tt1748166"
+    },
+    "variants": [
+      {
+        "id": "mp4",
+        "label": "S01 E06 · MP4",
+        "url": "https://archive.org/download/pioneer-one-ep.-6-war-of-the-world-3mp-4_202608/PIONEER%20ONE%20Ep.6%20War%20of%20the%20World3mp4.ia.mp4",
+        "transport": "MP4"
+      }
+    ],
+    "subtitles": [],
+    "attribution": "Pioneer One © Josh Bernhard & Bracey Smith · CC BY-NC-SA 3.0 · personal/non-commercial use; retain credits",
+    "licenceUrl": "https://creativecommons.org/licenses/by-nc-sa/3.0/"
+  }
+]
