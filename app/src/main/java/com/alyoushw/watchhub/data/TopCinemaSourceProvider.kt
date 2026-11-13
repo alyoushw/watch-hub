@@ -88,13 +88,13 @@ class TopCinemaSourceProvider : WatchSourceProvider {
             attribution = "TopCinema · ${query.originalTitle} (${query.year}) · $canonical", licenceUrl = canonical.toString())
     }
 
-    private fun resolveEmbed(url: String, referer: String, name: String, index: String): List<SourceVariant> {
-        val parsed = url.toHttpUrlOrNull()?.takeIf { it.isHttps && embedHost(it.host) } ?: return emptyList()
+    internal fun resolveEmbed(url: String, referer: String, name: String, index: String, extraHosts: Set<String> = emptySet()): List<SourceVariant> {
+        val parsed = url.toHttpUrlOrNull()?.takeIf { it.isHttps && (embedHost(it.host) || it.host in extraHosts) } ?: return emptyList()
         val page = read(parsed.toString(), referer)
         val origin = page.doc.location().toHttpUrlOrNull() ?: return emptyList()
         val scripts = page.doc.select("script:not([src])").map { it.data() }
         val decoded = scripts.flatMap { script -> listOf(script) + unpack(script) }
-        return decoded.filter { "sources" in it || "MDCore" in it }.flatMap { script ->
+        return decoded.filter { "sources" in it || "MDCore" in it || origin.host in extraHosts && "player.src(" in it }.flatMap { script ->
             MEDIA_FIELD.findAll(script).mapNotNull { match ->
                 val key = match.groupValues[1]
                 val value = unquote(match.groupValues[2])

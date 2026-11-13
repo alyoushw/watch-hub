@@ -69,10 +69,11 @@ fun SourceWatchScreen(
 ) {
     val container = appContainer()
     val context = LocalContext.current
-    val website = when (lookup.providerId) { "moviz-time" -> "Moviz Time"; "topcinema" -> "TopCinema"; else -> null }
+    val website = when (lookup.providerId) { "moviz-time" -> "Moviz Time"; "topcinema" -> "TopCinema"; "egybest" -> "EgyBest"; else -> null }
     val repository = sources ?: when (lookup.providerId) {
         "moviz-time" -> container.movizTimeSources
         "topcinema" -> container.topCinemaSources
+        "egybest" -> container.egyBestSources
         else -> container.watchSources
     }
     val catalogue by container.settings.sourceCatalogue.collectAsStateWithLifecycle()

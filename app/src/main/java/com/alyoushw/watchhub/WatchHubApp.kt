@@ -29,6 +29,7 @@ class AppContainer(context: Context) {
     private val torrentIndex = com.alyoushw.watchhub.data.TpbTorrentIndex()
     val movizTimeSources = com.alyoushw.watchhub.data.WatchSources({ listOf(com.alyoushw.watchhub.data.MovizTimeSourceProvider()) })
     val topCinemaSources = com.alyoushw.watchhub.data.WatchSources({ listOf(com.alyoushw.watchhub.data.TopCinemaSourceProvider()) })
+    val egyBestSources = com.alyoushw.watchhub.data.WatchSources({ listOf(com.alyoushw.watchhub.data.EgyBestSourceProvider()) })
     val watchSources = com.alyoushw.watchhub.data.WatchSources({
         listOf(com.alyoushw.watchhub.data.OpenFilmSourceProvider(), com.alyoushw.watchhub.data.ArchiveSourceProvider()) +
             (if (settings.torrentIndexEnabled.value) listOf(com.alyoushw.watchhub.data.TpbSourceProvider(torrentIndex)) else emptyList()) +
