@@ -257,10 +257,16 @@ class TmdbApi(private val settings: SettingsStore) {
         coerceInputValues = true
     }
 
-    suspend fun search(query: String): List<SearchResult> =
-        get("search/multi", mapOf("query" to query, "language" to "ar", "include_adult" to "false"), SearchResponse.serializer())
-            .results
-            .filter { it.type != null }
+    suspend fun search(query: String): List<SearchResult> = searchPage(query).results
+
+    suspend fun searchPage(query: String, page: Int = 1): SearchResponse {
+        val response = get(
+            "search/multi",
+            mapOf("query" to query, "language" to "ar", "include_adult" to "false", "page" to "${page.coerceIn(1, 500)}"),
+            SearchResponse.serializer(),
+        )
+        return response.copy(results = response.results.filter { it.type != null })
+    }
 
     /** Arabic details plus streaming availability, cast, trailers and recommendations. */
     suspend fun details(type: MediaType, id: Int): Details =

@@ -12,7 +12,7 @@ android {
 
     defaultConfig {
         applicationId = if (privatePreview) "com.alyoushw.watchhub.animepreview" else "com.alyoushw.watchhub"
-        manifestPlaceholders["appLabel"] = if (privatePreview) "Watch Hub Anime (خاص)" else "@string/app_name"
+        manifestPlaceholders["appLabel"] = "@string/app_name"
         minSdk = 26
         targetSdk = 35
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
