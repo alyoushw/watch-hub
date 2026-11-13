@@ -141,6 +141,8 @@ class WatchSourceSmokeTest {
             server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
                     if (request.requestUrl?.encodedPath == "/fixture.torrent") return MockResponse().setBody(Buffer().write(torrent))
+                    if (request.requestUrl?.encodedPath in setOf("/index/q.php", "/index/t.php")) return MockResponse().setBody(
+                        """[{"id":"123","info_hash":"$hash","name":"Owned.test.fixture.2025.1080p","imdb":"","seeders":"5","size":"${bytes.size}","category":"207"}]""")
                     requests.incrementAndGet()
                     return response(bytes, request, "video/mp4")
                 }
@@ -161,6 +163,26 @@ class WatchSourceSmokeTest {
                     assertArrayEquals(MessageDigest.getInstance("SHA-256").digest(bytes), MessageDigest.getInstance("SHA-256").digest(file.readBytes()))
                     assertTrue("The torrent engine must download and verify real fixture bytes", requests.get() > before)
                 }
+                // The index requires no catalogue. Local BEP-9 metadata keeps this test off public swarms.
+                val indexed = TpbSourceProvider(TpbTorrentIndex(server.url("/index/").toString()))
+                fun localMetadata(source: WatchSource) = source.copy(variants = source.variants.map {
+                    it.copy(url = it.url + "&xs=" + URLEncoder.encode(metadataUrl, "UTF-8"))
+                })
+                val provider = object : WatchSourceProvider {
+                    override suspend fun search(query: SourceQuery) = indexed.search(query).map(::localMetadata)
+                    override suspend fun find(query: SourceQuery, id: String) = indexed.find(query, id)?.let(::localMetadata)
+                }
+                val repository = WatchSources({ listOf(provider) })
+                val result = repository.search(query).sources.single()
+                assertEquals("tpb", result.providerId)
+                File(context.filesDir, "source-torrents/$hash").deleteRecursively()
+                val before = requests.get()
+                val resolved = withTimeout(90_000) {
+                    repository.resolve(WatchSourceRef("tpb", result.id, query, "magnet"), PlaybackEngines(listOf(engine)))
+                }
+                val downloaded = File(java.net.URI(resolved.uri))
+                assertArrayEquals(MessageDigest.getInstance("SHA-256").digest(bytes), MessageDigest.getInstance("SHA-256").digest(downloaded.readBytes()))
+                assertTrue(requests.get() > before)
             } finally {
                 seed.delete()
                 File(context.filesDir, "source-torrents/$hash").deleteRecursively()

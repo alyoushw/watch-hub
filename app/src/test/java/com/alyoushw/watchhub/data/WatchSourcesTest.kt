@@ -98,16 +98,65 @@ class WatchSourcesTest {
         assertEquals(1, TorrentPlaybackEngine.chooseVideoFile(listOf("Another.2010.mkv", "Sintel.2010.mp4"), listOf(9999, 100), movie))
     }
 
-    @Test fun indexCannotIntroduceAnUnauthorizedTorrentHash() = runBlocking<Unit> {
-        val allowed = "a".repeat(40)
-        val foreign = "b".repeat(40)
-        val authorized = source().copy(variants = listOf(SourceVariant("torrent", "Torrent", "magnet:?xt=urn:btih:$allowed", SourceTransport.MAGNET)))
-        val catalogue = object : WatchSourceProvider { override suspend fun search(query: SourceQuery) = listOf(authorized) }
-        val index = object : TorrentIndex { override suspend fun search(query: SourceQuery) = listOf(TorrentIndexRecord(foreign, "Sintel 2010", "tt1727587", 1000)) }
-        val results = IndexedCatalogueProvider(catalogue, index).search(movie)
-        assertEquals(listOf(authorized), results)
-        assertFalse(results.toString().contains(foreign))
-        val parsed = TpbTorrentIndex.parse("""[{"info_hash":"$allowed","name":"Sintel.2010.1080p","imdb":"1727587","seeders":"5"},{"info_hash":"$foreign","name":"Sintel.2011.1080p","imdb":"1727587","seeders":"9"}]""", movie)
-        assertEquals(listOf(allowed), parsed.map { it.hash })
+    @Test fun directIndexSearchNeedsNoCatalogueAndResolvesTheSelectedResultAgain() = runBlocking<Unit> {
+        MockWebServer().use { server ->
+            val hash = "a".repeat(40)
+            val payload = """[{"id":"123","info_hash":"$hash","name":"Sintel.2010.1080p","imdb":"tt1727587","seeders":"5","size":"400000000","category":"207"}]"""
+            server.enqueue(MockResponse().setBody(payload))
+            server.enqueue(MockResponse().setBody(payload.replace("\"5\"", "\"8\"")))
+            val provider = TpbSourceProvider(TpbTorrentIndex(server.url("/").toString()))
+            val repository = WatchSources({ listOf(provider) })
+            val result = repository.search(movie).sources.single()
+            assertEquals("tpb", result.providerId)
+            assertTrue(result.attribution.contains("5"))
+            assertEquals(hash, magnetHash(result.variants.single().url))
+            val request = server.takeRequest()
+            assertEquals("/q.php", request.requestUrl?.encodedPath)
+            assertEquals("Sintel 2010", request.requestUrl?.queryParameter("q"))
+            assertEquals("200", request.requestUrl?.queryParameter("cat"))
+            var prepared = false
+            val engines = PlaybackEngines(listOf(object : PlaybackEngine {
+                override fun supports(transport: SourceTransport) = transport == SourceTransport.MAGNET
+                override suspend fun prepare(variant: SourceVariant, query: SourceQuery, progress: (Float) -> Unit): String {
+                    assertEquals(hash, magnetHash(variant.url)); prepared = true; return "file:///owned-fixture.mp4"
+                }
+            }))
+            val resolved = repository.resolve(WatchSourceRef("tpb", result.id, movie, "magnet"), engines)
+            assertTrue(prepared)
+            assertEquals("file:///owned-fixture.mp4", resolved.uri)
+            assertTrue(resolved.source.attribution.contains("8"))
+            assertEquals("123", server.takeRequest().requestUrl?.queryParameter("id"))
+        }
+    }
+
+    @Test fun indexRejectsWrongYearsImdbTypesEpisodesAndDeadOrDuplicateEntries() {
+        val hash = "a".repeat(40)
+        fun row(name: String, imdb: String = "tt1727587", peers: Int = 5, category: Int = 207) =
+            """{"id":"123","info_hash":"$hash","name":"$name","imdb":"$imdb","seeders":"$peers","category":"$category"}"""
+        assertTrue(TpbTorrentIndex.parse("[" + row("Sintel.2011.1080p") + "]", movie).isEmpty())
+        assertTrue(TpbTorrentIndex.parse("[" + row("Sintel.2010", "tt9999999") + "]", movie).isEmpty())
+        assertTrue(TpbTorrentIndex.parse("[" + row("Sintel.2010", peers = 0) + "]", movie).isEmpty())
+        assertTrue(TpbTorrentIndex.parse("[" + row("Sintel.2010", category = 101) + "]", movie).isEmpty())
+        assertTrue(TpbTorrentIndex.parse("[" + row("Sintel.2010.S01E01") + "]", movie).isEmpty())
+        val good = row("Sintel.2010.1080p")
+        assertEquals(1, TpbTorrentIndex.parse("[$good,$good]", movie).size)
+        assertEquals(1, TpbTorrentIndex.parse("[" + row("Sintel.2010.720p", imdb = "") + "]", movie.copy(imdbId = null)).size)
+        fun tv(name: String, imdb: String = "tt1234567") = TpbTorrentIndex.parse("[" + row(name, imdb, category = 208) + "]", episode)
+        assertEquals(1, tv("Fixture.Series.S02E03.1080p").size)
+        assertTrue(tv("Fixture.Series.S02E04.1080p").isEmpty())
+        assertTrue(tv("Fixture.Series.S02E03E04.1080p").isEmpty())
+        assertTrue(tv("Fixture.Series.S02E03-S02E04.1080p").isEmpty())
+        assertTrue(tv("Fixture.Series.S02E03.1080p", imdb = "").isEmpty())
+        assertEquals(1, tv("Fixture.Series.2020.2x03.1080p", imdb = "").size)
+        assertEquals(1, TpbTorrentIndex.parse("[" + row("1917.2019.1080p", imdb = "") + "]",
+            SourceQuery(MediaType.MOVIE, 530915, "1917", 2019)).size)
+    }
+
+    @Test fun indexLookupCannotSilentlyChangeTheSelectedTorrentHash() = runBlocking<Unit> {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("""[{"id":"123","info_hash":"${"b".repeat(40)}","name":"Sintel.2010.1080p","imdb":"tt1727587","seeders":"5"}]"""))
+            val provider = TpbSourceProvider(TpbTorrentIndex(server.url("/").toString()))
+            assertNull(provider.find(movie, "123:${"a".repeat(40)}"))
+        }
     }
 }

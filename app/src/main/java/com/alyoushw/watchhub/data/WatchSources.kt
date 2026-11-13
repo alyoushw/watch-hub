@@ -64,6 +64,7 @@ data class WatchSourceRef(val providerId: String, val sourceId: String, val quer
 
 interface WatchSourceProvider {
     suspend fun search(query: SourceQuery): List<WatchSource>
+    suspend fun find(query: SourceQuery, id: String): WatchSource? = search(query).firstOrNull { it.id == id }
 }
 
 class SourceException(message: String) : Exception(message)
@@ -132,8 +133,13 @@ class WatchSources(private val providers: () -> List<WatchSourceProvider>, priva
     }
 
     suspend fun resolve(ref: WatchSourceRef, engines: PlaybackEngines, progress: (Float) -> Unit = {}): ResolvedWatchSource {
-        val found = search(ref.query).sources.firstOrNull { it.id == ref.sourceId && it.providerId == ref.providerId }
-            ?: throw SourceException("المصدر لم يعد متاحاً لهذا العمل؛ اختر مصدراً آخر")
+        val found = coroutineScope {
+            providers().map { provider -> async {
+                try { provider.find(ref.query, ref.sourceId)?.takeIf { it.providerId == ref.providerId && it.compatible(ref.query) } }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (_: Exception) { null }
+            } }.awaitAll().firstOrNull { it != null }
+        } ?: throw SourceException("المصدر لم يعد متاحاً لهذا العمل؛ اختر مصدراً آخر")
         val variant = found.variants.firstOrNull { it.id == ref.variantId }
             ?: throw SourceException("الجودة المطلوبة لم تعد متاحة")
         return ResolvedWatchSource(found, variant, engines.prepare(variant, ref.query, progress))

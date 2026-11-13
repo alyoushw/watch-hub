@@ -59,6 +59,7 @@ fun SmartWatchSources(info: DetailInfo) {
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(source.providerName, color = Gold)
+                        if (source.providerId == "tpb") Text("نتيجة فهرس تورنت؛ توفر الأقران لا يضمن اكتمال التنزيل.", style = MaterialTheme.typography.bodySmall)
                         source.variants.forEach { variant ->
                             val torrent = variant.transport in setOf(SourceTransport.TORRENT, SourceTransport.MAGNET)
                             Button(onClick = {
@@ -71,7 +72,7 @@ fun SmartWatchSources(info: DetailInfo) {
                         if (source.variants.any { it.transport in setOf(SourceTransport.TORRENT, SourceTransport.MAGNET) })
                             Text("يُحمَّل ملف الفيديو المختار كاملاً قبل التشغيل. الرجوع من المشغل يلغي التجهيز.", style = MaterialTheme.typography.bodySmall)
                         Text(source.attribution, style = MaterialTheme.typography.labelSmall)
-                        TextButton(onClick = { context.openUrl(source.licenceUrl) }, modifier = Modifier.focusFrame()) { Text("المصدر والترخيص") }
+                        TextButton(onClick = { context.openUrl(source.licenceUrl) }, modifier = Modifier.focusFrame()) { Text(if (source.providerId == "tpb") "صفحة النتيجة" else "المصدر والترخيص") }
                     }
                 }
             }
@@ -102,12 +103,12 @@ fun SourceSettingsSection() {
     var url by remember(saved) { mutableStateOf(saved) }
     var message by remember { mutableStateOf<String?>(null) }
     SectionTitle("مصادر المشاهدة")
-    Text("تتوفر أمثلة أفلام Blender المفتوحة. لإضافة محتواك، أدخل رابط كتالوج مصادر يحدد العمل والمواسم والحلقات وحقوق الاستخدام.", style = MaterialTheme.typography.bodySmall)
-    OutlinedTextField(url, { url = it; message = null }, label = { Text("رابط كتالوج مصادرك") }, singleLine = true,
+    Text("البحث التلقائي في فهرس The Pirate Bay لا يحتاج كتالوجاً. يمكنك أيضاً إضافة مصادر فيديو مباشرة بكتالوج اختياري.", style = MaterialTheme.typography.bodySmall)
+    OutlinedTextField(url, { url = it; message = null }, label = { Text("كتالوج إضافي اختياري") }, singleLine = true,
         modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard())
     Button(onClick = { settings.setSourceCatalogue(url); message = "حُفظ الكتالوج؛ أعد فتح صفحة العمل للبحث" }, modifier = Modifier.focusFrame()) { Text("حفظ المصادر") }
     message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
     FilterChip(selected = indexed, onClick = { settings.setTorrentIndexEnabled(!indexed) },
-        label = { Text("استخدام فهرس التورنت للمصادر المضافة") }, modifier = Modifier.focusFrame())
-    Text("الفهرس يضيف معلومات للأعمال والتورنتات الموجودة في كتالوجك المصرّح به. روابط Magnet تُجهَّز بمحرك منفصل.", style = MaterialTheme.typography.bodySmall)
+        label = { Text("البحث التلقائي في The Pirate Bay") }, modifier = Modifier.focusFrame())
+    Text("تظهر النتائج المطابقة للعمل والسنة أو الموسم والحلقة. اختيار نتيجة يبدأ تنزيل ملف الفيديو قبل تشغيله داخل التطبيق.", style = MaterialTheme.typography.bodySmall)
 }

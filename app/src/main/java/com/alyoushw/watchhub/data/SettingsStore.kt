@@ -296,7 +296,7 @@ class SettingsStore(context: Context) {
         _webUrl.value = v.ifEmpty { DEFAULT_WEB_URL }
     }
 
-    private val _torrentIndexEnabled = MutableStateFlow(prefs.getBoolean("torrent_index_enabled", false))
+    private val _torrentIndexEnabled = MutableStateFlow(prefs.getBoolean("torrent_index_enabled", true))
     val torrentIndexEnabled: StateFlow<Boolean> = _torrentIndexEnabled.asStateFlow()
     fun setTorrentIndexEnabled(value: Boolean) {
         prefs.edit().putBoolean("torrent_index_enabled", value).apply()

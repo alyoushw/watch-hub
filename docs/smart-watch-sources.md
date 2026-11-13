@@ -4,7 +4,28 @@ This feature is isolated on `feat/smart-watch-sources`. The preview uses applica
 `com.alyoushw.watchhub.smartpreview`, keeps the launcher name **Watch Hub**, and must
 not be promoted through the original application's update channel.
 
-## Source catalogue
+## Automatic index search
+
+The Pirate Bay search is enabled by default in this private preview and requires
+no catalogue. Opening a detail page searches its video index via `apibay.org` with
+the original title plus release year, or exact season/episode. It shows up to 20
+matching results, ordered by reported seeders, with full release names and sizes.
+The setting can disable index search. Existing saved choices are retained.
+
+Movies require exact title/year; contradictory IMDb IDs and non-movie categories
+are rejected. Episodes require exact coordinates and matching IMDb ID, or title,
+series year and coordinates when the index has no IMDb data. Combined episodes,
+season packs and reported zero-seeder results are excluded. This conservative
+matching can omit releases whose names lack required identity information.
+
+Selecting a result re-fetches that index entry and verifies its ID, info hash and
+content identity. Its Magnet goes to the existing separate preparation engine;
+it is not sent to the player as a direct video URL. Reported peers are historical
+index metadata and cannot guarantee a reachable swarm or successful preparation.
+Index listings are shown as source pages, not licensing declarations. The app does
+not establish distribution rights from an index listing.
+
+## Optional source catalogue
 
 Settings → source catalogue accepts an owner-controlled HTTP(S) endpoint returning a
 JSON array. Search sends `tmdb_id`, `type` (`movie`/`tv`), `original_title`, `year`, and,
@@ -62,10 +83,8 @@ for the complete selected file; it is not sequential streaming. Preparation can 
 cancelled by leaving the player and is limited to 30 minutes. Pure v2-only torrents
 are not supported. Downloaded files currently remain in the app-private `source-torrents` directory until app data is cleared.
 
-The optional Pirate Bay metadata lookup is off by default and can enrich only hashes
-already declared in the authorized catalogue, with matching IMDb/title/year/episode.
-It cannot turn arbitrary search results into playable sources. Tests generate an
-original synthetic video and torrent with a local web seed.
+Tests generate an original synthetic video and torrent with a local web seed;
+index search and selected-result resolution are also tested without a catalogue.
 
 ## Subtitles
 
@@ -78,13 +97,12 @@ positive delay, and clears on seeks. Font size, colour and background are config
 
 There is no audio transcription or live speech translation in this preview. Such an
 option needs a separate provider, explicit cost/latency decisions and device tests.
-Text translation availability must be confirmed by the device smoke test, not just
-by compiling the project.
+The Android smoke test verifies actual Arabic caption rendering, timing and seek clearing.
 
 ## Verification
 
 Local checks: `testDebugUnitTest lintDebug compileDebugAndroidTestKotlin` with
-`WATCHHUB_PREVIEW=true` (24 JVM tests). GitHub Actions additionally runs Android 11
+`WATCHHUB_PREVIEW=true` (26 JVM tests). GitHub Actions additionally runs Android 11
 smoke tests for the existing player, Animeify, TV gestures, opt-in preload, direct
 MP4/HLS/MKV playback, torrent/Magnet preparation and on-device Arabic subtitle
 translation. A private APK is created only after those checks pass.

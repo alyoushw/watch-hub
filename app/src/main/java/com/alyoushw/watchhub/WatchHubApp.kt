@@ -28,10 +28,9 @@ class AppContainer(context: Context) {
     val animeify = com.alyoushw.watchhub.data.AnimeifyApi()
     val watchSources = com.alyoushw.watchhub.data.WatchSources({
         listOf(com.alyoushw.watchhub.data.OpenFilmSourceProvider()) +
+            (if (settings.torrentIndexEnabled.value) listOf(com.alyoushw.watchhub.data.TpbSourceProvider()) else emptyList()) +
             settings.sourceCatalogue.value.takeIf { it.isNotBlank() }?.let {
-                val catalogue = com.alyoushw.watchhub.data.ManifestSourceProvider(it)
-                listOf(if (settings.torrentIndexEnabled.value)
-                    com.alyoushw.watchhub.data.IndexedCatalogueProvider(catalogue, com.alyoushw.watchhub.data.TpbTorrentIndex()) else catalogue)
+                listOf(com.alyoushw.watchhub.data.ManifestSourceProvider(it))
             }.orEmpty()
     })
     val playbackEngines = com.alyoushw.watchhub.data.PlaybackEngines(listOf(
