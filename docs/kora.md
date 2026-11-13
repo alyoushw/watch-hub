@@ -2,7 +2,7 @@
 
 The **كوره** navigation entry opens https://majed-koora.live/ inside Watch Hub.
 It uses the public website and its normal match/watch navigation, not the
-separately installed Majed Sport APK. The website retains its own video player,
+separately installed Majed Sport APK. The website retains its normal watch flow,
 access rules, advertising flow and server-side updates. No API key or native-app
 attestation from the uploaded APK is copied into Watch Hub.
 
@@ -28,8 +28,16 @@ match cards and followed a watch link to the website's article/player flow.
 The public site uses /api/v1/matches, distinct from the APK's guarded /api/matches.
 This verifies page loading and navigation, not complete match playback or every
 streaming host. The normal website may require user interaction before video
-playback; no gate or DRM is bypassed. No claim is made that the existing native
-Watch Hub player is used for this website integration.
+playback; no gate or DRM is bypassed.
+
+After normal web authorization, eligible HLS/MP4/MKV requests from the known
+player.majedjs.site player can open the existing Watch Hub Media3 player.
+The observed request is checked with StreamProbe and its session headers are
+passed in memory. The web player is removed before native playback to prevent
+overlapping audio. Temporary URLs are not saved in watch history or cloud sync.
+Unsupported sources remain in the website player. No URL decryption, DRM
+handling or app-attestation bypass is introduced. Native handoff requires
+owner testing on a real device; browser inspection alone did not verify it.
 
 Existing Animeify, torrent, Moviz Time, TopCinema, login, player and APK-update
 behavior remain. The new page is delivered only through the separate private

@@ -316,15 +316,15 @@ class PlayerActivity : ComponentActivity() {
         session.number = item.number
         session.hasPrevious = i > 0
         session.hasNext = i < queue.lastIndex
-        if (e.isLive) preloadIndexes()
+        if (e.isLive && item.recordHistory) preloadIndexes()
         loadJob?.cancel()
         loadJob = lifecycleScope.launch {
             // Another device may have moved on a moment ago: take the newest spot from the account
             // first (at most ~2 s; offline or signed out, this device's own copy is used).
-            cloud.refreshEntry(e.key)
-            val saved = history.get(e.key)
+            if (item.recordHistory) cloud.refreshEntry(e.key)
+            val saved = if (item.recordHistory) history.get(e.key) else null
             val resumeAt = saved?.takeIf { !it.isLive && !it.finished && it.positionMs > 10_000 }?.positionMs ?: 0L
-            history.save(e, important = true)
+            if (item.recordHistory) history.save(e, important = true)
             setMedia(resumeAt)
             started = true
             if (resumeAt > 0) Toast.makeText(this@PlayerActivity, "نكمل من ${formatTime(resumeAt)}", Toast.LENGTH_SHORT).show()
@@ -697,7 +697,7 @@ class PlayerActivity : ComponentActivity() {
 
     private fun saveProgress(important: Boolean = false) {
         val e = entry ?: return
-        if (e.isLive || !started) return
+        if (current?.recordHistory == false || e.isLive || !started) return
         val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: return
         val saved = e.copy(positionMs = player.currentPosition.coerceAtLeast(0), durationMs = duration)
         if (saved.finished) container.stats.recordFinished(e.key)

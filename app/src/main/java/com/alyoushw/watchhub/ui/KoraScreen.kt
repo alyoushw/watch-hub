@@ -9,6 +9,7 @@ import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
@@ -36,6 +37,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,6 +50,12 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.alyoushw.watchhub.data.StreamProbe
+import com.alyoushw.watchhub.data.WatchEntry
+import com.alyoushw.watchhub.player.PlayerActivity
+import com.alyoushw.watchhub.player.QueueItem
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 
 /** The public sports website, including its own watch flow; no Majed APK is required. */
 @SuppressLint("SetJavaScriptEnabled")
@@ -56,6 +64,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 fun KoraScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val scope = rememberCoroutineScope()
+    val probe = remember { StreamProbe() }
+    val attemptedStreams = remember { mutableSetOf<String>() }
     val windows = remember { mutableListOf<WebView>() }
     var web by remember { mutableStateOf<WebView?>(null) }
     var loading by remember { mutableStateOf(true) }
@@ -63,6 +74,10 @@ fun KoraScreen(onBack: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var fullscreen by remember { mutableStateOf<View?>(null) }
     var fullscreenCallback by remember { mutableStateOf<WebChromeClient.CustomViewCallback?>(null) }
+    var nativeOpening by remember { mutableStateOf(false) }
+    var nativeStarted by remember { mutableStateOf(false) }
+    var nativePaused by remember { mutableStateOf(false) }
+    var nativeUnavailable by remember { mutableStateOf(false) }
 
     fun closeFullscreen() {
         val callback = fullscreenCallback
@@ -128,14 +143,67 @@ fun KoraScreen(onBack: () -> Unit) {
             else -> onBack()
         }
     }
+    fun openNative(view: WebView, candidate: KoraNativeStream) {
+        if (view !in windows || view != web || nativeOpening || nativeUnavailable || attemptedStreams.size >= 8 ||
+            candidate.url in attemptedStreams || !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
+        attemptedStreams += candidate.url
+        nativeOpening = true
+        val headers = candidate.headers.toMutableMap()
+        headers["User-Agent"] = view.settings.userAgentString
+        if (headers.keys.none { it.equals("Cookie", true) }) {
+            CookieManager.getInstance().getCookie(candidate.url)?.takeIf { it.isNotBlank() }?.let { headers["Cookie"] = it }
+        }
+        val stream = candidate.copy(headers = headers.toMap())
+        view.evaluateJavascript("""(function(){var h=document.getElementById('mkHomeName'),a=document.getElementById('mkAwayName');return h&&a?h.textContent+' × '+a.textContent:'كوره · بث مباشر';})()""") { encoded ->
+            val title = runCatching { org.json.JSONTokener(encoded).nextValue() as? String }.getOrNull()
+                ?.take(160)?.takeIf { it.isNotBlank() } ?: "كوره · بث مباشر"
+            scope.launch {
+                try {
+                    if (!probe.compatible(stream.variant())) {
+                        nativeUnavailable = true
+                        error = "هذا المصدر غير متوافق مع المشغّل الداخلي؛ يمكنك مشاهدته بمشغّل الموقع."
+                        nativeOpening = false
+                        return@launch
+                    }
+                    if (view != web || view !in windows || !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                        nativeOpening = false
+                        return@launch
+                    }
+                    val item = QueueItem(listOf(stream.url), WatchEntry(
+                        key = "kora-session:${java.util.UUID.randomUUID()}", kind = WatchEntry.LIVE,
+                        itemId = "web-live", title = title, accountId = "kora-web"),
+                        mimeType = stream.mimeType, httpHeaders = stream.headers, recordHistory = false)
+                    // Remove the web player before starting Media3 so two audio streams cannot overlap.
+                    closeFullscreen()
+                    while (windows.size > 1) closeWindow(windows.last())
+                    web?.loadUrl(KORA_HOME)
+                    nativePaused = false
+                    nativeStarted = true
+                    PlayerActivity.start(context, listOf(item), 0)
+                } catch (e: CancellationException) { throw e }
+                catch (_: Exception) {
+                    nativeUnavailable = true
+                    nativeStarted = false
+                    nativeOpening = false
+                    error = "تعذر فتح المشغّل الداخلي؛ يمكنك إعادة فتح البث من الموقع."
+                }
+            }
+        }
+    }
 
     BackHandler(enabled = canGoBack && fullscreen == null) { back() }
     DisposableEffect(lifecycle, web) {
         val view = web
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_RESUME -> view?.onResume()
-                Lifecycle.Event.ON_PAUSE -> view?.onPause()
+                Lifecycle.Event.ON_RESUME -> {
+                    view?.onResume()
+                    if (nativeStarted && nativePaused) { nativeStarted = false; nativePaused = false; nativeOpening = false }
+                }
+                Lifecycle.Event.ON_PAUSE -> {
+                    view?.onPause()
+                    if (nativeStarted) nativePaused = true
+                }
                 else -> Unit
             }
         }
@@ -169,7 +237,8 @@ fun KoraScreen(onBack: () -> Unit) {
         })
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (loading || nativeOpening && !nativeStarted) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (nativeOpening && !nativeStarted) Text("جاري فتح مشغّل Watch Hub…", modifier = Modifier.padding(12.dp))
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(12.dp)) }
             AndroidView(modifier = Modifier.weight(1f).fillMaxWidth(), factory = { host ->
                 val site = WebView(host).apply {
@@ -203,7 +272,7 @@ fun KoraScreen(onBack: () -> Unit) {
                     }
                     webViewClient = object : WebViewClient() {
                         override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
-                            if (view == web) { loading = true; error = null }
+                            if (view == web) { loading = true; error = null; attemptedStreams.clear(); nativeUnavailable = false }
                         }
                         override fun onPageFinished(view: WebView, url: String?) {
                             if (view == web) {
@@ -219,6 +288,10 @@ fun KoraScreen(onBack: () -> Unit) {
                             if (scheme == "http" || scheme == "https") return false
                             if (view == web && request.isForMainFrame) error = "هذا الرابط يتطلب تطبيقاً خارجياً؛ يمكنك العودة للمباريات."
                             return true
+                        }
+                        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                            KoraNativeStream.from(request)?.let { stream -> view.post { openNative(view, stream) } }
+                            return null
                         }
                     }
                 }
