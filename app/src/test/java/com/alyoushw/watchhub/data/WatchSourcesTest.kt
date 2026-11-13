@@ -73,6 +73,14 @@ class WatchSourcesTest {
         }
     }
 
+    @Test fun slowFragmentedHlsPlaylistIsStillRecognized() = runBlocking<Unit> {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:6.0,\nsegment.ts\n")
+                .throttleBody(8, 10, java.util.concurrent.TimeUnit.MILLISECONDS))
+            assertTrue(StreamProbe().compatible(SourceVariant("hls", "HLS", server.url("/playlist").toString(), SourceTransport.HLS)))
+        }
+    }
+
     @Test fun magnetAndTorrentAreHandledByPreparationEngineOnly() = runBlocking<Unit> {
         val magnet = "magnet:?xt=urn:btih:" + "a".repeat(40)
         assertEquals("a".repeat(40), magnetHash(magnet))

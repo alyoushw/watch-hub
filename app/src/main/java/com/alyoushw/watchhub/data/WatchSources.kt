@@ -150,7 +150,8 @@ class StreamProbe(private val http: OkHttpClient = SourceHttp.client) : SourcePr
                 if (!response.isSuccessful) return@use false
                 val body = response.body ?: return@use false
                 val source = body.source()
-                source.request(16)
+                // Wait for a bounded prefix even when a slow server splits the playlist across packets.
+                source.request(4096)
                 val bytes = source.readByteArray(minOf(4096L, source.buffer.size))
                 signatureMatches(variant.transport, bytes)
             }

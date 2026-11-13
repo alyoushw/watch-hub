@@ -60,7 +60,7 @@ fetches metadata, selects the exact episode, downloads and verifies the chosen f
 then opens the local MP4/MKV in the existing player. This first implementation waits
 for the complete selected file; it is not sequential streaming. Preparation can be
 cancelled by leaving the player and is limited to 30 minutes. Pure v2-only torrents
-are not supported. Downloaded files currently remain in the app cache.
+are not supported. Downloaded files currently remain in the app-private `source-torrents` directory until app data is cleared.
 
 The optional Pirate Bay metadata lookup is off by default and can enrich only hashes
 already declared in the authorized catalogue, with matching IMDb/title/year/episode.
@@ -84,7 +84,7 @@ by compiling the project.
 ## Verification
 
 Local checks: `testDebugUnitTest lintDebug compileDebugAndroidTestKotlin` with
-`WATCHHUB_PREVIEW=true` (23 JVM tests). GitHub Actions additionally runs Android 11
+`WATCHHUB_PREVIEW=true` (24 JVM tests). GitHub Actions additionally runs Android 11
 smoke tests for the existing player, Animeify, TV gestures, opt-in preload, direct
 MP4/HLS/MKV playback, torrent/Magnet preparation and on-device Arabic subtitle
 translation. A private APK is created only after those checks pass.
