@@ -17,6 +17,10 @@ on:
         description: 'Optional previous run with passing app tests; application sources must match'
         type: string
         default: ''
+      device_tests:
+        description: 'Also run the Android emulator smoke test (about 4 extra minutes; validation builds always run it)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -36,7 +40,10 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # Save Gradle's caches from every branch (not only main), so later builds skip downloads.
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
         with:
           cache-read-only: ${{ github.event_name == 'pull_request' }}
 
@@ -73,20 +80,20 @@ jobs:
           fi
 
       - name: Compile Android regression tests
-        if: steps.prior_checks.outputs.reused != 'true'
+        if: steps.prior_checks.outputs.reused != 'true' && (inputs.device_tests || inputs.distribution == 'validation')
         run: |
           chmod +x gradlew
           ./gradlew compileDebugAndroidTestKotlin --stacktrace
 
       - name: Enable KVM for Android smoke test
-        if: steps.prior_checks.outputs.reused != 'true'
+        if: steps.prior_checks.outputs.reused != 'true' && (inputs.device_tests || inputs.distribution == 'validation')
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
       - name: Android device smoke test
-        if: steps.prior_checks.outputs.reused != 'true'
+        if: steps.prior_checks.outputs.reused != 'true' && (inputs.device_tests || inputs.distribution == 'validation')
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
@@ -96,7 +103,7 @@ jobs:
           script: bash .github/scripts/android-smoke.sh
 
       - name: Upload device smoke reports
-        if: always()
+        if: always() && (inputs.device_tests || inputs.distribution == 'validation')
         uses: actions/upload-artifact@v4
         with:
           name: device-smoke-reports
