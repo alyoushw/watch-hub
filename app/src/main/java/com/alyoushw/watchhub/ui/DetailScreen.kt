@@ -483,6 +483,11 @@ private fun DetailContent(
                 Modifier.fillMaxWidth(), label = "تشغيل Moviz Time")
         } }
 
+        item { Column(Modifier.padding(horizontal = 16.dp)) {
+            SourceWatchButton(info.sourceLookup().copy(providerId = "topcinema"), onOpenSources,
+                Modifier.fillMaxWidth(), label = "تشغيل TopCinema")
+        } }
+
         if (16 in info.genreIds && (info.originalLanguage == "ja" || "JP" in info.countries)) {
             item {
                 Column(Modifier.padding(horizontal = 16.dp)) {

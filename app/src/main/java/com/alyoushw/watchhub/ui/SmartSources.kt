@@ -69,8 +69,12 @@ fun SourceWatchScreen(
 ) {
     val container = appContainer()
     val context = LocalContext.current
-    val moviz = lookup.providerId == "moviz-time"
-    val repository = sources ?: if (moviz) container.movizTimeSources else container.watchSources
+    val website = when (lookup.providerId) { "moviz-time" -> "Moviz Time"; "topcinema" -> "TopCinema"; else -> null }
+    val repository = sources ?: when (lookup.providerId) {
+        "moviz-time" -> container.movizTimeSources
+        "topcinema" -> container.topCinemaSources
+        else -> container.watchSources
+    }
     val catalogue by container.settings.sourceCatalogue.collectAsStateWithLifecycle()
     val indexed by container.settings.torrentIndexEnabled.collectAsStateWithLifecycle()
     val history by container.history.entries.collectAsStateWithLifecycle()
@@ -104,8 +108,8 @@ fun SourceWatchScreen(
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         if (lookup.overview.isNotBlank()) TranslatedText(lookup.overview, isEnglish = lookup.overviewIsEnglish,
                             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text((if (series) "الموسم $season" else "فيلم") + if (moviz) " · Moviz Time" else " · تورنت", color = Gold, style = MaterialTheme.typography.labelMedium)
-                        Text(if (moviz) "اختر الفيلم أو الحلقة لعرض سيرفرات Moviz Time المتوافقة. تُجلب روابط التشغيل من الموقع عند كل مشاهدة."
+                        Text((if (series) "الموسم $season" else "فيلم") + (website?.let { " · $it" } ?: " · تورنت"), color = Gold, style = MaterialTheme.typography.labelMedium)
+                        Text(if (website != null) "اختر الفيلم أو الحلقة لعرض سيرفرات $website المتوافقة. تُجلب روابط التشغيل من الموقع عند كل مشاهدة."
                             else "يبدأ التشغيل بعد تجهيز الأجزاء الأولى ويستمر التنزيل أثناء المشاهدة. سرعة البداية تعتمد على الأقران والاتصال.",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }

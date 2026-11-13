@@ -340,7 +340,11 @@ class PlayerActivity : ComponentActivity() {
             val key = entry?.key
             resolveJob = lifecycleScope.launch {
                 try {
-                    val repository = if (sourceRef.providerId == "moviz-time") container.movizTimeSources else container.watchSources
+                    val repository = when (sourceRef.providerId) {
+                        "moviz-time" -> container.movizTimeSources
+                        "topcinema" -> container.topCinemaSources
+                        else -> container.watchSources
+                    }
                     val resolved = repository.resolve(sourceRef, container.playbackEngines) { progress ->
                         runOnUiThread { if (entry?.key == key) session.sourceProgress = progress }
                     }
