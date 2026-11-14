@@ -40,7 +40,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Verify and extract reproducible launcher source
         run: |
-          echo 'c05b7af4e528f9e5d533d8f58e34a013281cc29a7d6001c31c6ce442fa5450c5  sony-tv/sony-home-source.zip' | sha256sum -c -
+          echo '19fb5085e2971debfc20374e0af8f802325e9f251eefafe1e1b0653bef14795c  sony-tv/sony-home-source.zip' | sha256sum -c -
           unzip -q sony-tv/sony-home-source.zip -d sony-tv/build
           chmod +x sony-tv/build/gradlew
           sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
@@ -74,15 +74,17 @@ jobs:
       - name: Publish independent launcher preview
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: sony-home-1448-v1
+          tag_name: sony-home-1448-v2
           target_commitish: ${{ github.sha }}
-          name: Sony Home for Android TV - Ahsa 1448 preview
+          name: Sony Home 3.5 - compact calendar and top-bar tools
           prerelease: true
           make_latest: false
           body: |
             Experimental personal launcher based on CleanYourTV (MIT), for Sony KD-65X8000G / Android 9.
             This is a separate HOME app (com.alyoushw.sonyhome), not a fork of Watch Hub.
-            Calendar times and occasions use the owner's original Ahsa 1448 calendar rows.
+            Compact unboxed calendar under the clock: original printed glyphs as transparent white ink, with native labels including Fajr.
+            Times and occasions retain the exact original daily Ahsa 1448 calendar rows; no OCR or calculated replacement.
+            Widget and cleanup tools moved to the top bar beside Inputs and Mirroring.
             Includes optional Watch Next reading, native app widgets and an AirPlay receiver shortcut.
             AirPlay Server must be installed separately from its original F-Droid page.
             The Windows helper sets and verifies default HOME without disabling previous launchers.
