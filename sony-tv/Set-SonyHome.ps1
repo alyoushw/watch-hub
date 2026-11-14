@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $Package = 'com.alyoushw.sonyhome'
 $Component = "$Package/com.gathin.tvhome.MainActivity"
-$Release = 'https://github.com/alyoushw/watch-hub/releases/download/sony-home-1448-preview'
+$Release = 'https://github.com/alyoushw/watch-hub/releases/download/sony-home-1448-v1'
 $SetupDir = Join-Path $env:LOCALAPPDATA 'SonyHome-Setup'
 New-Item -ItemType Directory -Force -Path $SetupDir | Out-Null
 Write-Host 'Sony Home setup: installs the launcher and selects it as HOME. No apps are removed or disabled.'

@@ -74,7 +74,7 @@ jobs:
       - name: Publish independent launcher preview
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: sony-home-1448-preview
+          tag_name: sony-home-1448-v1
           target_commitish: ${{ github.sha }}
           name: Sony Home for Android TV - Ahsa 1448 preview
           prerelease: true
