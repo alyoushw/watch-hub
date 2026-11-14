@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $Package = 'com.alyoushw.sonyhome'
 $Component = "$Package/com.gathin.tvhome.MainActivity"
-$Release = 'https://github.com/alyoushw/watch-hub/releases/download/sony-home-1448-v4'
+$Release = 'https://github.com/alyoushw/watch-hub/releases/download/sony-home-1448-v5'
 $SetupDir = Join-Path $env:LOCALAPPDATA 'SonyHome-Setup'
 New-Item -ItemType Directory -Force -Path $SetupDir | Out-Null
 Write-Host 'Sony Home setup: installs the launcher and selects it as HOME. No apps are removed or disabled.'
@@ -66,6 +66,12 @@ $Resolved = Run-Adb -Arguments @('shell','cmd','package','resolve-activity','--b
 if ($Resolved -notmatch [regex]::Escape($Package)) { throw "HOME was not assigned to Sony Home. Existing launchers were kept enabled. Resolver: $Resolved" }
 Write-Host 'Sony Home is now the default HOME app. Existing launchers were kept enabled.'
 Write-Host 'On the physical remote, press HOME and check the new interface. Test Left/Right/Up/Down, an app, Inputs and Wi-Fi.'
+Write-Host 'Watch Next: open Widgets and cleanup, then Watch Next. Other apps appear only when they publish cards.'
+Write-Host 'For Watch Hub, update its official TV app to build 191 or newer and enable Watch Next in its TV settings.'
+Write-Host 'Sony mirroring: test it last; native Sony Screen mirroring may disconnect Wi-Fi and this ADB session.'
+try {
+    Run-Adb -Arguments @('shell','content','query','--uri','content://android.media.tv/watch_next_program','--projection','_id:package_name:browsable') | Set-Content (Join-Path $BackupDir 'watch-next-provider.txt')
+} catch { Write-Warning 'Could not read Watch Next diagnostics from the shell. Use the launcher Watch Next menu.' }
 $Reboot = Read-Host 'Reboot the TV now to verify HOME persists? Type Y, or Enter to skip'
 if ($Reboot -match '^[Yy]$') {
     Run-Adb -Arguments @('reboot') | Out-Null
