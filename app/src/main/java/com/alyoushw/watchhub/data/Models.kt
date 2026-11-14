@@ -50,6 +50,7 @@ data class WatchItem(
     /** Service key → URL of the title's own page on that service. */
     val directLinks: Map<String, String> = emptyMap(),
     val addedAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = addedAt,
 ) {
     val key: String get() = keyOf(type, id)
 

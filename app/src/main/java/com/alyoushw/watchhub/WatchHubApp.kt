@@ -65,5 +65,6 @@ class WatchHubApp : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        com.alyoushw.watchhub.tv.WatchNextPublisher(this, container).start()
     }
 }

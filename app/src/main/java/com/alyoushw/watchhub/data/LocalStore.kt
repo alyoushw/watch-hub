@@ -41,13 +41,13 @@ class LocalStore(private val file: File) {
     suspend fun upsertWatch(item: WatchItem) = update { d ->
         val exists = d.watchlist.any { it.key == item.key }
         d.copy(
-            watchlist = if (exists) d.watchlist.map { if (it.key == item.key) item else it }
+            watchlist = if (exists) d.watchlist.map { if (it.key == item.key) item.copy(updatedAt = System.currentTimeMillis()) else it }
             else d.watchlist + item,
         )
     }
 
     suspend fun updateWatch(key: String, transform: (WatchItem) -> WatchItem) = update { d ->
-        d.copy(watchlist = d.watchlist.map { if (it.key == key) transform(it) else it })
+        d.copy(watchlist = d.watchlist.map { if (it.key == key) transform(it).copy(updatedAt = System.currentTimeMillis()) else it })
     }
 
     suspend fun removeWatch(key: String) = update { d ->

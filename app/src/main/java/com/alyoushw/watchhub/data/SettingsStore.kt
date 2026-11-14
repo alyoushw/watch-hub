@@ -67,6 +67,13 @@ class SettingsStore(context: Context) {
         _region.value = value
     }
 
+    private val _watchNext = MutableStateFlow(prefs.getBoolean("watch_next", false))
+    val watchNext: StateFlow<Boolean> = _watchNext.asStateFlow()
+    fun setWatchNext(value: Boolean) {
+        prefs.edit().putBoolean("watch_next", value).apply()
+        _watchNext.value = value
+    }
+
     private companion object {
         const val KEY_TMDB = "tmdb_key"
         const val KEY_REGION = "region"

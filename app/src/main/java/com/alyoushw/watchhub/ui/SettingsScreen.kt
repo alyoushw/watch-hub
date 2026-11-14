@@ -72,6 +72,7 @@ fun SettingsScreen() {
     val scope = rememberCoroutineScope()
     val savedKey by container.settings.apiKey.collectAsStateWithLifecycle()
     val region by container.settings.region.collectAsStateWithLifecycle()
+    val watchNext by container.settings.watchNext.collectAsStateWithLifecycle()
 
     var key by remember(savedKey) { mutableStateOf(savedKey) }
     var showKey by remember { mutableStateOf(false) }
@@ -90,6 +91,16 @@ fun SettingsScreen() {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            SectionTitle("متابعة المشاهدة على التلفزيون")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.Switch(
+                    checked = watchNext,
+                    onCheckedChange = { container.settings.setWatchNext(it) },
+                    modifier = Modifier.focusFrame(),
+                )
+                Text("عرض قائمتي في Watch Next")
+            }
+            Text("يعرض الأعمال التي أتابعها والحلقة التالية حسب التقدم المسجل هنا. لا يقرأ دقيقة التوقف من تطبيقات المنصات. التفعيل يتيح ظهور العناوين في لانشر التلفزيون، والتعطيل يحذف بطاقات Watch Hub.")
             SectionTitle("مفتاح TMDB")
             Text(
                 "TMDB قاعدة بيانات مجانية للأفلام والمسلسلات، ومنها نعرف وين متوفر كل عمل. سوّ حساب مجاني، " +

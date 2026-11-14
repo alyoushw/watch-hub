@@ -56,8 +56,16 @@ private fun NavHostController.switchTab(route: String) = navigate(route) {
 }
 
 @Composable
-fun WatchHubRoot() {
+fun WatchHubRoot(openRequest: android.net.Uri? = null, openSerial: Int = 0) {
     val nav = rememberNavController()
+    androidx.compose.runtime.LaunchedEffect(openRequest, openSerial) {
+        if (openRequest?.scheme == "watchhub" && openRequest.host == "detail") {
+            val parts = openRequest.pathSegments
+            val type = MediaType.fromPath(parts.getOrNull(0))
+            val id = parts.getOrNull(1)?.toIntOrNull()
+            if (type != null && id != null && id > 0) nav.openDetail(type, id)
+        }
+    }
     val backStack by nav.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
 
