@@ -100,6 +100,23 @@ data class ExternalIds(@SerialName("imdb_id") val imdbId: String? = null)
 @Serializable
 data class Credits(val cast: List<Person> = emptyList(), val crew: List<Person> = emptyList())
 
+/** A series' cast over all its seasons (TMDB keeps many series' casts only here). */
+@Serializable
+data class AggregateCredits(val cast: List<AggregatePerson> = emptyList())
+
+@Serializable
+data class AggregatePerson(
+    val id: Int = 0,
+    val name: String = "",
+    @SerialName("profile_path") val profilePath: String? = null,
+    val roles: List<Role> = emptyList(),
+    @SerialName("total_episode_count") val episodes: Int = 0,
+    val order: Int = 999,
+)
+
+@Serializable
+data class Role(val character: String? = null)
+
 @Serializable
 data class Video(
     val key: String = "",
@@ -183,6 +200,8 @@ data class Details(
     val id: Int,
     val title: String? = null,
     val name: String? = null,
+    @SerialName("original_title") val originalTitle: String? = null,
+    @SerialName("original_name") val originalName: String? = null,
     val overview: String? = null,
     @SerialName("poster_path") val posterPath: String? = null,
     @SerialName("backdrop_path") val backdropPath: String? = null,
@@ -202,6 +221,7 @@ data class Details(
     val networks: List<Named> = emptyList(),
     @SerialName("created_by") val createdBy: List<Named> = emptyList(),
     val credits: Credits? = null,
+    @SerialName("aggregate_credits") val aggregateCredits: AggregateCredits? = null,
     @SerialName("external_ids") val externalIds: ExternalIds? = null,
     /** Movies carry the IMDb id directly; series have it under external_ids. */
     @SerialName("imdb_id") val imdbId: String? = null,
@@ -239,10 +259,16 @@ class TmdbApi(private val settings: SettingsStore) {
         coerceInputValues = true
     }
 
-    suspend fun search(query: String): List<SearchResult> =
-        get("search/multi", mapOf("query" to query, "language" to "ar", "include_adult" to "false"), SearchResponse.serializer())
-            .results
-            .filter { it.type != null }
+    suspend fun search(query: String): List<SearchResult> = searchPage(query).results
+
+    suspend fun searchPage(query: String, page: Int = 1): SearchResponse {
+        val response = get(
+            "search/multi",
+            mapOf("query" to query, "language" to "ar", "include_adult" to "false", "page" to "${page.coerceIn(1, 500)}"),
+            SearchResponse.serializer(),
+        )
+        return response.copy(results = response.results.filter { it.type != null })
+    }
 
     /** Arabic details plus streaming availability, cast, trailers and recommendations. */
     suspend fun details(type: MediaType, id: Int): Details =
@@ -250,7 +276,8 @@ class TmdbApi(private val settings: SettingsStore) {
             "${type.path}/$id",
             mapOf(
                 "language" to "ar",
-                "append_to_response" to "watch/providers,credits,videos,recommendations,external_ids",
+                // Series: the cast of all seasons too ("credits" only has the latest one).
+                "append_to_response" to "watch/providers,credits,videos,recommendations,external_ids" + if (type == MediaType.TV) ",aggregate_credits" else "",
                 "include_video_language" to "ar,en",
             ),
             Details.serializer(),

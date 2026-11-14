@@ -1,12 +1,19 @@
 package com.alyoushw.watchhub.ui
 
+import android.net.Uri
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
@@ -19,6 +26,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -41,41 +49,49 @@ fun appContainer(): AppContainer =
 
 private enum class Tab(val route: String, val label: String, val icon: ImageVector) {
     HOME("home", "الرئيسية", Icons.Filled.Home),
+    KORA("kora", "كوره", Icons.Filled.DateRange),
     SEARCH("search", "البحث", Icons.Filled.Search),
     WATCHLIST("watchlist", "قائمتي", Icons.AutoMirrored.Filled.List),
     SUBSCRIPTIONS("subscriptions", "اشتراكاتي", Icons.Filled.DateRange),
+    XTREAM("xtream", "قنواتي", Icons.Filled.PlayArrow),
+    YOUTUBE("youtube", "يوتيوب", com.alyoushw.watchhub.player.PlayerIcons.YouTube),
     SETTINGS("settings", "الإعدادات", Icons.Filled.Settings),
 }
 
 fun NavHostController.openDetail(type: MediaType, id: Int) = navigate("detail/${type.path}/$id")
 
+/**
+ * A tab always opens at its own first page: tapping «الرئيسية» while on a title page goes back to
+ * Home itself, not to the page left open there before. (Nothing is saved or restored per tab.)
+ */
 private fun NavHostController.switchTab(route: String) = navigate(route) {
-    popUpTo(graph.findStartDestination().id) { saveState = true }
+    popUpTo(graph.findStartDestination().id)
     launchSingleTop = true
-    restoreState = true
 }
 
 @Composable
-fun WatchHubRoot(openRequest: android.net.Uri? = null, openSerial: Int = 0) {
-    val nav = rememberNavController()
-    androidx.compose.runtime.LaunchedEffect(openRequest, openSerial) {
-        if (openRequest?.scheme == "watchhub" && openRequest.host == "detail") {
-            val parts = openRequest.pathSegments
-            val type = MediaType.fromPath(parts.getOrNull(0))
-            val id = parts.getOrNull(1)?.toIntOrNull()
-            if (type != null && id != null && id > 0) nav.openDetail(type, id)
-        }
-    }
+fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
     val backStack by nav.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
 
     val tv = isTv()
+    // TVs and wide car screens: tabs in a side rail (a bottom bar eats a short screen's height).
+    val rail = tv || isWideShort()
+    // A TV's "scan to sign in" link opened on this phone: ask to approve it, over any screen.
+    PairApprovalDialog()
+    CrashNotice()
+    UpdateNotice()
+    // The Xtream tab only shows once an account is saved in Settings.
+    val xtream by appContainer().settings.xtream.collectAsStateWithLifecycle()
+    // The YouTube tab once it is switched on (Settings › يوتيوب).
+    val youtube by appContainer().settings.youtubeEnabled.collectAsStateWithLifecycle()
+    val tabs = Tab.entries.filter { (it != Tab.XTREAM || xtream.isComplete) && (it != Tab.YOUTUBE || youtube) }
     Scaffold(
         contentWindowInsets = WindowInsets(0),
         bottomBar = {
-            if (!tv) {
+            if (!rail) {
                 NavigationBar {
-                    Tab.entries.forEach { tab ->
+                    tabs.forEach { tab ->
                         NavigationBarItem(
                             selected = currentRoute == tab.route,
                             onClick = { nav.switchTab(tab.route) },
@@ -88,11 +104,15 @@ fun WatchHubRoot(openRequest: android.net.Uri? = null, openSerial: Int = 0) {
             }
         },
     ) { padding ->
-      Row(Modifier.fillMaxSize().padding(padding)) {
-        if (tv) {
+      // Landscape phones: keep clear of the side navigation bar and the camera notch.
+      Row(
+          Modifier.fillMaxSize().padding(padding)
+              .windowInsetsPadding(WindowInsets.safeDrawing.only(androidx.compose.foundation.layout.WindowInsetsSides.Horizontal)),
+      ) {
+        if (rail) {
             // On TV the tabs sit in a rail on the side, easy to reach with the remote.
-            NavigationRail {
-                Tab.entries.forEach { tab ->
+            NavigationRail(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                tabs.forEach { tab ->
                     NavigationRailItem(
                     modifier = Modifier.focusFrame(),
                         selected = currentRoute == tab.route,
@@ -113,6 +133,8 @@ fun WatchHubRoot(openRequest: android.net.Uri? = null, openSerial: Int = 0) {
                 HomeScreen(
                     onOpen = { type, id -> nav.openDetail(type, id) },
                     onOpenSettings = { nav.switchTab(Tab.SETTINGS.route) },
+                    onOpenXtreamSeries = { sid -> nav.navigate("xtream/series/${Uri.encode(sid)}") },
+                    onOpenAnime = { lookup -> nav.navigate(lookup.route()) },
                     onSeeAll = { section ->
                         val source = section.source
                         if (source != null) {
@@ -139,13 +161,41 @@ fun WatchHubRoot(openRequest: android.net.Uri? = null, openSerial: Int = 0) {
                 SearchScreen(
                     onOpen = { type, id -> nav.openDetail(type, id) },
                     onOpenSettings = { nav.switchTab(Tab.SETTINGS.route) },
+                    onOpenXtreamSeries = { sid -> nav.navigate("xtream/series/${Uri.encode(sid)}") },
                 )
             }
             composable(Tab.WATCHLIST.route) {
                 WatchlistScreen(onOpen = { type, id -> nav.openDetail(type, id) })
             }
             composable(Tab.SUBSCRIPTIONS.route) { SubscriptionsScreen() }
-            composable(Tab.SETTINGS.route) { SettingsScreen() }
+            composable(Tab.KORA.route) { KoraScreen(onBack = { nav.switchTab(Tab.HOME.route) }) }
+            composable(Tab.YOUTUBE.route) { YouTubeLauncher() }
+            composable(Tab.SETTINGS.route) { SettingsScreen(onOpenXtream = { nav.switchTab(Tab.XTREAM.route) }) }
+            composable(Tab.XTREAM.route) {
+                XtreamScreen(
+                    onOpenSeries = { id -> nav.navigate("xtream/series/${Uri.encode(id)}") },
+                    onOpenSettings = { nav.switchTab(Tab.SETTINGS.route) },
+                )
+            }
+            composable(
+                route = "xtream/series/{id}",
+                arguments = listOf(navArgument("id") { type = NavType.StringType }),
+            ) { entry ->
+                XtreamSeriesScreen(seriesId = entry.arguments?.getString("id").orEmpty(), onBack = { nav.popBackStack() })
+            }
+            composable("watch-sources/{lookup}", arguments = listOf(navArgument("lookup") { type = NavType.StringType })) { entry ->
+                val lookup = runCatching { decodeSourceLookup(entry.arguments?.getString("lookup").orEmpty()) }.getOrNull()
+                if (lookup != null) SourceWatchScreen(lookup, onBack = { nav.popBackStack() })
+                else MessageBox("تعذّر فتح مصادر المشاهدة", actionLabel = "رجوع", onAction = { nav.popBackStack() })
+            }
+            composable(
+                route = "animeify/{lookup}",
+                arguments = listOf(navArgument("lookup") { type = NavType.StringType }),
+            ) { entry ->
+                val lookup = runCatching { decodeAnimeLookup(entry.arguments?.getString("lookup").orEmpty()) }.getOrNull()
+                if (lookup != null) AnimeSourcesScreen(lookup, onBack = { nav.popBackStack() })
+                else MessageBox("تعذّر فتح صفحة أنمي فاي", actionLabel = "رجوع", onAction = { nav.popBackStack() })
+            }
             composable(
                 route = "detail/{type}/{id}",
                 arguments = listOf(
@@ -157,17 +207,21 @@ fun WatchHubRoot(openRequest: android.net.Uri? = null, openSerial: Int = 0) {
                 val id = entry.arguments?.getInt("id") ?: 0
                 if (type == MediaType.ANIME) {
                     AnimeDetailScreen(
+                        onOpenAnime = { lookup -> nav.navigate(lookup.route()) },
                         id = id,
                         onBack = { nav.popBackStack() },
                         onOpen = { t, i -> nav.openDetail(t, i) },
                     )
                 } else {
                     DetailScreen(
+                        onOpenSources = { lookup -> nav.navigate(lookup.route()) },
                         type = type,
                         id = id,
                         onBack = { nav.popBackStack() },
                         onOpen = { t, i -> nav.openDetail(t, i) },
                         onOpenPerson = { personId -> nav.navigate("person/$personId") },
+                        onOpenXtreamSeries = { sid -> nav.navigate("xtream/series/${Uri.encode(sid)}") },
+                        onOpenAnime = { lookup -> nav.navigate(lookup.route()) },
                     )
                 }
             }

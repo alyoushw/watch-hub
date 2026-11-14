@@ -10,6 +10,9 @@ import com.alyoushw.watchhub.data.RowSource
 import com.alyoushw.watchhub.data.SettingsStore
 import com.alyoushw.watchhub.data.StatusCache
 import com.alyoushw.watchhub.data.TmdbApi
+import com.alyoushw.watchhub.data.XtreamApi
+import com.alyoushw.watchhub.data.WatchHistory
+import com.alyoushw.watchhub.data.CloudSync
 import com.alyoushw.watchhub.data.MediaType
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -22,8 +25,42 @@ class AppContainer(context: Context) {
     val api = TmdbApi(settings)
     val links = DirectLinks()
     val jikan = JikanApi()
+    val animeify = com.alyoushw.watchhub.data.AnimeifyApi()
+    private val torrentIndex = com.alyoushw.watchhub.data.TpbTorrentIndex()
+    val movizTimeSources = com.alyoushw.watchhub.data.WatchSources({ listOf(com.alyoushw.watchhub.data.MovizTimeSourceProvider()) })
+    val topCinemaSources = com.alyoushw.watchhub.data.WatchSources({ listOf(com.alyoushw.watchhub.data.TopCinemaSourceProvider()) })
+    val egyBestSources = com.alyoushw.watchhub.data.WatchSources({ listOf(com.alyoushw.watchhub.data.EgyBestSourceProvider()) })
+    val watchSources = com.alyoushw.watchhub.data.WatchSources({
+        listOf(com.alyoushw.watchhub.data.OpenFilmSourceProvider(), com.alyoushw.watchhub.data.ArchiveSourceProvider()) +
+            (if (settings.torrentIndexEnabled.value) listOf(com.alyoushw.watchhub.data.TpbSourceProvider(torrentIndex)) else emptyList()) +
+            settings.sourceCatalogue.value.takeIf { it.isNotBlank() }?.let {
+                listOf(com.alyoushw.watchhub.data.ManifestSourceProvider(it))
+            }.orEmpty()
+    })
+    val playbackEngines = com.alyoushw.watchhub.data.PlaybackEngines(listOf(
+        com.alyoushw.watchhub.data.DirectPlaybackEngine(), com.alyoushw.watchhub.data.TorrentPlaybackEngine(context)))
     val assistant = ClaudeAssistant(settings)
+    val xtream = XtreamApi(settings)
+    val history = WatchHistory(context).also { it.remapAccounts(settings.accountIdChanges) }
+    val cloud = CloudSync(context, settings, history, store)
     val statusCache = StatusCache(context, api)
+    val updater = com.alyoushw.watchhub.data.Updater(context)
+    val recommender = com.alyoushw.watchhub.data.Recommender(context, api, history, store)
+    val stats = com.alyoushw.watchhub.data.WatchStats(context)
+    val downloads = com.alyoushw.watchhub.data.Downloads(context)
+
+
+    init {
+        // A new person on the device: the YouTube sign-in (kept by the in-app browser) goes too.
+        cloud.onProfileChange = {
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                runCatching {
+                    android.webkit.CookieManager.getInstance().removeAllCookies(null)
+                    android.webkit.WebStorage.getInstance().deleteAllData()
+                }
+            }
+        }
+    }
 
     private val navPrefs = context.getSharedPreferences("navigation", Context.MODE_PRIVATE)
     // RowSource has its own "type" field, so the subtype marker needs another name ("kind").
@@ -58,13 +95,29 @@ class AppContainer(context: Context) {
 @Serializable
 data class BrowseRequest(val title: String, val source: RowSource, val ranked: Boolean)
 
+const val CRASH_FILE = "last_crash.txt"
+
 class WatchHubApp : Application() {
     lateinit var container: AppContainer
         private set
 
     override fun onCreate() {
         super.onCreate()
+        // A crash leaves its reason in a file; the next start shows it (see CrashNotice).
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+            runCatching {
+                File(filesDir, CRASH_FILE).writeText(
+                    "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · Android ${android.os.Build.VERSION.RELEASE}\n" +
+                        error.stackTraceToString().take(6000),
+                )
+            }
+            previous?.uncaughtException(thread, error)
+        }
         container = AppContainer(this)
-        com.alyoushw.watchhub.tv.WatchNextPublisher(this, container).start()
+        com.alyoushw.watchhub.data.Net.watch(this)
+        container.cloud.start()
+        runCatching { container.updater.scheduleBackgroundChecks() }
+        runCatching { com.alyoushw.watchhub.data.NewEpisodesWorker.schedule(this) }
     }
 }

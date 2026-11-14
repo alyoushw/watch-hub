@@ -4,6 +4,23 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      distribution:
+        description: 'Private preview, main-app validation draft, or reviewed stable release'
+        type: choice
+        default: private
+        options:
+          - private
+          - stable
+          - validation
+      verified_run:
+        description: 'Optional previous run with passing app tests; application sources must match'
+        type: string
+        default: ''
+      device_tests:
+        description: 'Also run the Android emulator smoke test (about 4 extra minutes; validation builds always run it)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -11,6 +28,10 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      WATCHHUB_ANIMEIFY_TOKEN: ${{ secrets.WATCHHUB_ANIMEIFY_TOKEN }}
+      WATCHHUB_PREVIEW: ${{ (github.ref == 'refs/heads/feat/smart-watch-sources' || (inputs.distribution != 'validation' && ((github.ref != 'refs/heads/main' && github.ref != 'refs/heads/ccr-3b14310b-u6y40j') || (github.event_name == 'workflow_dispatch' && inputs.distribution == 'private')))) && 'true' || 'false' }}
+      APK_NAME: ${{ (github.ref == 'refs/heads/feat/smart-watch-sources' || (inputs.distribution != 'validation' && ((github.ref != 'refs/heads/main' && github.ref != 'refs/heads/ccr-3b14310b-u6y40j') || (github.event_name == 'workflow_dispatch' && inputs.distribution == 'private')))) && 'WatchHub-Smart-Preview.apk' || 'WatchHub.apk' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -19,7 +40,77 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # Save Gradle's caches from every branch (not only main), so later builds skip downloads.
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+
+      - name: Verify reusable app test results
+        id: prior_checks
+        if: github.event_name == 'workflow_dispatch' && inputs.distribution == 'validation' && inputs.verified_run != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFIED_RUN: ${{ inputs.verified_run }}
+        run: python .github/scripts/reuse-app-verification.py
+
+      - name: Tests and lint
+        if: steps.prior_checks.outputs.unit_lint_reused != 'true'
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest lintDebug --stacktrace
+
+      - name: Upload verification reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-reports
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+            app/build/reports/lint-results-debug.*
+            app/build/reports/lint-results.txt
+
+      - name: Print lint diagnostics
+        if: always()
+        run: |
+          if [ -f app/build/reports/lint-results.txt ]; then
+            cat app/build/reports/lint-results.txt
+          fi
+
+      # The emulator test takes about 4 minutes and is often flaky: only when asked for
+      # (the "device_tests" input) or for validation builds.
+      - name: Compile Android regression tests
+        if: steps.prior_checks.outputs.reused != 'true' && (inputs.device_tests || inputs.distribution == 'validation')
+        run: |
+          chmod +x gradlew
+          ./gradlew compileDebugAndroidTestKotlin --stacktrace
+
+      - name: Enable KVM for Android smoke test
+        if: steps.prior_checks.outputs.reused != 'true' && (inputs.device_tests || inputs.distribution == 'validation')
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Android device smoke test
+        if: steps.prior_checks.outputs.reused != 'true' && (inputs.device_tests || inputs.distribution == 'validation')
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: bash .github/scripts/android-smoke.sh
+
+      - name: Upload device smoke reports
+        if: always() && (inputs.device_tests || inputs.distribution == 'validation')
+        uses: actions/upload-artifact@v4
+        with:
+          name: device-smoke-reports
+          path: |
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+            app/build/reports/screenshots/
 
       - name: Restore signing key
         env:
@@ -34,6 +125,7 @@ jobs:
 
       - name: Build APK
         env:
+          WATCHHUB_ANIMEIFY_TOKEN: ${{ secrets.WATCHHUB_ANIMEIFY_TOKEN }}
           WATCHHUB_KEYSTORE_PASSWORD: ${{ secrets.WATCHHUB_KEYSTORE_PASSWORD }}
           WATCHHUB_KEY_ALIAS: ${{ secrets.WATCHHUB_KEY_ALIAS }}
           WATCHHUB_KEY_PASSWORD: ${{ secrets.WATCHHUB_KEY_PASSWORD }}
@@ -42,19 +134,51 @@ jobs:
           ./gradlew assembleRelease --stacktrace
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/release/app-release.apk WatchHub.apk
+        run: cp app/build/outputs/apk/release/app-release.apk "$APK_NAME"
+
+      - name: Verify compatibility with the installed main application
+        if: github.event_name == 'workflow_dispatch' && (inputs.distribution == 'validation' || ((github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ccr-3b14310b-u6y40j') && inputs.distribution == 'stable'))
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python .github/scripts/verify-stable-apk.py "$APK_NAME"
 
       - uses: actions/upload-artifact@v4
+        if: env.WATCHHUB_PREVIEW != 'true' && inputs.distribution != 'validation'
         with:
           name: WatchHub-apk
-          path: WatchHub.apk
+          path: ${{ env.APK_NAME }}
 
-      # Every build of main becomes a release, so the APK can be downloaded straight from the phone.
+      # Validate source configuration before creating any release asset.
+      - name: Verify release source configuration
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        env:
+          ANIMEIFY_TOKEN: ${{ secrets.WATCHHUB_ANIMEIFY_TOKEN }}
+        run: |
+          if [ -z "$ANIMEIFY_TOKEN" ]; then
+            echo "Configure WATCHHUB_ANIMEIFY_TOKEN before publishing an Animeify-enabled release."
+            exit 1
+          fi
+
       - name: Publish release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: env.WATCHHUB_PREVIEW != 'true' && ((github.ref == 'refs/heads/main' && github.event_name == 'push') || ((github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ccr-3b14310b-u6y40j') && github.event_name == 'workflow_dispatch' && inputs.distribution == 'stable'))
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
           name: Watch Hub (build ${{ github.run_number }})
-          files: WatchHub.apk
+          files: ${{ env.APK_NAME }}
           make_latest: true
+          target_commitish: ${{ github.sha }}
+
+      # Draft assets are accessible only to repository writers; the main release is untouched.
+      - name: Create private preview draft
+        if: github.event_name == 'workflow_dispatch' && (inputs.distribution == 'private' || inputs.distribution == 'validation')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.distribution == 'validation' && 'stable-candidate' || 'smart-preview' }}-${{ github.run_number }}
+          name: Watch Hub - private ${{ inputs.distribution == 'validation' && 'update candidate' || 'smart preview' }} ${{ github.run_number }}
+          files: ${{ env.APK_NAME }}
+          draft: true
+          prerelease: true
+          make_latest: false
+          target_commitish: ${{ github.sha }}
+          body: ${{ inputs.distribution == 'validation' && 'ملف مراجعة خاص لتحديث التطبيق الأساسي بنفس المعرّف والتوقيع. لم ينشر كتحديث عام.' || 'نسخة خاصة مستقلة للتجربة. لا تستبدل التطبيق الرئيسي ولا تُرسل كتحديث عام.' }}

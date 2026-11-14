@@ -50,7 +50,8 @@ data class WatchItem(
     /** Service key → URL of the title's own page on that service. */
     val directLinks: Map<String, String> = emptyMap(),
     val addedAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = addedAt,
+    /** Last change the user made (status, episode), for syncing between devices. */
+    val updatedAt: Long = 0,
 ) {
     val key: String get() = keyOf(type, id)
 
@@ -142,4 +143,6 @@ data class StoreData(
     val subscriptions: List<Subscription> = emptyList(),
     /** The user's saved "taste" presets for search. */
     val savedFilters: List<SavedFilter> = emptyList(),
+    /** Watchlist keys the user removed, and when (so a synced copy cannot bring them back). */
+    val removedWatch: Map<String, Long> = emptyMap(),
 )

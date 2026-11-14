@@ -254,15 +254,15 @@ private fun SubscriptionDialog(
                     onValueChange = { name = it },
                     label = { Text("الاسم") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(),
                 )
                 OutlinedTextField(
                     value = price,
                     onValueChange = { price = it },
                     label = { Text("السعر (ر.س)") },
                     singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = tvKeyboard(KeyboardOptions(keyboardType = KeyboardType.Decimal)),
+                    modifier = Modifier.fillMaxWidth().tvTextField(),
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     BillingCycle.entries.forEach { c ->

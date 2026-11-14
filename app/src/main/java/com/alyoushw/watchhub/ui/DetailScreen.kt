@@ -146,6 +146,7 @@ data class DetailInfo(
     val genreIds: List<Int> = emptyList(),
     /** Production countries as ISO codes, e.g. ["SA"]. */
     val countries: List<String> = emptyList(),
+    val originalTitle: String = "",
 ) {
     /** "🇸🇦 سعودي" style label(s) for the header. */
     val countryText: String?
@@ -193,6 +194,7 @@ data class DetailInfo(
                 id = ar.id,
                 title = ar.displayTitle.ifBlank { en?.displayTitle.orEmpty() },
                 searchTitle = en?.displayTitle?.ifBlank { null } ?: ar.displayTitle,
+                originalTitle = ar.originalTitle ?: ar.originalName ?: en?.originalTitle ?: en?.originalName ?: en?.displayTitle.orEmpty(),
                 year = ar.year,
                 tagline = (ar.tagline?.ifBlank { null } ?: en?.tagline?.ifBlank { null }),
                 overview = overview,
@@ -223,7 +225,9 @@ data class DetailInfo(
                 overviewIsEnglish = arOverview.isBlank() && enOverview.isNotBlank(),
                 originalLanguage = ar.originalLanguage,
                 genreIds = ar.genres.map { it.id }.filter { it > 0 },
-                cast = ar.credits?.cast.orEmpty().take(15).map { CastMember(it.id, it.name, it.character, it.profilePath) },
+                cast = ar.aggregateCredits?.cast.orEmpty().sortedBy { it.order }.take(25)
+                    .map { CastMember(it.id, it.name, it.roles.firstOrNull { r -> !r.character.isNullOrBlank() }?.character, it.profilePath) }
+                    .ifEmpty { ar.credits?.cast.orEmpty().take(25).map { CastMember(it.id, it.name, it.character, it.profilePath) } },
                 countries = ar.originCountry.ifEmpty { ar.productionCountries.map { it.code } }.filter { it.isNotBlank() }.distinct(),
                 trailers = trailers,
                 reviews = reviews,
@@ -402,6 +406,9 @@ fun DetailScreen(
     onBack: () -> Unit,
     onOpen: (MediaType, Int) -> Unit,
     onOpenPerson: (Int) -> Unit = {},
+    onOpenXtreamSeries: (String) -> Unit = {},
+    onOpenAnime: (AnimeLookup) -> Unit = {},
+    onOpenSources: (SourceLookup) -> Unit = {},
 ) {
     val container = appContainer()
     val vm: DetailViewModel = viewModel { DetailViewModel(container, type, id) }
@@ -424,7 +431,7 @@ fun DetailScreen(
             when (val s = vm.state) {
                 DetailState.Loading -> CenteredLoading()
                 is DetailState.Failed -> MessageBox(s.message, actionLabel = "حاول مرة ثانية", onAction = vm::load)
-                is DetailState.Loaded -> DetailContent(s.info, vm.links, vm.similar, onAdd = { vm.addToWatchlist(s.info) }, onOpen = onOpen, onOpenPerson = onOpenPerson)
+                is DetailState.Loaded -> DetailContent(s.info, vm.links, vm.similar, onAdd = { vm.addToWatchlist(s.info) }, onOpen = onOpen, onOpenPerson = onOpenPerson, onOpenXtreamSeries = onOpenXtreamSeries, onOpenAnime = onOpenAnime, onOpenSources = onOpenSources)
             }
         }
     }
@@ -439,6 +446,9 @@ private fun DetailContent(
     onAdd: () -> Unit,
     onOpen: (MediaType, Int) -> Unit,
     onOpenPerson: (Int) -> Unit,
+    onOpenXtreamSeries: (String) -> Unit,
+    onOpenAnime: (AnimeLookup) -> Unit,
+    onOpenSources: (SourceLookup) -> Unit,
 ) {
     val container = appContainer()
     val context = LocalContext.current
@@ -452,9 +462,47 @@ private fun DetailContent(
         contentPadding = PaddingValues(bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        item { Header(info) }
+        item {
+            Header(info) {
+                XtreamWatchButton(
+                    isSeries = info.type == MediaType.TV,
+                    tmdbId = info.id,
+                    titles = listOf(info.title, info.searchTitle),
+                    year = info.year,
+                    onOpenSeries = onOpenXtreamSeries,
+                )
+            }
+        }
 
         item { WatchButtons(info, links, subscribedKeys, onWatch) }
+
+        item { Column(Modifier.padding(horizontal = 16.dp)) { SourceWatchButton(info.sourceLookup(), onOpenSources, Modifier.fillMaxWidth()) } }
+
+        item { Column(Modifier.padding(horizontal = 16.dp)) {
+            SourceWatchButton(info.sourceLookup().copy(providerId = "moviz-time"), onOpenSources,
+                Modifier.fillMaxWidth(), label = "تشغيل Moviz Time")
+        } }
+
+        item { Column(Modifier.padding(horizontal = 16.dp)) {
+            SourceWatchButton(info.sourceLookup().copy(providerId = "topcinema"), onOpenSources,
+                Modifier.fillMaxWidth(), label = "تشغيل TopCinema")
+        } }
+
+        item { Column(Modifier.padding(horizontal = 16.dp)) {
+            SourceWatchButton(info.sourceLookup().copy(providerId = "egybest"), onOpenSources,
+                Modifier.fillMaxWidth(), label = "تشغيل EgyBest")
+        } }
+
+        if (16 in info.genreIds && (info.originalLanguage == "ja" || "JP" in info.countries)) {
+            item {
+                Column(Modifier.padding(horizontal = 16.dp)) {
+                    AnimeifyWatchButton(AnimeLookup(info.title, info.searchTitle, info.type == MediaType.MOVIE,
+                        info.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }, info.type, info.id,
+                        overview = info.overview, overviewIsEnglish = info.overviewIsEnglish,
+                        backdrop = info.backdropPath?.let { "https://image.tmdb.org/t/p/w1280$it" }), onOpenAnime, Modifier.fillMaxWidth())
+                }
+            }
+        }
 
         item {
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -557,7 +605,7 @@ private fun DetailContent(
 }
 
 @Composable
-private fun Header(info: DetailInfo) {
+private fun Header(info: DetailInfo, extra: @Composable () -> Unit = {}) {
     Box(Modifier.fillMaxWidth()) {
         // The wide image stays as a faint background; the poster is the face of the page.
         if (info.backdropPath != null) {
@@ -599,6 +647,7 @@ private fun Header(info: DetailInfo) {
                     }
                     if (info.type == MediaType.TV) StatusBadge(info.id)
                     BadgeRow(info.availableServices)
+                    extra()
                 }
             }
             info.tagline?.let {

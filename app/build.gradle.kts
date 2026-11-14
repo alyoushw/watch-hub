@@ -8,13 +8,23 @@ plugins {
 android {
     namespace = "com.alyoushw.watchhub"
     compileSdk = 35
+    val privatePreview = System.getenv("WATCHHUB_PREVIEW") == "true"
 
     defaultConfig {
-        applicationId = "com.alyoushw.watchhub"
+        applicationId = if (privatePreview) "com.alyoushw.watchhub.smartpreview" else "com.alyoushw.watchhub"
+        manifestPlaceholders["appLabel"] = "@string/app_name"
         minSdk = 26
         targetSdk = 35
-        versionCode = 21
-        versionName = "0.14.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // The CI run number is the build number ("build-84"): the app compares it with the newest
+        // release to offer updates. Local builds count as 0 (always older).
+        val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0
+        versionCode = 100 + build
+        versionName = "0.24.$build" + if (privatePreview) "-preview" else ""
+        buildConfigField("int", "BUILD_NUMBER", "$build")
+        buildConfigField("boolean", "IS_PREVIEW", privatePreview.toString())
+        val animeifyToken = System.getenv("WATCHHUB_ANIMEIFY_TOKEN").orEmpty().trim()
+        buildConfigField("String", "ANIMEIFY_TOKEN", "\"${animeifyToken.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
     }
 
     // A fixed release key (from CI secrets) lets new APKs install over old ones and keep the data.
@@ -57,6 +67,12 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
+    }
+
+    lint {
+        textReport = true
+        textOutput = file("build/reports/lint-results.txt")
     }
 
     packaging {
@@ -76,7 +92,22 @@ android {
 }
 
 dependencies {
+    implementation("org.libtorrent4j:libtorrent4j:2.1.0-39")
+    runtimeOnly("org.libtorrent4j:libtorrent4j-android-arm64:2.1.0-39")
+    runtimeOnly("org.libtorrent4j:libtorrent4j-android-arm:2.1.0-39")
+    runtimeOnly("org.libtorrent4j:libtorrent4j-android-x86_64:2.1.0-39")
+    runtimeOnly("org.libtorrent4j:libtorrent4j-android-x86:2.1.0-39")
+    implementation("com.google.mlkit:language-id:17.0.6")
+    implementation("org.jsoup:jsoup:1.18.3")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:core-ktx:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
@@ -93,5 +124,21 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.anthropic.java)
     implementation(libs.mlkit.translate)
+    implementation(libs.androidx.work)
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.okhttp)
+    // FFmpeg audio decoders (Dolby AC3 / E-AC3, DTS, MP2…) for devices without them, like car screens.
+    implementation(libs.media3.ffmpeg)
+    implementation(libs.media3.exoplayer.hls)
+    implementation(libs.media3.ui)
+    // Watch Hub account: Google sign-in and sync (Firebase, configured at runtime from the web app).
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.auth)
+    implementation(libs.firebase.firestore)
+    implementation(libs.kotlinx.coroutines.play.services)
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play)
+    implementation(libs.googleid)
+    implementation(libs.zxing.core)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

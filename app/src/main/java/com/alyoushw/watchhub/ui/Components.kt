@@ -8,12 +8,19 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.composed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.alyoushw.watchhub.data.MediaType
+import androidx.compose.foundation.combinedClickable
 import com.alyoushw.watchhub.data.StatusCache
 import com.alyoushw.watchhub.data.countryFlag
 import androidx.compose.foundation.Image
@@ -200,9 +207,14 @@ fun RatingChip(value: Double?, modifier: Modifier = Modifier) {
 
 /** Poster with title; [rank] draws a large "top 10" number on it. */
 @Composable
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 fun PosterCard(item: SearchResult, rank: Int? = null, width: Dp = 120.dp, onClick: () -> Unit) {
+    val context = LocalContext.current
     Column(
-        Modifier.width(width).focusHighlight().clickable(onClick = onClick),
+        // Long press: share it.
+        Modifier.width(width).focusHighlight()
+            .remoteLongPress({ context.shareTitle(item.displayTitle, item.type, item.id) }, onClick)
+            .combinedClickable(onClick = onClick, onLongClick = { context.shareTitle(item.displayTitle, item.type, item.id) }),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Box {
@@ -234,6 +246,8 @@ fun PosterCard(item: SearchResult, rank: Int? = null, width: Dp = 120.dp, onClic
         Text(
             item.displayTitle,
             style = MaterialTheme.typography.bodySmall,
+            // Always two lines high: a row's height must not change while moving along it.
+            minLines = 2,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
@@ -397,6 +411,221 @@ fun Modifier.focusHighlight(shape: Shape = RoundedCornerShape(10.dp)): Modifier 
             ambientColor = Gold,
             spotColor = Gold,
         )
+        // Drawn on top, never changing the card's size: a size change on focus made rows shift
+        // and the screen shake while moving with the remote.
         .border(width = if (focused) 3.dp else 0.dp, color = if (focused) FocusColor else Color.Transparent, shape = shape)
-        .padding(if (focused) 2.dp else 0.dp)
 }
+
+/**
+ * A very wide, short screen (car head units like 1920×720): the tabs move to a side rail and
+ * big banners get more of the height.
+ */
+@Composable
+fun isWideShort(): Boolean {
+    val c = androidx.compose.ui.platform.LocalConfiguration.current
+    return c.screenHeightDp < 560 && c.screenWidthDp >= c.screenHeightDp * 1.9f
+}
+
+/** After a crash: what went wrong, so the user can send a photo of it. Shown once. */
+@Composable
+fun CrashNotice() {
+    val context = LocalContext.current
+    val file = remember { java.io.File(context.filesDir, com.alyoushw.watchhub.CRASH_FILE) }
+    var text by remember { mutableStateOf(runCatching { file.takeIf { it.exists() }?.readText() }.getOrNull()) }
+    val t = text ?: return
+    fun done() {
+        runCatching { file.delete() }
+        text = null
+    }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = ::done,
+        title = { Text("التطبيق طلع بسبب خطأ") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("صوّر هالرسالة وأرسلها عشان نصلّح المشكلة:", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    t.lines().filter { it.isNotBlank() }.take(14).joinToString("\n"),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(modifier = Modifier.focusFrame(), onClick = ::done) { Text("تمام") }
+        },
+    )
+}
+
+/**
+ * Shares a film or series with the phone's share sheet: its name and its page on the user's
+ * Watch Hub site (never a stream link from the Xtream account, which carries the password).
+ */
+fun android.content.Context.shareTitle(title: String, type: MediaType?, id: Int?) {
+    val site = (applicationContext as com.alyoushw.watchhub.WatchHubApp).container.settings.webUrl.value.trimEnd('/')
+    val link = when {
+        id == null || type == null -> null
+        type == MediaType.ANIME -> "https://myanimelist.net/anime/$id"
+        else -> "$site/#/title/${type.path}/$id"
+    }
+    val kind = when (type) {
+        MediaType.MOVIE -> "فيلم"
+        MediaType.TV -> "مسلسل"
+        MediaType.ANIME -> "أنمي"
+        null -> "عمل"
+    }
+    val text = "🎬 أنصحك بـ$kind «$title»" + (link?.let { "\n$it" } ?: "\n$site")
+    val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+        .putExtra(android.content.Intent.EXTRA_SUBJECT, title)
+        .putExtra(android.content.Intent.EXTRA_TEXT, text)
+    try {
+        startActivity(android.content.Intent.createChooser(send, "مشاركة «$title»").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+    } catch (_: android.content.ActivityNotFoundException) {
+        android.widget.Toast.makeText(this, "المشاركة غير متوفرة على هذا الجهاز", android.widget.Toast.LENGTH_SHORT).show()
+    }
+}
+
+/** Shares a title from the Xtream account: finds its TMDB page by name first. */
+suspend fun android.content.Context.shareByName(api: com.alyoushw.watchhub.data.TmdbApi, name: String, type: MediaType, knownId: Int? = null) {
+    val clean = com.alyoushw.watchhub.data.XtreamApi.normalizeTitle(name)
+    val hit = if (knownId != null) null else runCatching { api.search(clean).firstOrNull { it.type == type } }.getOrNull()
+    shareTitle(hit?.displayTitle ?: name, type, knownId ?: hit?.id)
+}
+
+/**
+ * How lists scroll to the item the remote moves to: only when it is not fully on screen, and
+ * only as far as needed (with a little room around it). Compose's TV default keeps the focused
+ * item at a fixed point instead, scrolling rows and the page on every press, which made the
+ * screen shake on TVs (worse with right-to-left rows).
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+class CalmBringIntoView(private val margin: Float) : androidx.compose.foundation.gestures.BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+        val end = offset + size
+        return when {
+            // Fully visible (with room around it): stay still.
+            offset >= margin && end <= containerSize - margin -> 0f
+            // Bigger than the space: line up its start.
+            size > containerSize - 2 * margin -> offset - margin
+            offset < margin -> offset - margin
+            else -> end - (containerSize - margin)
+        }
+    }
+}
+
+/**
+ * Before sharing a play link from the Xtream account: it starts playing at once in any player
+ * (VLC…), but it carries the account's user name and password. Shared only after this warning.
+ */
+@Composable
+fun StreamShareDialog(title: String, url: String, onDone: () -> Unit) {
+    val context = LocalContext.current
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDone,
+        title = { Text("مشاركة رابط التشغيل") },
+        text = {
+            Text(
+                "الرابط يشغّل «$title» على طول في أي مشغل (مثل VLC). بس انتبه: الرابط فيه اسم المستخدم وكلمة المرور حق حسابك، " +
+                    "فأي أحد يوصله يقدر يستخدم حسابك، وبعض المزودين يسمحون بجهاز واحد بس في نفس الوقت. شاركه مع ناس تثق فيهم.",
+            )
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(modifier = Modifier.focusFrame(), onClick = {
+                val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                    .putExtra(android.content.Intent.EXTRA_SUBJECT, title)
+                    .putExtra(android.content.Intent.EXTRA_TEXT, "▶ $title\n$url")
+                try {
+                    context.startActivity(android.content.Intent.createChooser(send, "مشاركة «$title»").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                } catch (_: android.content.ActivityNotFoundException) {
+                    android.widget.Toast.makeText(context, "المشاركة غير متوفرة على هذا الجهاز", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                onDone()
+            }) { Text("شارك الرابط") }
+        },
+        dismissButton = { androidx.compose.material3.TextButton(modifier = Modifier.focusFrame(), onClick = onDone) { Text("إلغاء") } },
+    )
+}
+
+/**
+ * Lists and text pages keep a readable width on wide screens (landscape phones, tablets,
+ * car screens): centred, no wider than [max], instead of lines running across the whole screen.
+ */
+fun Modifier.readableWidth(max: androidx.compose.ui.unit.Dp = 820.dp): Modifier =
+    this.fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = max)
+
+/**
+ * Long press with a TV remote: holding OK (or pressing the remote's Menu key) does what a long
+ * touch does — the remote sends a repeating key, which `combinedClickable` does not take as one.
+ * Put it before the `clickable` of the same element.
+ */
+fun Modifier.remoteLongPress(onLongPress: () -> Unit, onClick: () -> Unit): Modifier = composed {
+    var armed by remember { mutableStateOf(false) }
+    var pressed by remember { mutableStateOf(false) }
+    var menuPressed by remember { mutableStateOf(false) }
+    Modifier.onFocusChanged { state ->
+        if (!state.isFocused && !state.hasFocus) { armed = false; pressed = false; menuPressed = false }
+    }.onPreviewKeyEvent { e ->
+        val ok = e.key == androidx.compose.ui.input.key.Key.DirectionCenter || e.key == androidx.compose.ui.input.key.Key.Enter ||
+            e.key == androidx.compose.ui.input.key.Key.NumPadEnter
+        val down = e.type == androidx.compose.ui.input.key.KeyEventType.KeyDown
+        when {
+            e.key == androidx.compose.ui.input.key.Key.Menu -> {
+                if (down) menuPressed = true
+                else if (menuPressed) { menuPressed = false; onLongPress() }
+                true
+            }
+            ok && down -> {
+                if (e.nativeKeyEvent.repeatCount == 0) { pressed = true; armed = false }
+                else { pressed = true; armed = true }
+                if (e.nativeKeyEvent.isLongPress && pressed) armed = true
+                // Own the entire key gesture, so combinedClickable cannot start a second
+                // long-press timer or forward the held key into the new dialog.
+                true
+            }
+            ok -> {
+                val activate = pressed
+                val long = armed || e.nativeKeyEvent.eventTime - e.nativeKeyEvent.downTime >= android.view.ViewConfiguration.getLongPressTimeout()
+                pressed = false
+                armed = false
+                if (activate) { if (long) onLongPress() else onClick() }
+                true
+            }
+            else -> false
+        }
+    }
+}
+
+/**
+ * Text boxes on TV: the remote can pass through them. Up / down go to the next control (the box
+ * does not grab them); the keyboard opens only when OK is pressed on the box, not when the remote
+ * merely lands on it (see [tvKeyboard]).
+ */
+fun Modifier.tvTextField(): Modifier = composed {
+    if (!isTv()) return@composed Modifier
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    Modifier.onPreviewKeyEvent { e ->
+        if (e.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) return@onPreviewKeyEvent false
+        when (e.key) {
+            androidx.compose.ui.input.key.Key.DirectionDown -> {
+                keyboard?.hide()
+                focus.moveFocus(androidx.compose.ui.focus.FocusDirection.Down)
+                true
+            }
+            androidx.compose.ui.input.key.Key.DirectionUp -> {
+                keyboard?.hide()
+                focus.moveFocus(androidx.compose.ui.focus.FocusDirection.Up)
+                true
+            }
+            androidx.compose.ui.input.key.Key.DirectionCenter, androidx.compose.ui.input.key.Key.Enter, androidx.compose.ui.input.key.Key.NumPadEnter -> {
+                keyboard?.show()
+                true
+            }
+            else -> false
+        }
+    }
+}
+
+/** On TV the keyboard waits for OK on the box (see [tvTextField]); elsewhere as usual. */
+@Composable
+fun tvKeyboard(base: androidx.compose.foundation.text.KeyboardOptions = androidx.compose.foundation.text.KeyboardOptions.Default): androidx.compose.foundation.text.KeyboardOptions =
+    if (isTv()) base.copy(showKeyboardOnFocus = false) else base

@@ -1,5 +1,6 @@
 package com.alyoushw.watchhub.ui
 
+import com.alyoushw.watchhub.data.WatchEntry
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Box
@@ -26,7 +27,10 @@ import com.alyoushw.watchhub.data.RowSource
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -386,7 +390,13 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, onSeeAll: (HomeSection) -> Unit) {
+fun HomeScreen(
+    onOpen: (MediaType, Int) -> Unit,
+    onOpenSettings: () -> Unit,
+    onSeeAll: (HomeSection) -> Unit,
+    onOpenXtreamSeries: (String) -> Unit = {},
+    onOpenAnime: (AnimeLookup) -> Unit = {},
+) {
     val container = appContainer()
     val vm: HomeViewModel = viewModel { HomeViewModel(container) }
     val apiKey by container.settings.apiKey.collectAsStateWithLifecycle()
@@ -401,11 +411,64 @@ fun HomeScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, onS
         onPauseOrDispose { }
     }
 
-    val header: @Composable () -> Unit = { HeroTabs(vm.type, vm::selectType, vm::refresh) }
-    Box(Modifier.fillMaxSize()) {
+    var live by rememberSaveable { mutableStateOf(false) }
+    // Each tab keeps its own: episodes under series, films under films (channels live in «مباشر»).
+    val continueKinds = when (vm.type) {
+        MediaType.TV -> setOf(WatchEntry.EPISODE, WatchEntry.ANIME)
+        MediaType.MOVIE -> setOf(WatchEntry.MOVIE, WatchEntry.ANIME)
+        else -> setOf(WatchEntry.ANIME)
+    }
+    val header: @Composable () -> Unit = {
+        HeroTabs(
+            selected = vm.type,
+            onSelect = { live = false; vm.selectType(it) },
+            onRefresh = vm::refresh,
+            live = live,
+            onLive = { live = true },
+        )
+    }
+    // A sideways swipe on empty space moves to the next tab (مباشر · مسلسلات · أفلام · أنمي), so
+    // a car screen needs no aim at the small tab names. Rows that scroll sideways keep their swipe.
+    val order = listOf<MediaType?>(null, MediaType.TV, MediaType.MOVIE, MediaType.ANIME)
+    fun moveTab(step: Int) {
+        val now = if (live) 0 else order.indexOf(vm.type).coerceAtLeast(1)
+        val next = (now + step).coerceIn(0, order.lastIndex)
+        if (next == now) return
+        val t = order[next]
+        if (t == null) {
+            live = true
+        } else {
+            live = false
+            vm.selectType(t)
+        }
+    }
+    val tv = isTv()
+    Box(
+        // TVs have no touch screen: no swipe handling there at all.
+        Modifier.fillMaxSize().then(if (tv) Modifier else Modifier.pointerInput(Unit) {
+            var total = 0f
+            detectHorizontalDragGestures(
+                onDragStart = { total = 0f },
+                onDragEnd = {
+                    // Right-to-left tabs: a swipe to the right goes to the next one (on the left).
+                    if (kotlin.math.abs(total) > 110.dp.toPx()) moveTab(if (total > 0) 1 else -1)
+                },
+                onHorizontalDrag = { _, d -> total += d },
+            )
+        }),
+    ) {
         when {
+            live -> Column {
+                header()
+                XtreamLiveChannels(onOpenSettings)
+            }
+
             apiKey.isBlank() -> Column {
                 header()
+                // "تابع المشاهدة" never waits for (or depends on) the TMDB rows.
+                ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true },
+                    onOpenAnime = { onOpenAnime(it.animeLookup()) },
+                    animeMovies = when (vm.type) { MediaType.TV -> false; MediaType.MOVIE -> true; else -> null })
                 MessageBox(
                     title = "خطوة وحدة قبل نبدأ",
                     body = "حط مفتاح TMDB المجاني في الإعدادات عشان نعرض لك أفضل الأعمال في كل منصة.",
@@ -416,11 +479,17 @@ fun HomeScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, onS
 
             vm.loading && vm.sections.isEmpty() -> Column {
                 header()
+                ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true },
+                    onOpenAnime = { onOpenAnime(it.animeLookup()) },
+                    animeMovies = when (vm.type) { MediaType.TV -> false; MediaType.MOVIE -> true; else -> null })
                 CenteredLoading()
             }
 
             vm.error != null && vm.sections.isEmpty() -> Column {
                 header()
+                ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true },
+                    onOpenAnime = { onOpenAnime(it.animeLookup()) },
+                    animeMovies = when (vm.type) { MediaType.TV -> false; MediaType.MOVIE -> true; else -> null })
                 MessageBox(vm.error.orEmpty(), actionLabel = "حاول مرة ثانية", onAction = vm::refresh)
             }
 
@@ -438,6 +507,10 @@ fun HomeScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, onS
                             onOpen = { item -> item.type?.let { onOpen(it, item.id) } },
                         )
                     }
+                    item(key = "continue") { ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true },
+                    onOpenAnime = { onOpenAnime(it.animeLookup()) },
+                    animeMovies = when (vm.type) { MediaType.TV -> false; MediaType.MOVIE -> true; else -> null }) }
+                    item(key = "foryou") { ForYouRow(vm.type, onOpen) }
                     items(vm.sections.filter { !(it.wide && it.id == hero?.id) }, key = { it.id }) { section ->
                         TitleRow(
                             title = section.title,

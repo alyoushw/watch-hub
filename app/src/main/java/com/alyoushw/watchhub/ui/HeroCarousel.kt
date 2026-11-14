@@ -36,6 +36,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,17 +66,32 @@ import kotlinx.coroutines.launch
 
 /** Tabs drawn over the hero: text with a gold underline on the selected one. */
 @Composable
-fun HeroTabs(selected: MediaType, onSelect: (MediaType) -> Unit, onRefresh: () -> Unit) {
+fun HeroTabs(
+    selected: MediaType,
+    onSelect: (MediaType) -> Unit,
+    onRefresh: () -> Unit,
+    live: Boolean = false,
+    onLive: (() -> Unit)? = null,
+) {
     Row(
         Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(22.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Watch Hub", color = Gold, fontWeight = FontWeight.Black, fontSize = 22.sp)
-        listOf(MediaType.TV to "مسلسلات", MediaType.MOVIE to "أفلام", MediaType.ANIME to "أنمي").forEach { (type, label) ->
-            val on = type == selected
+        // "مباشر" (the Xtream Codes live channels) comes first, before series and films.
+        val entries = buildList<Pair<MediaType?, String>> {
+            if (onLive != null) add(null to "مباشر")
+            add(MediaType.TV to "مسلسلات")
+            add(MediaType.MOVIE to "أفلام")
+            add(MediaType.ANIME to "أنمي")
+        }
+        entries.forEach { (type, label) ->
+            val on = if (type == null) live else !live && type == selected
             Column(
-                Modifier.focusFrame(RoundedCornerShape(8.dp)).clickable { onSelect(type) }.padding(horizontal = 4.dp, vertical = 2.dp),
+                Modifier.focusFrame(RoundedCornerShape(8.dp))
+                    .clickable { if (type == null) onLive?.invoke() else onSelect(type) }
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
@@ -88,6 +107,8 @@ fun HeroTabs(selected: MediaType, onSelect: (MediaType) -> Unit, onRefresh: () -
             }
         }
         Spacer(Modifier.weight(1f))
+        // Only while there are downloads (with their progress).
+        DownloadsButton()
         IconButton(modifier = Modifier.focusFrame(), onClick = onRefresh) {
             Icon(Icons.Filled.Refresh, contentDescription = "تحديث", tint = Color.White)
         }
@@ -111,24 +132,38 @@ fun HeroCarousel(
     val pager = rememberPagerState { slides.size }
     val screenHeight = LocalConfiguration.current.screenHeightDp.dp
     val tv = isTv()
-    val height = if (tv) screenHeight * 0.66f else (screenHeight * 0.58f).coerceAtMost(520.dp)
+    val wideShort = isWideShort()
+    val height = when {
+        tv -> screenHeight * 0.66f
+        wideShort -> screenHeight * 0.92f
+        else -> (screenHeight * 0.58f).coerceAtMost(520.dp)
+    }
 
-    // Advance by itself every 7 seconds.
-    LaunchedEffect(slides.size) {
-        if (slides.size < 2) return@LaunchedEffect
+    // Advance by itself every 7 seconds; not while the remote is on the banner (moving the page
+    // under the focused button made TVs stutter), nor while the user swipes.
+    var focused by remember { mutableStateOf(false) }
+    LaunchedEffect(slides.size, focused) {
+        // TVs: never by itself (the page moving under the remote is unsettling); its arrows move it.
+        if (slides.size < 2 || focused || tv) return@LaunchedEffect
         while (true) {
             delay(7000)
-            pager.animateScrollToPage((pager.currentPage + 1) % slides.size)
+            if (!pager.isScrollInProgress) {
+                pager.animateScrollToPage(
+                    (pager.currentPage + 1) % slides.size,
+                    animationSpec = androidx.compose.animation.core.tween(durationMillis = 700),
+                )
+            }
         }
     }
 
-    Box(Modifier.fillMaxWidth().height(height)) {
+    Box(Modifier.fillMaxWidth().height(height).onFocusChanged { focused = it.hasFocus }) {
         if (slides.isNotEmpty()) {
-            HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
+            // The next and previous pictures load ahead, so a slide never waits on a download.
+            HorizontalPager(state = pager, beyondViewportPageCount = 1, modifier = Modifier.fillMaxSize()) { page ->
                 val item = slides[page]
                 Box(Modifier.fillMaxSize()) {
                     AsyncImage(
-                        model = TmdbApi.image(item.backdropPath ?: item.posterPath, "w1280"),
+                        model = TmdbApi.image(item.backdropPath ?: item.posterPath, if (tv || wideShort) "w1280" else "w780"),
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
@@ -155,6 +190,7 @@ fun HeroCarousel(
                     )
                     HeroText(
                         item = item,
+                        compact = wideShort,
                         saved = data.watchlist.any { w -> item.type?.let { WatchItem.keyOf(it, item.id) } == w.key },
                         onWatch = { onOpen(item) },
                         onAdd = {
@@ -205,12 +241,13 @@ fun HeroCarousel(
 @Composable
 private fun HeroText(
     item: SearchResult,
+    compact: Boolean,
     saved: Boolean,
     onWatch: () -> Unit,
     onAdd: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier.fillMaxWidth(0.82f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(modifier.fillMaxWidth(if (compact) 0.55f else 0.82f), verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp)) {
         Text(
             "🔥 رائج",
             color = Color.White,
@@ -223,8 +260,8 @@ private fun HeroText(
         Text(
             item.displayTitle,
             color = Color.White,
-            fontSize = 34.sp,
-            lineHeight = 40.sp,
+            fontSize = if (compact) 26.sp else 34.sp,
+            lineHeight = if (compact) 30.sp else 40.sp,
             fontWeight = FontWeight.ExtraBold,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
@@ -241,7 +278,7 @@ private fun HeroText(
                 item.overview,
                 color = Color.White.copy(alpha = 0.78f),
                 style = MaterialTheme.typography.bodyMedium,
-                maxLines = 3,
+                maxLines = if (compact) 2 else 3,
                 overflow = TextOverflow.Ellipsis,
             )
         }

@@ -137,7 +137,7 @@ class AnimeDetailViewModel(private val container: AppContainer, private val id: 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AnimeDetailScreen(id: Int, onBack: () -> Unit, onOpen: (MediaType, Int) -> Unit) {
+fun AnimeDetailScreen(id: Int, onBack: () -> Unit, onOpen: (MediaType, Int) -> Unit, onOpenAnime: (AnimeLookup) -> Unit = {}) {
     val container = appContainer()
     val vm: AnimeDetailViewModel = viewModel { AnimeDetailViewModel(container, id) }
     val anime = vm.anime
@@ -157,7 +157,7 @@ fun AnimeDetailScreen(id: Int, onBack: () -> Unit, onOpen: (MediaType, Int) -> U
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when {
-                anime != null -> AnimeContent(vm, anime, onOpen)
+                anime != null -> AnimeContent(vm, anime, onOpen, onOpenAnime)
                 vm.error != null -> MessageBox(vm.error.orEmpty(), actionLabel = "حاول مرة ثانية", onAction = vm::load)
                 else -> CenteredLoading()
             }
@@ -167,7 +167,7 @@ fun AnimeDetailScreen(id: Int, onBack: () -> Unit, onOpen: (MediaType, Int) -> U
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AnimeContent(vm: AnimeDetailViewModel, anime: JAnime, onOpen: (MediaType, Int) -> Unit) {
+private fun AnimeContent(vm: AnimeDetailViewModel, anime: JAnime, onOpen: (MediaType, Int) -> Unit, onOpenAnime: (AnimeLookup) -> Unit) {
     val container = appContainer()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -182,6 +182,7 @@ private fun AnimeContent(vm: AnimeDetailViewModel, anime: JAnime, onOpen: (Media
         item { AnimeHeader(anime) }
 
         item { AnimeWatchButtons(anime, searchTitle) }
+        item { Column(Modifier.padding(horizontal = 16.dp)) { AnimeifyWatchButton(anime.animeLookup(), onOpenAnime, Modifier.fillMaxWidth()) } }
 
         item {
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

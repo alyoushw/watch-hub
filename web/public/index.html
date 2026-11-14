@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0e0d0b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Watch Hub">
+  <title>Watch Hub</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/">Watch Hub</a>
+    <nav class="tabs" id="tabs">
+      <a href="#/" data-tab="home">الرئيسية</a>
+      <a href="#/live" data-tab="live">مباشر</a>
+      <a href="#/search" data-tab="search">البحث</a>
+      <a href="#/xtream" data-tab="xtream">قنواتي</a>
+      <a href="#/list" data-tab="list">قائمتي</a>
+      <a href="#/settings" data-tab="settings">الإعدادات</a>
+    </nav>
+  </header>
+  <main id="view"></main>
+  <div id="player" class="player" hidden>
+    <div class="pl-stage"><video id="video" playsinline preload="auto"></video></div>
+    <div class="pl-gest" id="pl-gest"></div>
+    <div class="pl-spin spinner" id="pl-spin" hidden></div>
+    <div class="pl-ind" id="pl-ind" hidden><b id="pl-ind-text"></b><span class="pl-level" id="pl-ind-level"><i></i></span></div>
+    <div class="pl-ui" id="pl-ui" dir="ltr">
+      <div class="pl-top">
+        <button class="pl-btn" id="pl-back" title="رجوع (Esc)">←</button>
+        <div class="pl-titles" dir="rtl"><b id="player-title"></b><span id="player-sub"></span></div>
+        <button class="pl-btn" id="pl-subs" title="الترجمة">CC</button>
+        <button class="pl-btn" id="pl-audio" title="الصوت المعلّق">♫</button>
+        <button class="pl-btn" id="pl-aspect" title="حجم الصورة">⛶</button>
+        <button class="pl-btn" id="pl-speed" title="السرعة">1×</button>
+        <button class="pl-btn" id="pl-sleep" title="مؤقت النوم">☾</button>
+        <button class="pl-btn" id="pl-info" title="معلومات التشغيل">ⓘ</button>
+        <button class="pl-btn" id="pl-pip" title="صورة داخل صورة">⧉</button>
+        <button class="pl-btn" id="pl-full" title="ملء الشاشة (F)">⤢</button>
+      </div>
+      <div class="pl-mid">
+        <button class="pl-round" id="pl-prev" title="السابق" hidden>⏮</button>
+        <button class="pl-round" id="pl-back10" title="رجوع 10 ثواني (←)">↺<small>10</small></button>
+        <button class="pl-round big" id="pl-play" title="تشغيل / إيقاف (مسافة)">▶</button>
+        <button class="pl-round" id="pl-fwd10" title="تقديم 10 ثواني (→)">↻<small>10</small></button>
+        <button class="pl-round" id="pl-next" title="التالي" hidden>⏭</button>
+      </div>
+      <div class="pl-bottom">
+        <span class="pl-live" id="pl-live" hidden>● مباشر</span>
+        <span class="pl-quality" id="pl-quality" hidden></span>
+        <span class="pl-time" id="pl-cur">00:00</span>
+        <div class="pl-bar" id="pl-bar"><div class="pl-buf" id="pl-buf"></div><div class="pl-fill" id="pl-fill"></div><div class="pl-thumb" id="pl-thumb"></div><div class="pl-tip" id="pl-tip" hidden></div></div>
+        <span class="pl-time" id="pl-dur">--:--</span>
+        <button class="pl-btn" id="pl-mute" title="كتم (M)">🔊</button>
+        <input class="pl-vol" id="pl-vol" type="range" min="0" max="1" step="0.05" value="1" aria-label="الصوت">
+      </div>
+    </div>
+    <button class="pl-skip" id="pl-skip" dir="rtl" hidden>تخطي المقدمة +٨٥ث</button>
+    <div class="pl-upnext" id="pl-upnext" dir="rtl" hidden>
+      <small>الحلقة الجاية</small><b id="pl-upnext-name"></b>
+      <div class="pl-level"><i id="pl-upnext-bar"></i></div>
+      <div class="pl-upnext-row"><button class="btn small" id="pl-upnext-go">شغّلها الحين</button><button class="btn ghost small" id="pl-upnext-cancel">إلغاء</button></div>
+    </div>
+    <div class="pl-banner" id="pl-banner" dir="rtl" hidden></div>
+    <div class="pl-menu" id="pl-menu" dir="rtl" hidden></div>
+    <div id="player-error" class="player-error" dir="rtl" hidden></div>
+  </div>
+  <div id="toast" class="toast" hidden></div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
