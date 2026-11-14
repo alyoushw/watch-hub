@@ -54,6 +54,11 @@ $Actual = (Get-FileHash $Apk -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($Expected -ne $Actual) { throw 'Download checksum mismatch. Nothing installed.' }
 $Installed = Run-Adb -Arguments @('install','-r',$Apk)
 if ($Installed -notmatch 'Success') { throw "Install did not report success: $Installed" }
+# These permissions serve the requested network-name and Watch Next display features.
+foreach ($Permission in @('android.permission.ACCESS_FINE_LOCATION','android.permission.READ_TV_LISTINGS')) {
+    try { Run-Adb -Arguments @('shell','pm','grant',$Package,$Permission) | Out-Null }
+    catch { Write-Warning "Optional display permission $Permission was not granted. It can be reviewed in TV app settings." }
+}
 Run-Adb -Arguments @('shell','am','start','-n',$Component) | Write-Host
 Run-Adb -Arguments @('shell','cmd','package','set-home-activity',$Component) | Write-Host
 Run-Adb -Arguments @('shell','input','keyevent','KEYCODE_HOME') | Out-Null
