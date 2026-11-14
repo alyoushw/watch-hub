@@ -40,7 +40,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Verify and extract reproducible launcher source
         run: |
-          echo '989fb5fece3e7bae32b935ef20c3ff23f43c904ad8d1cef746dd88c5657f4af1  sony-tv/sony-home-source.zip' | sha256sum -c -
+          echo 'dd8d2b4bc690b616d5afb454a110c1c10b4d1971e41dea36b2dbd047a593b19f  sony-tv/sony-home-source.zip' | sha256sum -c -
           unzip -q sony-tv/sony-home-source.zip -d sony-tv/build
           chmod +x sony-tv/build/gradlew
           sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
@@ -74,9 +74,9 @@ jobs:
       - name: Publish independent launcher preview
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: sony-home-1448-v3
+          tag_name: sony-home-1448-v4
           target_commitish: ${{ github.sha }}
-          name: Sony Home 3.5.1 - compact calendar and top-bar tools
+          name: Sony Home 3.6 - device-aware mirroring shortcuts
           prerelease: true
           make_latest: false
           body: |
@@ -85,6 +85,9 @@ jobs:
             Compact unboxed calendar under the clock: original printed glyphs as transparent white ink, with native labels including Fajr.
             Times and occasions retain the exact original daily Ahsa 1448 calendar rows; no OCR or calculated replacement.
             Widget and cleanup tools moved to the top bar beside Inputs and Mirroring.
+            Sony mirroring opens the native ScreenMirroringHomeActivity confirmed by the owner's device log, with exported-activity checks.
+            TCL receiver discovery and a saved receiver-app picker support other Android TV / Google TV devices where those capabilities exist.
+            No receiver service is installed or enabled automatically. No Sony-only model restriction. Android 8+ is required.
             Includes optional Watch Next reading, native app widgets and an AirPlay receiver shortcut.
             AirPlay Server must be installed separately from its original F-Droid page.
             The Windows helper sets and verifies default HOME without disabling previous launchers.
