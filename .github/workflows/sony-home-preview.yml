@@ -12,7 +12,20 @@ concurrency:
   group: sony-home-1448-preview
   cancel-in-progress: false
 jobs:
+  validate-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse Windows setup script without running it
+        shell: powershell
+        run: |
+          $Tokens = $null
+          $ParseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD 'sony-tv/Set-SonyHome.ps1'), [ref]$Tokens, [ref]$ParseErrors) | Out-Null
+          if ($ParseErrors.Count) { throw ($ParseErrors | Out-String) }
+          Write-Host 'PowerShell syntax is valid. No device connection attempted.'
   build:
+    needs: validate-windows
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,7 +33,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
       - uses: gradle/actions/setup-gradle@v4
       - name: Verify and extract reproducible launcher source
         run: |
@@ -42,7 +54,8 @@ jobs:
           cp sony-tv/Set-SonyHome.cmd sony-tv/dist/
           cp sony-tv/README-AR.txt sony-tv/dist/
           cd sony-tv/dist
-          sha256sum SonyHome.apk SonyHome-source.zip Set-SonyHome.ps1 Set-SonyHome.cmd README-AR.txt > SHA256SUMS.txt
+          zip -j SonyHome-Windows-Setup.zip Set-SonyHome.ps1 Set-SonyHome.cmd README-AR.txt
+          sha256sum SonyHome.apk SonyHome-source.zip Set-SonyHome.ps1 Set-SonyHome.cmd SonyHome-Windows-Setup.zip README-AR.txt > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
           name: SonyHome-1448
