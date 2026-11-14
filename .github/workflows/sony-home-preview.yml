@@ -48,11 +48,18 @@ jobs:
           cp app/debug.keystore "$HOME/.android/debug.keystore"
       - name: Test and build Sony Home
         working-directory: sony-tv/build
-        run: ./gradlew --no-daemon testReleaseUnitTest lintRelease assembleRelease
+        run: |
+          ./gradlew --no-daemon testReleaseUnitTest lintRelease assembleRelease \
+            "-Pandroid.injected.signing.store.file=$GITHUB_WORKSPACE/app/debug.keystore" \
+            -Pandroid.injected.signing.store.password=android \
+            -Pandroid.injected.signing.key.alias=androiddebugkey \
+            -Pandroid.injected.signing.key.password=android
       - name: Prepare downloads
         run: |
           mkdir -p sony-tv/dist
           cp sony-tv/build/app/build/outputs/apk/release/app-release.apk sony-tv/dist/SonyHome.apk
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --print-certs sony-tv/dist/SonyHome.apk > sony-tv/dist/signing-certificate.txt
+          grep -q '37908b0667092a428dd22a7ac4065e5cccaafd768f50021219fe4247ea69bf09' sony-tv/dist/signing-certificate.txt
           cp sony-tv/sony-home-source.zip sony-tv/dist/SonyHome-source.zip
           cp sony-tv/Set-SonyHome.ps1 sony-tv/dist/
           cp sony-tv/Set-SonyHome.cmd sony-tv/dist/
