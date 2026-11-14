@@ -85,6 +85,7 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     val savedKey by container.settings.apiKey.collectAsStateWithLifecycle()
     val region by container.settings.region.collectAsStateWithLifecycle()
+    val watchNext by container.settings.watchNext.collectAsStateWithLifecycle()
 
     var key by remember(savedKey) { mutableStateOf(savedKey) }
     var showKey by remember { mutableStateOf(false) }
@@ -104,6 +105,20 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (isTv()) {
+                SectionTitle("متابعة المشاهدة على التلفزيون")
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("عرض قائمتي في Watch Next", Modifier.weight(1f))
+                    androidx.compose.material3.Switch(
+                        checked = watchNext,
+                        onCheckedChange = container.settings::setWatchNext,
+                        modifier = Modifier.focusFrame(),
+                    )
+                }
+                Text("يعرض الأعمال المحددة كأشاهد حاليًا؛ فتح البطاقة يعرض تفاصيل العمل داخل Watch Hub.",
+                    style = MaterialTheme.typography.bodySmall)
+                HorizontalDivider()
+            }
             AccountSection()
 
             HorizontalDivider()

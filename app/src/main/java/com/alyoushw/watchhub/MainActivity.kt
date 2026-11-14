@@ -46,6 +46,15 @@ class MainActivity : ComponentActivity() {
             return
         }
         val uri = intent?.data ?: return
+        if (intent.action == Intent.ACTION_VIEW && uri.scheme == "watchhub" && uri.host == "detail") {
+            val parts = uri.pathSegments
+            val type = parts.getOrNull(0)?.let { com.alyoushw.watchhub.data.MediaType.fromPath(it) }
+            val id = parts.getOrNull(1)?.toIntOrNull()?.takeIf { it > 0 }
+            if (parts.size == 2 && type != null && id != null) {
+                (application as WatchHubApp).container.watchNextRequest.value = type to id
+            }
+            return
+        }
         if (uri.path?.startsWith("/pair") == true) {
             (application as WatchHubApp).container.cloud.openPairingLink(uri.getQueryParameter("s"))
         }

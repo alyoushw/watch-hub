@@ -71,6 +71,14 @@ private fun NavHostController.switchTab(route: String) = navigate(route) {
 
 @Composable
 fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
+    val container = appContainer()
+    val watchNextRequest by container.watchNextRequest.collectAsStateWithLifecycle()
+    androidx.compose.runtime.LaunchedEffect(watchNextRequest) {
+        watchNextRequest?.let { (type, id) ->
+            nav.openDetail(type, id)
+            container.watchNextRequest.value = null
+        }
+    }
     val backStack by nav.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
 

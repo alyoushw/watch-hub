@@ -20,6 +20,8 @@ import java.io.File
 
 /** Simple manual dependency container shared by the whole app. */
 class AppContainer(context: Context) {
+    // One pending request from a Watch Next card; consumed after navigation.
+    val watchNextRequest = kotlinx.coroutines.flow.MutableStateFlow<Pair<MediaType, Int>?>(null)
     val settings = SettingsStore(context)
     val store = LocalStore(File(context.filesDir, "watchhub.json"))
     val api = TmdbApi(settings)
@@ -115,6 +117,7 @@ class WatchHubApp : Application() {
             previous?.uncaughtException(thread, error)
         }
         container = AppContainer(this)
+        com.alyoushw.watchhub.tv.WatchNextPublisher(this, container).start()
         com.alyoushw.watchhub.data.Net.watch(this)
         container.cloud.start()
         runCatching { container.updater.scheduleBackgroundChecks() }

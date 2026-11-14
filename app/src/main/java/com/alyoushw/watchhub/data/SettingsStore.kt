@@ -8,6 +8,13 @@ import kotlinx.coroutines.flow.asStateFlow
 class SettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
+    private val _watchNext = MutableStateFlow(prefs.getBoolean("watch_next", false))
+    val watchNext: StateFlow<Boolean> = _watchNext.asStateFlow()
+    fun setWatchNext(value: Boolean) {
+        prefs.edit().putBoolean("watch_next", value).apply()
+        _watchNext.value = value
+    }
+
     private val _apiKey = MutableStateFlow(prefs.getString(KEY_TMDB, "").orEmpty())
     val apiKey: StateFlow<String> = _apiKey.asStateFlow()
 
