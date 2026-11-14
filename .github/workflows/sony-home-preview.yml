@@ -1,0 +1,67 @@
+name: Sony Home 1448 preview
+on:
+  push:
+    branches: ['codex/sony-home-1448-preview']
+    paths:
+      - 'sony-tv/**'
+      - '.github/workflows/sony-home-preview.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: sony-home-1448-preview
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Verify and extract reproducible launcher source
+        run: |
+          echo 'c05b7af4e528f9e5d533d8f58e34a013281cc29a7d6001c31c6ce442fa5450c5  sony-tv/sony-home-source.zip' | sha256sum -c -
+          unzip -q sony-tv/sony-home-source.zip -d sony-tv/build
+          chmod +x sony-tv/build/gradlew
+          sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
+          mkdir -p "$HOME/.android"
+          cp app/debug.keystore "$HOME/.android/debug.keystore"
+      - name: Test and build Sony Home
+        working-directory: sony-tv/build
+        run: ./gradlew --no-daemon testReleaseUnitTest lintRelease assembleRelease
+      - name: Prepare downloads
+        run: |
+          mkdir -p sony-tv/dist
+          cp sony-tv/build/app/build/outputs/apk/release/app-release.apk sony-tv/dist/SonyHome.apk
+          cp sony-tv/sony-home-source.zip sony-tv/dist/SonyHome-source.zip
+          cp sony-tv/Set-SonyHome.ps1 sony-tv/dist/
+          cp sony-tv/Set-SonyHome.cmd sony-tv/dist/
+          cp sony-tv/README-AR.txt sony-tv/dist/
+          cd sony-tv/dist
+          sha256sum SonyHome.apk SonyHome-source.zip Set-SonyHome.ps1 Set-SonyHome.cmd README-AR.txt > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SonyHome-1448
+          path: sony-tv/dist/*
+      - name: Publish independent launcher preview
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: sony-home-1448-preview
+          target_commitish: ${{ github.sha }}
+          name: Sony Home for Android TV - Ahsa 1448 preview
+          prerelease: true
+          make_latest: false
+          body: |
+            Experimental personal launcher based on CleanYourTV (MIT), for Sony KD-65X8000G / Android 9.
+            This is a separate HOME app (com.alyoushw.sonyhome), not a fork of Watch Hub.
+            Calendar times and occasions use the owner's original Ahsa 1448 calendar rows.
+            Includes optional Watch Next reading, native app widgets and an AirPlay receiver shortcut.
+            AirPlay Server must be installed separately from its original F-Droid page.
+            The Windows helper sets and verifies default HOME without disabling previous launchers.
+            Build/lint/unit tests are automated; performance, remote navigation and firmware persistence still require real-TV testing.
+            Watch Hub remains on its normal official release/update track.
+          files: sony-tv/dist/*
