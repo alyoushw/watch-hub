@@ -10,7 +10,7 @@ permissions:
   contents: write
 concurrency:
   group: sony-home-1448-preview
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   validate-windows:
     runs-on: windows-latest
@@ -40,7 +40,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Verify and extract reproducible launcher source
         run: |
-          echo '19fb5085e2971debfc20374e0af8f802325e9f251eefafe1e1b0653bef14795c  sony-tv/sony-home-source.zip' | sha256sum -c -
+          echo '989fb5fece3e7bae32b935ef20c3ff23f43c904ad8d1cef746dd88c5657f4af1  sony-tv/sony-home-source.zip' | sha256sum -c -
           unzip -q sony-tv/sony-home-source.zip -d sony-tv/build
           chmod +x sony-tv/build/gradlew
           sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
@@ -74,9 +74,9 @@ jobs:
       - name: Publish independent launcher preview
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: sony-home-1448-v2
+          tag_name: sony-home-1448-v3
           target_commitish: ${{ github.sha }}
-          name: Sony Home 3.5 - compact calendar and top-bar tools
+          name: Sony Home 3.5.1 - compact calendar and top-bar tools
           prerelease: true
           make_latest: false
           body: |
