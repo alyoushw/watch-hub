@@ -474,11 +474,6 @@ private fun DetailContent(
             }
         }
 
-        item { Column(Modifier.padding(horizontal = 16.dp)) {
-            SourceWatchButton(info.sourceLookup().copy(providerId = "arablionz"), onOpenSources,
-                Modifier.fillMaxWidth(), label = "تشغيل عرب ليونز")
-        } }
-
         item { WatchButtons(info, links, subscribedKeys, onWatch) }
 
         item { Column(Modifier.padding(horizontal = 16.dp)) {

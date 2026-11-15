@@ -69,12 +69,11 @@ fun SourceWatchScreen(
 ) {
     val container = appContainer()
     val context = LocalContext.current
-    val website = when (lookup.providerId) { "moviz-time" -> "Moviz Time"; "topcinema" -> "TopCinema"; "egybest" -> "EgyBest"; "arablionz" -> "عرب ليونز"; else -> null }
+    val website = when (lookup.providerId) { "moviz-time" -> "Moviz Time"; "topcinema" -> "TopCinema"; "egybest" -> "EgyBest"; else -> null }
     val repository = sources ?: when (lookup.providerId) {
         "moviz-time" -> container.movizTimeSources
         "topcinema" -> container.topCinemaSources
         "egybest" -> container.egyBestSources
-        "arablionz" -> container.arabLionzSources
         else -> container.watchSources
     }
     val catalogue by container.settings.sourceCatalogue.collectAsStateWithLifecycle()
@@ -118,7 +117,7 @@ fun SourceWatchScreen(
                         if (lookup.overview.isNotBlank()) TranslatedText(lookup.overview, isEnglish = lookup.overviewIsEnglish,
                             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text((if (series) "الموسم $season" else "فيلم") + (website?.let { " · $it" } ?: " · تورنت"), color = Gold, style = MaterialTheme.typography.labelMedium)
-                        Text(if (lookup.providerId in setOf("egybest", "arablionz")) "تظهر روابط المشاهدة والتحميل كما يعلنها الموقع. الروابط المتوافقة تُشغّل بالمشغّل الرئيسي، والبقية تفتح بمشغّل الموقع داخل التطبيق."
+                        Text(if (lookup.providerId == "egybest") "تظهر روابط المشاهدة والتحميل كما يعلنها الموقع. الروابط المتوافقة تُشغّل بالمشغّل الرئيسي، والبقية تفتح بمشغّل الموقع داخل التطبيق."
                             else if (website != null) "اختر الفيلم أو الحلقة لعرض سيرفرات $website المتوافقة. تُجلب روابط التشغيل من الموقع عند كل مشاهدة."
                             else "يبدأ التشغيل بعد تجهيز الأجزاء الأولى ويستمر التنزيل أثناء المشاهدة. سرعة البداية تعتمد على الأقران والاتصال.",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
