@@ -282,7 +282,10 @@ fun KoraScreen(homeUrl: String = KORA_HOME, pageTitle: String = "كوره", onBa
                             }
                         }
                         override fun onReceivedError(view: WebView, request: WebResourceRequest, failure: WebResourceError) {
-                            if (view == web && request.isForMainFrame) { loading = false; error = "تعذر تحميل الصفحة. تحقق من الاتصال ثم اضغط تحديث." }
+                            if (view == web && request.isForMainFrame) {
+                                loading = false
+                                error = "تعذر تحميل الصفحة (${failure.errorCode}): ${failure.description.toString().take(160)}"
+                            }
                         }
                         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                             val scheme = request.url.scheme

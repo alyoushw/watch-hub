@@ -172,6 +172,17 @@ class AkwamSourceProvider(private val api: TmdbApi) : WatchSourceProvider {
     private fun safeSlug(slug: String) = slug.matches(Regex("[\\p{L}\\p{N}\\p{M}_-]{1,110}")) && slug.toByteArray(Charsets.UTF_8).size <= 117
     private fun read(url: String): Document {
         if (!sameSite(url)) throw SourceException("رابط أكوام غير متوافق")
+        var stage = "بدء الطلب"
+        val listener = object : okhttp3.EventListener() {
+            override fun dnsStart(call: okhttp3.Call, domainName: String) { stage = "DNS" }
+            override fun connectStart(call: okhttp3.Call, address: java.net.InetSocketAddress, proxy: java.net.Proxy) {
+                stage = if (address.address is java.net.Inet6Address) "اتصال IPv6" else "اتصال IPv4"
+            }
+            override fun secureConnectStart(call: okhttp3.Call) { stage = "اتصال TLS" }
+            override fun requestHeadersStart(call: okhttp3.Call) { stage = "إرسال الطلب" }
+            override fun requestHeadersEnd(call: okhttp3.Call, request: Request) { stage = "انتظار رد الموقع" }
+            override fun responseBodyStart(call: okhttp3.Call) { stage = "قراءة الصفحة" }
+        }
         val request = Request.Builder().url(url).header("User-Agent", AGENT).header("Referer", BASE).build()
         fun fetch(client: okhttp3.OkHttpClient): Document = client.newCall(request).execute().use { response ->
             if (!response.isSuccessful || !sameSite(response.request.url.toString())) throw SourceException("تعذر الوصول إلى أكوام (${response.code})", response.code)
@@ -179,8 +190,17 @@ class AkwamSourceProvider(private val api: TmdbApi) : WatchSourceProvider {
             if (source.request(2 * 1024 * 1024L + 1)) throw SourceException("صفحة أكوام أكبر من الحد المسموح")
             checkedSourcePage(Jsoup.parse(source.readByteArray().toString(Charsets.UTF_8), response.request.url.toString()))
         }
-        // A fresh platform HTTPS connection avoids repeating the failing OkHttp connection path.
-        return try { fetch(SourceHttp.client) } catch (_: java.net.SocketException) { readPlatform(url) }
+        // Retry reset/timeout failures only; report the primary stage if both transports fail.
+        return try { fetch(SourceHttp.client.newBuilder().eventListener(listener).build()) }
+        catch (e: java.io.IOException) {
+            val retryable = e is java.net.SocketException || e is java.io.InterruptedIOException
+            if (!retryable || Thread.currentThread().isInterrupted) throw e
+            try { readPlatform(url) }
+            catch (fallback: java.io.IOException) {
+                throw SourceException("$stage: ${e.message.orEmpty().take(40)}؛ البديل: ${fallback.message.orEmpty().take(40)}",
+                    health = SourceHealth.NETWORK_ERROR)
+            }
+        }
     }
     private fun readPlatform(url: String): Document {
         var current = url.toHttpUrl()
