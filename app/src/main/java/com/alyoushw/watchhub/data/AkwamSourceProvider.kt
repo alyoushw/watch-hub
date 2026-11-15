@@ -16,7 +16,7 @@ import org.jsoup.nodes.Document
 import java.util.Base64
 
 /** Download landing pages are resolved to checked video streams; HTML never goes to Media3. */
-class AkwamSourceProvider(private val api: TmdbApi) : WatchSourceProvider {
+class AkwamSourceProvider(private val api: TmdbApi, private val context: android.content.Context) : WatchSourceProvider {
     private val embeds = TopCinemaSourceProvider()
     private val probe = StreamProbe(verifyHlsSegments = true)
 
@@ -172,6 +172,11 @@ class AkwamSourceProvider(private val api: TmdbApi) : WatchSourceProvider {
     private fun safeSlug(slug: String) = slug.matches(Regex("[\\p{L}\\p{N}\\p{M}_-]{1,110}")) && slug.toByteArray(Charsets.UTF_8).size <= 117
     private fun read(url: String): Document {
         if (!sameSite(url)) throw SourceException("رابط أكوام غير متوافق")
+        val chromiumFailure = try {
+            val page = AkwamChromium.fetch(context, url)
+            if (page.status !in 200..299) throw SourceException("تعذر الوصول إلى أكوام (${page.status})", page.status)
+            return checkedSourcePage(Jsoup.parse(page.body.toString(Charsets.UTF_8), page.url))
+        } catch (e: java.io.IOException) { e }
         var stage = "بدء الطلب"
         val listener = object : okhttp3.EventListener() {
             override fun dnsStart(call: okhttp3.Call, domainName: String) { stage = "DNS" }
@@ -190,56 +195,13 @@ class AkwamSourceProvider(private val api: TmdbApi) : WatchSourceProvider {
             if (source.request(2 * 1024 * 1024L + 1)) throw SourceException("صفحة أكوام أكبر من الحد المسموح")
             checkedSourcePage(Jsoup.parse(source.readByteArray().toString(Charsets.UTF_8), response.request.url.toString()))
         }
-        // Retry reset/timeout failures only; report the primary stage if both transports fail.
+        // Keep the existing client as a fallback on devices where Chromium cannot connect or load.
         return try { fetch(SourceHttp.client.newBuilder().eventListener(listener).build()) }
         catch (e: java.io.IOException) {
-            val retryable = e is java.net.SocketException || e is java.io.InterruptedIOException
-            if (!retryable || Thread.currentThread().isInterrupted) throw e
-            try { readPlatform(url) }
-            catch (fallback: java.io.IOException) {
-                throw SourceException("$stage: ${e.message.orEmpty().take(40)}؛ البديل: ${fallback.message.orEmpty().take(40)}",
-                    health = SourceHealth.NETWORK_ERROR)
-            }
+            if (Thread.currentThread().isInterrupted) throw e
+            throw SourceException("Chromium: ${chromiumFailure.message.orEmpty().take(35)}؛ $stage: ${e.message.orEmpty().take(25)}",
+                health = SourceHealth.NETWORK_ERROR)
         }
-    }
-    private fun readPlatform(url: String): Document {
-        var current = url.toHttpUrl()
-        val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(20)
-        repeat(4) {
-            if (!sameSite(current.toString())) throw SourceException("تحويل أكوام إلى موقع آخر غير متوافق")
-            val remaining = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()).coerceAtMost(10_000).toInt()
-            if (remaining <= 0) throw java.net.SocketTimeoutException("انتهت مهلة اتصال أكوام البديل")
-            val connection = current.toUrl().openConnection() as javax.net.ssl.HttpsURLConnection
-            try {
-                connection.instanceFollowRedirects = false
-                connection.connectTimeout = remaining
-                connection.readTimeout = remaining
-                connection.setRequestProperty("User-Agent", AGENT)
-                connection.setRequestProperty("Referer", BASE)
-                connection.setRequestProperty("Accept", "text/html,application/xhtml+xml")
-                val code = connection.responseCode
-                if (code in setOf(301, 302, 303, 307, 308)) {
-                    current = connection.getHeaderField("Location")?.let { current.resolve(it) }
-                        ?: throw SourceException("تحويل أكوام غير صالح", code)
-                    return@repeat
-                }
-                if (code !in 200..299) throw SourceException("تعذر الوصول إلى أكوام ($code)", code)
-                val bytes = connection.inputStream.use { input ->
-                    val output = java.io.ByteArrayOutputStream()
-                    val buffer = ByteArray(8192)
-                    while (true) {
-                        if (System.nanoTime() >= deadline) throw java.net.SocketTimeoutException("انتهت مهلة قراءة أكوام")
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        if (output.size() + count > 2 * 1024 * 1024) throw SourceException("صفحة أكوام أكبر من الحد المسموح")
-                        output.write(buffer, 0, count)
-                    }
-                    output.toByteArray()
-                }
-                return checkedSourcePage(Jsoup.parse(bytes.toString(Charsets.UTF_8), current.toString()))
-            } finally { connection.disconnect() }
-        }
-        throw SourceException("تحويلات أكوام أكثر من الحد المسموح")
     }
     private fun arabic(text: String) = text.map { when (it) {
         'أ', 'إ', 'آ' -> 'ا'; 'ة' -> 'ه'; 'ى' -> 'ي'; in '٠'..'٩' -> '0' + (it - '٠'); in '۰'..'۹' -> '0' + (it - '۰'); else -> it

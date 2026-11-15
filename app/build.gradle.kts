@@ -124,6 +124,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.okhttp)
+    implementation("org.chromium.net:cronet-embedded:143.7445.0")
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.coil.compose)
