@@ -29,7 +29,9 @@ class AkwamSourceProvider(private val api: TmdbApi) : WatchSourceProvider {
         var failed: Exception? = null
         for (title in titles.take(3)) {
             val url = BASE.toHttpUrl().resolve("search")!!.newBuilder().addQueryParameter("q", title).build()
-            val doc = read(url.toString())
+            val doc = try { read(url.toString()) }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { failed = e; continue }
             val links = doc.select("a.br-card-link[href]").filter {
                 sameSite(it.absUrl("href")) && matches(it.selectFirst(".br-card-title")?.text().orEmpty(), query, titles, false)
             }.distinctBy { it.absUrl("href") }
@@ -48,7 +50,7 @@ class AkwamSourceProvider(private val api: TmdbApi) : WatchSourceProvider {
                 catch (e: Exception) { failed = e }
             }
         }
-        if (failed != null) throw SourceException("وجد البحث نتيجة محتملة، لكن تعذّر التحقق من تفاصيلها؛ أعد المحاولة", (failed as? SourceException)?.httpStatus)
+        if (failed != null) throw SourceException("تعذّر إكمال البحث في أكوام؛ هذا لا يعني أن العمل غير موجود. أعد المحاولة أو افتح الموقع.", (failed as? SourceException)?.httpStatus)
         emptyList()
     }
 
@@ -101,12 +103,8 @@ class AkwamSourceProvider(private val api: TmdbApi) : WatchSourceProvider {
                                     if (accepted) watchPages += discoverWatchPages(hostPage, link).map { index to it }
                                     accepted
                                 }
-                            url.host in MIXDROP_HOSTS && url.encodedPath.startsWith("/f/") -> {
-                                val hostPage = readDownloadHost(link.url, downloadUrl)
-                                watchPages += discoverWatchPages(hostPage, link).map { index to it }
-                                issues += SourceIssue(link.label, SourceHealth.UNSUPPORTED)
-                                emptyList()
-                            }
+                            // Keep original hosting pages available without waiting for each host to respond.
+                            // MixDrop /f/ pages already contain their player and must not be treated as video URLs.
                             else -> { issues += SourceIssue(link.label, SourceHealth.UNSUPPORTED); emptyList() }
                         }
                         if (media.isEmpty() && url.host == "lulustream.com") issues += SourceIssue(link.label, SourceHealth.UNVERIFIED)
@@ -124,7 +122,8 @@ class AkwamSourceProvider(private val api: TmdbApi) : WatchSourceProvider {
         }
         return WatchSource(id, "akwam", "أكوام", query, variants, attribution = "Akwam · $title", licenceUrl = page.toString(),
             webLinks = watchPages.toList().sortedBy { it.first }.map { it.second }.distinctBy { it.url } +
-                links + SourceWebLink("صفحة العمل الأصلية", page.toString()), issues = issues.toList().distinct())
+                links + listOf(SourceWebLink("صفحة التحميل الأصلية · جميع السيرفرات", downloadUrl, true),
+                    SourceWebLink("صفحة العمل الأصلية", page.toString())), issues = issues.toList().distinct())
     }
 
     /** Follow only an embed actually declared by the download page for the same file ID. */
@@ -138,17 +137,6 @@ class AkwamSourceProvider(private val api: TmdbApi) : WatchSourceProvider {
             } ?: return@mapNotNull null
             SourceWebLink(link.label.replaceFirst("تحميل", "مشاهدة"), url.toString())
         }.distinctBy { it.url }
-    }
-
-    private fun readDownloadHost(url: String, referer: String): Document {
-        require(url.toHttpUrl().host in MIXDROP_HOSTS)
-        return SourceHttp.client.newCall(Request.Builder().url(url).header("User-Agent", AGENT).header("Referer", referer).build()).execute().use { response ->
-            if (!response.isSuccessful) throw SourceException("تعذّر فتح صفحة الخادم (${response.code})", response.code)
-            if (response.request.url.host !in MIXDROP_HOSTS) throw SourceException("تعذّر تأكيد عنوان صفحة الخادم")
-            val body = response.body?.source() ?: throw SourceException("صفحة الخادم فارغة")
-            if (body.request(2 * 1024 * 1024L + 1)) throw SourceException("صفحة الخادم أكبر من الحد المسموح")
-            checkedSourcePage(Jsoup.parse(body.readByteArray().toString(Charsets.UTF_8), response.request.url.toString()))
-        }
     }
 
     private suspend fun confirmSeries(query: SourceQuery, titles: List<String>): Boolean {

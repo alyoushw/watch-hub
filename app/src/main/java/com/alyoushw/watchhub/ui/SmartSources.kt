@@ -170,10 +170,11 @@ fun SourceWatchScreen(
                         Text(source.attribution, style = MaterialTheme.typography.labelSmall)
                     }
                     if (source.webLinks.isNotEmpty()) {
-                        listOf(false, true).forEach { downloading ->
+                        (if (source.providerId == "akwam") listOf(true, false) else listOf(false, true)).forEach { downloading ->
                             val pages = source.webLinks.filter { it.download == downloading }
                             if (pages.isNotEmpty()) {
-                                Text(if (downloading) "صفحات التحميل الأصلية" else "صفحات المشاهدة والموقع · تفتح داخل التطبيق")
+                                Text(if (downloading && source.providerId == "akwam") "جميع سيرفرات الموقع · اختر وجرّب"
+                                    else if (downloading) "صفحات التحميل الأصلية" else "صفحات المشاهدة والموقع · تفتح داخل التطبيق")
                                 pages.forEach { link ->
                                     OutlinedButton(onClick = { openedLink = link; chooseSource = false },
                                         modifier = Modifier.fillMaxWidth().focusFrame()) {
