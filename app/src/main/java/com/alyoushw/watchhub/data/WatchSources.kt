@@ -20,7 +20,12 @@ data class SourceQuery(
     val type: MediaType, val tmdbId: Int, val originalTitle: String, val year: Int,
     val season: Int? = null, val episode: Int? = null, val imdbId: String? = null, val searchTitle: String? = null,
     val seasonYear: Int? = null,
+    val localizedTitle: String? = null,
 ) {
+    fun websiteTitles(): List<String> = listOfNotNull(localizedTitle, searchTitle, originalTitle)
+        .map { it.trim() }.filter { it.isNotEmpty() }.distinctBy { titleKey(it) }
+        .sortedBy { name -> if (name.any { it in '\u0600'..'\u06ff' }) 0 else 1 }
+
     val valid: Boolean get() = type in setOf(MediaType.MOVIE, MediaType.TV) && tmdbId > 0 &&
         originalTitle.isNotBlank() && year in 1888..2200 &&
         if (type == MediaType.TV) season != null && season >= 0 && episode != null && episode > 0

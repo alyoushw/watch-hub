@@ -22,7 +22,7 @@ class EgyBestSourceProvider : WatchSourceProvider {
     override suspend fun search(query: SourceQuery): List<WatchSource> = withContext(Dispatchers.IO) {
         if (!query.valid) return@withContext emptyList()
         val titles = aliases(query)
-        val searches = titles.take(2).flatMap { title ->
+        val searches = titles.take(3).flatMap { title ->
             if (query.type == MediaType.TV) listOf("$title الموسم ${ORDINALS.getOrNull((query.season ?: 1) - 1) ?: query.season} الحلقة ${query.episode}", title)
             else listOf(title)
         }.distinct()
@@ -156,8 +156,7 @@ class EgyBestSourceProvider : WatchSourceProvider {
         return titles.any { SourceQuery.titleKey(arabic(it)) == SourceQuery.titleKey(text) }
     }
 
-    private fun aliases(query: SourceQuery) = listOfNotNull(query.searchTitle, query.originalTitle)
-        .filter { it.isNotBlank() }.distinctBy { SourceQuery.titleKey(it) }
+    private fun aliases(query: SourceQuery) = query.websiteTitles()
 
     /** Host order can change on the website; source identity must follow the embed, not its row. */
     private fun serverKey(url: String): String = java.security.MessageDigest.getInstance("SHA-256")

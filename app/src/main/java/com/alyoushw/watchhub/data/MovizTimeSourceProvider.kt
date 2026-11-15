@@ -17,8 +17,8 @@ import org.jsoup.nodes.Document
 class MovizTimeSourceProvider : WatchSourceProvider {
     override suspend fun search(query: SourceQuery): List<WatchSource> = withContext(Dispatchers.IO) {
         if (!query.valid) return@withContext emptyList()
-        val titles = listOfNotNull(query.searchTitle, query.originalTitle).filter { it.isNotBlank() }.distinctBy { SourceQuery.titleKey(it) }
-        for (title in titles.take(2)) {
+        val titles = query.websiteTitles()
+        for (title in titles.take(3)) {
             for (page in 1..2) {
                 val url = BASE.toHttpUrl().newBuilder().addQueryParameter("s", title)
                     .apply { if (page > 1) addQueryParameter("paged", page.toString()) }.build()
@@ -44,7 +44,7 @@ class MovizTimeSourceProvider : WatchSourceProvider {
     override suspend fun find(query: SourceQuery, id: String): WatchSource? = withContext(Dispatchers.IO) {
         if (!query.valid) return@withContext null
         val post = Regex("moviz-(\\d{1,10})").matchEntire(id)?.groupValues?.get(1) ?: return@withContext null
-        safelyResolve(read("$BASE?p=$post").doc, query, listOfNotNull(query.originalTitle, query.searchTitle))
+        safelyResolve(read("$BASE?p=$post").doc, query, query.websiteTitles())
     }
 
     private fun safelyResolve(doc: Document, query: SourceQuery, titles: List<String>): WatchSource? = try {

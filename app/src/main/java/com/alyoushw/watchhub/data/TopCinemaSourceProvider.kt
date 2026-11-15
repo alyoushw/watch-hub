@@ -23,9 +23,9 @@ class TopCinemaSourceProvider : WatchSourceProvider {
     override suspend fun search(query: SourceQuery): List<WatchSource> = withContext(Dispatchers.IO) {
         if (!query.valid) return@withContext emptyList()
         val base = base()
-        val aliases = listOfNotNull(query.searchTitle, query.originalTitle).filter { it.isNotBlank() }.distinctBy { SourceQuery.titleKey(it) }
+        val aliases = query.websiteTitles()
         var failed: Exception? = null
-        for (title in aliases.take(2)) {
+        for (title in aliases.take(3)) {
             val text = if (query.type == MediaType.TV) "$title الموسم ${ORDINALS.getOrNull((query.season ?: 1) - 1) ?: query.season} الحلقة ${query.episode}" else title
             val url = base.newBuilder().addPathSegment("search").addPathSegment("")
                 .addQueryParameter("query", text).addQueryParameter("type", if (query.type == MediaType.TV) "series" else "movies").build()
@@ -55,7 +55,7 @@ class TopCinemaSourceProvider : WatchSourceProvider {
         val post = Regex("topcinema-(\\d{1,10})").matchEntire(id)?.groupValues?.get(1) ?: return@withContext null
         val base = base()
         safelyResolve(base.newBuilder().addQueryParameter("p", post).build().toString(), base, query,
-            listOfNotNull(query.originalTitle, query.searchTitle), variantId)
+            query.websiteTitles(), variantId)
     }
 
     private suspend fun safelyResolve(url: String, base: HttpUrl, query: SourceQuery, aliases: List<String>, targetId: String? = null): WatchSource? =

@@ -132,11 +132,11 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
         }
         val landing = fetch(link.url, referer)
         // Match real filename metadata when available; generic "Loading" pages rely on the verified parent and file ID.
-        val name = landing.first.title()
+        val name = arabic(landing.first.title())
         val years = Regex("\\b(?:18|19|20|21)\\d{2}\\b").findAll(name).mapNotNull { it.value.toIntOrNull() }.toSet()
         if (requiresHostYear && years.isEmpty()) throw SourceException("لم يعلن الخادم سنة تميّز هذا المسلسل عن الأعمال المشابهة")
         if (years.isNotEmpty()) {
-            val named = titles.any { " ${SourceQuery.titleKey(it)} " in " ${SourceQuery.titleKey(name)} " }
+            val named = titles.any { " ${SourceQuery.titleKey(arabic(it))} " in " ${SourceQuery.titleKey(name)} " }
             val yearMatches = query.year in years || query.type == MediaType.TV && query.seasonYear != null && query.seasonYear in years
             val numbered = yearMatches && (query.type == MediaType.MOVIE ||
                 Regex("(?i)s0*${query.season}[ ._-]*e0*${query.episode}(?![0-9])").containsMatchIn(name))
@@ -153,7 +153,7 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
 
     private suspend fun confirmSeries(query: SourceQuery, titles: List<String>): Pair<Boolean, Boolean> {
         // Unrelated search results must not invalidate the requested TMDB identity and debut year.
-        for (title in titles.take(2)) try {
+        for (title in titles.take(3)) try {
             val result = api.searchPage(title)
             val series = result.results.filter { it.type == MediaType.TV }
             if (series.any { it.id == query.tmdbId && it.firstAirDate?.take(4)?.toIntOrNull() == query.year })
@@ -163,7 +163,7 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
     }
 
     private fun matches(raw: String, query: SourceQuery, titles: List<String>, full: Boolean): Boolean {
-        val text = arabic(raw)
+        val text = arabic(raw).removePrefix("مشاهده ")
         val series = query.type == MediaType.TV
         if (series && !text.startsWith("مسلسل ") || !series && !text.contains("فيلم ")) return false
         if (series && full && (episode(text) != query.episode || season(text) != query.season)) return false
@@ -181,7 +181,7 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
         val value = Regex("الموسم\\s+(\\d+|الاول|الثاني|الثالث|الرابع|الخامس|السادس|السابع|الثامن|التاسع|العاشر)").find(arabic(text))?.groupValues?.get(1) ?: return 1
         return value.toIntOrNull() ?: ORDINALS.indexOf(value).takeIf { it >= 0 }?.plus(1)
     }
-    private fun aliases(query: SourceQuery) = listOfNotNull(query.searchTitle, query.originalTitle).filter { it.isNotBlank() }.distinctBy { SourceQuery.titleKey(it) }
+    private fun aliases(query: SourceQuery) = query.websiteTitles()
     private fun sameSite(url: String) = url.toHttpUrlOrNull()?.let { it.isHttps && it.host == HOST } == true
     // Decode the URL once; Arabic slugs are valid, while separators and traversal are not.
     private fun safeSlug(slug: String) = slug.matches(Regex("[\\p{L}\\p{N}\\p{M}_-]{1,110}")) && slug.toByteArray(Charsets.UTF_8).size <= 117

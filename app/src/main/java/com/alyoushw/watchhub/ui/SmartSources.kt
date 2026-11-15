@@ -43,7 +43,7 @@ fun decodeSourceLookup(value: String): SourceLookup = sourceNavigationJson.decod
 fun DetailInfo.sourceLookup(): SourceLookup {
     val season = seasonDetails.firstOrNull { it.number > 0 }?.number ?: seasonDetails.firstOrNull()?.number ?: 1
     return SourceLookup(SourceQuery(type, id, originalTitle.ifBlank { searchTitle }, year?.toIntOrNull() ?: 0,
-        season.takeIf { type == MediaType.TV }, 1.takeIf { type == MediaType.TV }, imdbId, searchTitle), title, overview, overviewIsEnglish,
+        season.takeIf { type == MediaType.TV }, 1.takeIf { type == MediaType.TV }, imdbId, searchTitle, localizedTitle = title), title, overview, overviewIsEnglish,
         posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }, backdropPath?.let { "https://image.tmdb.org/t/p/w1280$it" },
         seasonDetails.map { SourceSeason(it.number, it.episodes, it.year?.toIntOrNull()) })
 }
@@ -233,7 +233,7 @@ private fun sourceIssueLabel(issue: SourceIssue): String = when (issue.health) {
 }
 
 private fun sourceSiteSearch(lookup: SourceLookup, query: SourceQuery): String? {
-    val title = query.searchTitle?.takeIf { it.isNotBlank() } ?: query.originalTitle
+    val title = query.websiteTitles().firstOrNull() ?: return null
     val base = when (lookup.providerId) {
         "egybest" -> "https://egytbest.live/"
         "moviz-time" -> "https://moviz-time.buzz/"
