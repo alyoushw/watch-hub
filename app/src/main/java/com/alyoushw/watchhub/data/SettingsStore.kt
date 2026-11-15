@@ -15,7 +15,8 @@ class SettingsStore(context: Context) {
         _watchNext.value = value
     }
 
-    private val _apiKey = MutableStateFlow(prefs.getString(KEY_TMDB, "").orEmpty())
+    private val _apiKey = MutableStateFlow(com.alyoushw.watchhub.BuildConfig.TMDB_KEY.trim()
+        .ifBlank { prefs.getString(KEY_TMDB, "").orEmpty() })
     val apiKey: StateFlow<String> = _apiKey.asStateFlow()
 
     private val _region = MutableStateFlow(prefs.getString(KEY_REGION, "SA") ?: "SA")

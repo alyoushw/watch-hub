@@ -449,10 +449,8 @@ fun SearchScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, o
 
             when {
                 apiKey.isBlank() -> MessageBox(
-                    title = "خطوة وحدة قبل نبدأ",
-                    body = "التطبيق يجيب بيانات الأفلام والمسلسلات ووين متوفرة من TMDB. تحتاج مفتاح مجاني تحطه في الإعدادات.",
-                    actionLabel = "افتح الإعدادات",
-                    onAction = onOpenSettings,
+                    title = "خدمة المحتوى غير متاحة",
+                    body = "تعذر تهيئة بيانات المحتوى في هذه النسخة. ثبّت آخر تحديث للتطبيق.",
                 )
 
                 else -> when (val s = vm.state) {

@@ -361,7 +361,7 @@ class TmdbApi(private val settings: SettingsStore) {
         deserializer: DeserializationStrategy<T>,
     ): T = withContext(Dispatchers.IO) {
         val key = settings.apiKey.value.trim()
-        if (key.isEmpty()) throw TmdbException("أضف مفتاح TMDB من الإعدادات أول")
+        if (key.isEmpty()) throw TmdbException("خدمة بيانات المحتوى غير متاحة في هذه النسخة؛ ثبّت آخر تحديث")
         val bearer = key.startsWith("eyJ")
 
         val url = "$BASE/$path".toHttpUrl().newBuilder().apply {
@@ -381,7 +381,7 @@ class TmdbApi(private val settings: SettingsStore) {
             try {
                 return@withContext client.newCall(request).execute().use { response ->
                     when {
-                        response.code == 401 -> throw TmdbException("مفتاح TMDB غير صحيح، راجعه في الإعدادات")
+                        response.code == 401 -> throw TmdbException("تعذر الوصول إلى خدمة بيانات المحتوى حالياً؛ حاول لاحقاً")
                         response.code == 404 -> throw TmdbException("ما لقينا هذا العمل")
                         !response.isSuccessful -> throw TmdbException("صار خطأ من TMDB (${response.code})")
                     }

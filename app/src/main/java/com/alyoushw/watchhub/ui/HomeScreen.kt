@@ -470,10 +470,8 @@ fun HomeScreen(
                     onOpenAnime = { onOpenAnime(it.animeLookup()) },
                     animeMovies = when (vm.type) { MediaType.TV -> false; MediaType.MOVIE -> true; else -> null })
                 MessageBox(
-                    title = "خطوة وحدة قبل نبدأ",
-                    body = "حط مفتاح TMDB المجاني في الإعدادات عشان نعرض لك أفضل الأعمال في كل منصة.",
-                    actionLabel = "افتح الإعدادات",
-                    onAction = onOpenSettings,
+                    title = "خدمة المحتوى غير متاحة",
+                    body = "تعذر تهيئة بيانات المحتوى في هذه النسخة. ثبّت آخر تحديث للتطبيق.",
                 )
             }
 

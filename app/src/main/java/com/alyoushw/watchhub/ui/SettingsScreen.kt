@@ -59,7 +59,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.alyoushw.watchhub.data.TmdbException
 import com.alyoushw.watchhub.data.XtreamAccount
 import com.alyoushw.watchhub.data.XtreamApi
 import com.alyoushw.watchhub.data.XtreamException
@@ -81,16 +80,8 @@ private val Regions = listOf(
 @Composable
 fun SettingsScreen(onOpenXtream: () -> Unit = {}) {
     val container = appContainer()
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val savedKey by container.settings.apiKey.collectAsStateWithLifecycle()
     val region by container.settings.region.collectAsStateWithLifecycle()
     val watchNext by container.settings.watchNext.collectAsStateWithLifecycle()
-
-    var key by remember(savedKey) { mutableStateOf(savedKey) }
-    var showKey by remember { mutableStateOf(false) }
-    var testMessage by remember { mutableStateOf<String?>(null) }
-    var testing by remember { mutableStateOf(false) }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
@@ -127,61 +118,6 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}) {
 
             HorizontalDivider()
             SourceSettingsSection()
-
-            HorizontalDivider()
-
-            SectionTitle("مفتاح TMDB")
-            Text(
-                "TMDB قاعدة بيانات مجانية للأفلام والمسلسلات، ومنها نعرف وين متوفر كل عمل. سوّ حساب مجاني، " +
-                    "وروح لصفحة الـ API وانسخ «API Key» أو «API Read Access Token» وحطه هنا.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            TextButton(modifier = Modifier.focusFrame(), onClick = { context.openUrl("https://www.themoviedb.org/settings/api") }) {
-                Text("افتح صفحة مفاتيح TMDB")
-            }
-            OutlinedTextField(
-                value = key,
-                onValueChange = {
-                    key = it
-                    testMessage = null
-                },
-                label = { Text("المفتاح") },
-                singleLine = true,
-                visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
-                trailingIcon = {
-                    TextButton(modifier = Modifier.focusFrame(), onClick = { showKey = !showKey }) { Text(if (showKey) "إخفاء" else "إظهار") }
-                },
-                modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(),
-            )
-            // TV: the remote cannot reach a button inside the box; this one is below it.
-            if (isTv()) TextButton(modifier = Modifier.focusFrame(), onClick = { showKey = !showKey }) { Text(if (showKey) "إخفاء" else "إظهار") }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Button(
-                    modifier = Modifier.focusFrame(),
-                    enabled = !testing && key.isNotBlank(),
-                    onClick = {
-                        container.settings.setApiKey(key)
-                        testing = true
-                        testMessage = null
-                        scope.launch {
-                            testMessage = try {
-                                container.api.search("Naruto")
-                                "✓ تم الحفظ والمفتاح شغّال"
-                            } catch (e: TmdbException) {
-                                e.message
-                            }
-                            testing = false
-                        }
-                    },
-                ) { Text(if (testing) "جاري التحقق…" else "احفظ وجرّب") }
-            }
-            testMessage?.let {
-                Text(
-                    it,
-                    color = if (it.startsWith("✓")) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
-                )
-            }
 
             HorizontalDivider()
 

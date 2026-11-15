@@ -30,6 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       WATCHHUB_ANIMEIFY_TOKEN: ${{ secrets.WATCHHUB_ANIMEIFY_TOKEN }}
+      WATCHHUB_TMDB_KEY: ${{ secrets.WATCHHUB_TMDB_KEY }}
       WATCHHUB_PREVIEW: ${{ (github.ref == 'refs/heads/feat/smart-watch-sources' || (inputs.distribution != 'validation' && ((github.ref != 'refs/heads/main' && github.ref != 'refs/heads/ccr-3b14310b-u6y40j') || (github.event_name == 'workflow_dispatch' && inputs.distribution == 'private')))) && 'true' || 'false' }}
       APK_NAME: ${{ (github.ref == 'refs/heads/feat/smart-watch-sources' || (inputs.distribution != 'validation' && ((github.ref != 'refs/heads/main' && github.ref != 'refs/heads/ccr-3b14310b-u6y40j') || (github.event_name == 'workflow_dispatch' && inputs.distribution == 'private')))) && 'WatchHub-Smart-Preview.apk' || 'WatchHub.apk' }}
     steps:

@@ -23,6 +23,11 @@ android {
         versionName = "0.24.$build" + if (privatePreview) "-preview" else ""
         buildConfigField("int", "BUILD_NUMBER", "$build")
         buildConfigField("boolean", "IS_PREVIEW", privatePreview.toString())
+        val tmdbKey = System.getenv("WATCHHUB_TMDB_KEY").orEmpty().trim()
+        if (System.getenv("GITHUB_ACTIONS") == "true" && tmdbKey.isBlank()) {
+            throw GradleException("Configure the WATCHHUB_TMDB_KEY repository secret before building a distributable APK")
+        }
+        buildConfigField("String", "TMDB_KEY", "\"${tmdbKey.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r")}\"")
         val animeifyToken = System.getenv("WATCHHUB_ANIMEIFY_TOKEN").orEmpty().trim()
         buildConfigField("String", "ANIMEIFY_TOKEN", "\"${animeifyToken.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
     }
