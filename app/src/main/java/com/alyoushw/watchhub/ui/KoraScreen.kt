@@ -234,6 +234,7 @@ fun KoraScreen(homeUrl: String = KORA_HOME, pageTitle: String = "كوره", onBa
                 web?.loadUrl(homeUrl)
             }, modifier = Modifier.focusFrame()) { Text("الرئيسية") }
             TextButton(onClick = { error = null; web?.reload() }, modifier = Modifier.focusFrame()) { Text("تحديث") }
+            if (error != null) TextButton(onClick = { openBrowser(web?.url ?: homeUrl) }, modifier = Modifier.focusFrame()) { Text("فتح بالمتصفح") }
         })
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {

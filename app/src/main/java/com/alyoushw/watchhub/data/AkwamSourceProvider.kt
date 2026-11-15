@@ -11,6 +11,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
+import okhttp3.Protocol
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import java.util.Base64
@@ -19,6 +20,7 @@ import java.util.Base64
 class AkwamSourceProvider(private val api: TmdbApi) : WatchSourceProvider {
     private val embeds = TopCinemaSourceProvider()
     private val probe = StreamProbe(verifyHlsSegments = true)
+    private val retryClient = SourceHttp.client.newBuilder().protocols(listOf(Protocol.HTTP_1_1)).build()
 
     override suspend fun search(query: SourceQuery): List<WatchSource> = withContext(Dispatchers.IO) {
         if (!query.valid) return@withContext emptyList()
@@ -55,7 +57,7 @@ class AkwamSourceProvider(private val api: TmdbApi) : WatchSourceProvider {
     private suspend fun findPost(query: SourceQuery, id: String, variantId: String?): WatchSource? = withContext(Dispatchers.IO) {
         if (!query.valid || !id.startsWith("akw-")) return@withContext null
         val slug = runCatching { String(Base64.getUrlDecoder().decode(id.removePrefix("akw-")), Charsets.UTF_8) }.getOrNull()
-            ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,110}")) } ?: return@withContext null
+            ?.takeIf(::safeSlug) ?: return@withContext null
         resolve(read(BASE.toHttpUrl().newBuilder().addPathSegment(slug).addPathSegment("").build().toString()), query, aliases(query), variantId)
     }
 
@@ -63,7 +65,7 @@ class AkwamSourceProvider(private val api: TmdbApi) : WatchSourceProvider {
         val title = doc.selectFirst("h1")?.text() ?: return null
         if (!matches(title, query, titles, true)) return null
         val page = doc.location().toHttpUrlOrNull()?.takeIf { it.host == HOST && it.isHttps } ?: return null
-        val slug = page.encodedPath.trim('/').takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,110}")) } ?: return null
+        val slug = page.pathSegments.filter { it.isNotEmpty() }.singleOrNull()?.takeIf(::safeSlug) ?: return null
         val id = "akw-" + Base64.getUrlEncoder().withoutPadding().encodeToString(slug.toByteArray(Charsets.UTF_8))
         val verified = if (query.type == MediaType.MOVIE) query.year.toString() in arabic(title) else confirmSeries(query, titles)
         if (!verified) return WatchSource(id, "akwam", "أكوام", query, emptyList(), attribution = "Akwam · $title", licenceUrl = page.toString(),
@@ -179,14 +181,19 @@ class AkwamSourceProvider(private val api: TmdbApi) : WatchSourceProvider {
     }
     private fun aliases(query: SourceQuery) = listOfNotNull(query.searchTitle, query.originalTitle).filter { it.isNotBlank() }.distinctBy { SourceQuery.titleKey(it) }
     private fun sameSite(url: String) = url.toHttpUrlOrNull()?.let { it.isHttps && it.host == HOST } == true
+    // Decode the URL once; Arabic slugs are valid, while separators and traversal are not.
+    private fun safeSlug(slug: String) = slug.matches(Regex("[\\p{L}\\p{N}\\p{M}_-]{1,110}")) && slug.toByteArray(Charsets.UTF_8).size <= 117
     private fun read(url: String): Document {
         if (!sameSite(url)) throw SourceException("رابط أكوام غير متوافق")
-        return SourceHttp.client.newCall(Request.Builder().url(url).header("User-Agent", AGENT).header("Referer", BASE).build()).execute().use { response ->
+        val request = Request.Builder().url(url).header("User-Agent", AGENT).header("Referer", BASE).build()
+        fun fetch(client: okhttp3.OkHttpClient): Document = client.newCall(request).execute().use { response ->
             if (!response.isSuccessful || !sameSite(response.request.url.toString())) throw SourceException("تعذر الوصول إلى أكوام (${response.code})", response.code)
             val source = response.body?.source() ?: throw SourceException("رد أكوام فارغ")
             if (source.request(2 * 1024 * 1024L + 1)) throw SourceException("صفحة أكوام أكبر من الحد المسموح")
             checkedSourcePage(Jsoup.parse(source.readByteArray().toString(Charsets.UTF_8), response.request.url.toString()))
         }
+        // Retry this idempotent site GET once after a socket reset, retaining normal TLS checks.
+        return try { fetch(SourceHttp.client) } catch (_: java.net.SocketException) { fetch(retryClient) }
     }
     private fun arabic(text: String) = text.map { when (it) {
         'أ', 'إ', 'آ' -> 'ا'; 'ة' -> 'ه'; 'ى' -> 'ي'; in '٠'..'٩' -> '0' + (it - '٠'); in '۰'..'۹' -> '0' + (it - '۰'); else -> it
