@@ -11,7 +11,6 @@ import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
-import okhttp3.Protocol
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import java.util.Base64
@@ -20,7 +19,6 @@ import java.util.Base64
 class AkwamSourceProvider(private val api: TmdbApi) : WatchSourceProvider {
     private val embeds = TopCinemaSourceProvider()
     private val probe = StreamProbe(verifyHlsSegments = true)
-    private val retryClient = SourceHttp.client.newBuilder().protocols(listOf(Protocol.HTTP_1_1)).build()
 
     override suspend fun search(query: SourceQuery): List<WatchSource> = withContext(Dispatchers.IO) {
         if (!query.valid) return@withContext emptyList()
@@ -50,7 +48,8 @@ class AkwamSourceProvider(private val api: TmdbApi) : WatchSourceProvider {
                 catch (e: Exception) { failed = e }
             }
         }
-        if (failed != null) throw SourceException("تعذّر إكمال البحث في أكوام؛ هذا لا يعني أن العمل غير موجود. أعد المحاولة أو افتح الموقع.", (failed as? SourceException)?.httpStatus)
+        failed?.let { throw SourceException("تعذّر الاتصال بأكوام: ${it.message.orEmpty().take(100)}", (it as? SourceException)?.httpStatus,
+            sourceFailure("البحث", it).health) }
         emptyList()
     }
 
@@ -180,8 +179,47 @@ class AkwamSourceProvider(private val api: TmdbApi) : WatchSourceProvider {
             if (source.request(2 * 1024 * 1024L + 1)) throw SourceException("صفحة أكوام أكبر من الحد المسموح")
             checkedSourcePage(Jsoup.parse(source.readByteArray().toString(Charsets.UTF_8), response.request.url.toString()))
         }
-        // Retry this idempotent site GET once after a socket reset, retaining normal TLS checks.
-        return try { fetch(SourceHttp.client) } catch (_: java.net.SocketException) { fetch(retryClient) }
+        // A fresh platform HTTPS connection avoids repeating the failing OkHttp connection path.
+        return try { fetch(SourceHttp.client) } catch (_: java.net.SocketException) { readPlatform(url) }
+    }
+    private fun readPlatform(url: String): Document {
+        var current = url.toHttpUrl()
+        val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(20)
+        repeat(4) {
+            if (!sameSite(current.toString())) throw SourceException("تحويل أكوام إلى موقع آخر غير متوافق")
+            val remaining = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()).coerceAtMost(10_000).toInt()
+            if (remaining <= 0) throw java.net.SocketTimeoutException("انتهت مهلة اتصال أكوام البديل")
+            val connection = current.toUrl().openConnection() as javax.net.ssl.HttpsURLConnection
+            try {
+                connection.instanceFollowRedirects = false
+                connection.connectTimeout = remaining
+                connection.readTimeout = remaining
+                connection.setRequestProperty("User-Agent", AGENT)
+                connection.setRequestProperty("Referer", BASE)
+                connection.setRequestProperty("Accept", "text/html,application/xhtml+xml")
+                val code = connection.responseCode
+                if (code in setOf(301, 302, 303, 307, 308)) {
+                    current = connection.getHeaderField("Location")?.let { current.resolve(it) }
+                        ?: throw SourceException("تحويل أكوام غير صالح", code)
+                    return@repeat
+                }
+                if (code !in 200..299) throw SourceException("تعذر الوصول إلى أكوام ($code)", code)
+                val bytes = connection.inputStream.use { input ->
+                    val output = java.io.ByteArrayOutputStream()
+                    val buffer = ByteArray(8192)
+                    while (true) {
+                        if (System.nanoTime() >= deadline) throw java.net.SocketTimeoutException("انتهت مهلة قراءة أكوام")
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        if (output.size() + count > 2 * 1024 * 1024) throw SourceException("صفحة أكوام أكبر من الحد المسموح")
+                        output.write(buffer, 0, count)
+                    }
+                    output.toByteArray()
+                }
+                return checkedSourcePage(Jsoup.parse(bytes.toString(Charsets.UTF_8), current.toString()))
+            } finally { connection.disconnect() }
+        }
+        throw SourceException("تحويلات أكوام أكثر من الحد المسموح")
     }
     private fun arabic(text: String) = text.map { when (it) {
         'أ', 'إ', 'آ' -> 'ا'; 'ة' -> 'ه'; 'ى' -> 'ي'; in '٠'..'٩' -> '0' + (it - '٠'); in '۰'..'۹' -> '0' + (it - '۰'); else -> it
