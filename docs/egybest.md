@@ -36,3 +36,22 @@ Superman episode pages, and Die Kaiserin season-three search results. These
 are representative site/media checks, not on-device playback or exhaustive
 catalogue verification. No new tests/workflows or local Gradle/emulator run.
 The main release, login, Animeify and APK-update settings are unchanged.
+
+## Playback reliability review
+
+Live reinspection found HLS masters returning HTTP 200 while their child URLs
+returned 403, and another path returning a PNG image as its first segment.
+EgyBest now opts into a bounded HLS child-playlist/first-segment check, requiring
+ordinary MPEG-TS or ISO media bytes (and a valid init prefix when present).
+These checks sample stream accessibility; they do not prove an entire movie
+plays or support image-wrapped/encrypted segments. Other providers retain their
+existing default probe behavior. Public MP4 and ordinary HLS TS prefixes were
+also confirmed during inspection, without downloading complete films.
+
+Native choices now identify the embed by a stable URL hash and HLS role instead
+of the website row number. Playback resolves only the selected server/variant,
+and older saved row-based references remain supported. Returning from a website
+link no longer disposes/restarts the search effect. All original website links
+remain available separately and are not advertised as verified native streams.
+The fix branch includes the newer stable TV Watch Next changes from main.
+No new tests/workflows or local Android build/emulator were introduced.

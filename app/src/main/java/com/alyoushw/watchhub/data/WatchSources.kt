@@ -72,6 +72,7 @@ data class WatchSourceRef(val providerId: String, val sourceId: String, val quer
 interface WatchSourceProvider {
     suspend fun search(query: SourceQuery): List<WatchSource>
     suspend fun find(query: SourceQuery, id: String): WatchSource? = search(query).firstOrNull { it.id == id }
+    suspend fun findVariant(query: SourceQuery, id: String, variantId: String): WatchSource? = find(query, id)
 }
 
 class SourceException(message: String) : Exception(message)
@@ -142,7 +143,7 @@ class WatchSources(private val providers: () -> List<WatchSourceProvider>, priva
     suspend fun resolve(ref: WatchSourceRef, engines: PlaybackEngines, progress: (Float) -> Unit = {}): ResolvedWatchSource {
         val found = coroutineScope {
             providers().map { provider -> async {
-                try { provider.find(ref.query, ref.sourceId)?.takeIf { it.providerId == ref.providerId && it.compatible(ref.query) } }
+                try { provider.findVariant(ref.query, ref.sourceId, ref.variantId)?.takeIf { it.providerId == ref.providerId && it.compatible(ref.query) } }
                 catch (e: kotlinx.coroutines.CancellationException) { throw e }
                 catch (_: Exception) { null }
             } }.awaitAll().firstOrNull { it != null }
@@ -155,7 +156,7 @@ class WatchSources(private val providers: () -> List<WatchSourceProvider>, priva
 
 fun interface SourceProbe { suspend fun compatible(variant: SourceVariant): Boolean }
 
-class StreamProbe(private val http: OkHttpClient = SourceHttp.client) : SourceProbe {
+class StreamProbe(private val http: OkHttpClient = SourceHttp.client, private val verifyHlsSegments: Boolean = false) : SourceProbe {
     override suspend fun compatible(variant: SourceVariant): Boolean = withContext(Dispatchers.IO) {
         if (variant.transport !in setOf(SourceTransport.MP4, SourceTransport.HLS, SourceTransport.MKV)) return@withContext false
         try {
@@ -176,11 +177,43 @@ class StreamProbe(private val http: OkHttpClient = SourceHttp.client) : SourcePr
                 // Wait for a bounded prefix even when a slow server splits the playlist across packets.
                 source.request(4096)
                 val bytes = source.readByteArray(minOf(4096L, source.buffer.size))
-                signatureMatches(variant.transport, bytes)
+                signatureMatches(variant.transport, bytes) &&
+                    (!verifyHlsSegments || variant.transport != SourceTransport.HLS ||
+                        playableHls(transport, response.request.url, bytes.toString(Charsets.UTF_8)))
             }
         } catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (_: Exception) { false }
     }
+
+    /** Some hosts return a valid master but blocked child playlists or image-wrapped segments. */
+    private fun playableHls(client: OkHttpClient, base: okhttp3.HttpUrl, text: String, depth: Int = 0): Boolean {
+        if (depth > 3 || !signatureMatches(SourceTransport.HLS, text.toByteArray(Charsets.UTF_8))) return false
+        val uri = text.removePrefix("\uFEFF").lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() && !it.startsWith('#') } ?: return false
+        val next = base.resolve(uri)?.takeIf { it.isHttps } ?: return false
+        val media = prefix(client, next) ?: return false
+        if (media.second.toString(Charsets.UTF_8).trimStart().startsWith("#EXTM3U"))
+            return playableHls(client, media.first, media.second.toString(Charsets.UTF_8), depth + 1)
+        if (!text.contains("#EXTINF:")) return false
+        val init = Regex("""#EXT-X-MAP:[^\r\n]*URI="([^"]+)"""").find(text)?.groupValues?.get(1)
+        if (init != null) {
+            val initUrl = base.resolve(init)?.takeIf { it.isHttps } ?: return false
+            if (!isoMedia(prefix(client, initUrl)?.second ?: return false)) return false
+        }
+        val bytes = media.second
+        val ts = bytes.size >= 188 && bytes[0] == 0x47.toByte() && (bytes.size <= 188 || bytes[188] == 0x47.toByte())
+        return ts || isoMedia(bytes)
+    }
+
+    private fun isoMedia(bytes: ByteArray): Boolean = bytes.size >= 8 &&
+        String(bytes, 4, 4, Charsets.US_ASCII) in setOf("ftyp", "styp", "moof", "sidx")
+
+    private fun prefix(client: OkHttpClient, url: okhttp3.HttpUrl): Pair<okhttp3.HttpUrl, ByteArray>? =
+        client.newCall(Request.Builder().url(url).header("Range", "bytes=0-4095").build()).execute().use { response ->
+            if (!response.isSuccessful) return@use null
+            val source = response.body?.source() ?: return@use null
+            source.request(4096)
+            response.request.url to source.readByteArray(minOf(4096L, source.buffer.size))
+        }
 
     companion object {
         fun signatureMatches(type: SourceTransport, bytes: ByteArray): Boolean = when (type) {

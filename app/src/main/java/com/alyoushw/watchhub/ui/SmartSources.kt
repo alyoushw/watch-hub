@@ -89,17 +89,17 @@ fun SourceWatchScreen(
     var loading by remember(query, catalogue, indexed, retry) { mutableStateOf(query.valid) }
     var result by remember(query, catalogue, indexed, retry) { mutableStateOf<SourceSearch?>(null) }
     var openedLink by remember(query) { mutableStateOf<SourceWebLink?>(null) }
-    openedLink?.let { link ->
-        androidx.activity.compose.BackHandler { openedLink = null }
-        KoraScreen(onBack = { openedLink = null }, homeUrl = link.url, pageTitle = link.label)
-        return
-    }
     LaunchedEffect(query, catalogue, indexed, retry) {
         result = null
         if (!query.valid) return@LaunchedEffect
         loading = true
         try { result = repository.search(query) }
         finally { loading = false }
+    }
+    openedLink?.let { link ->
+        androidx.activity.compose.BackHandler { openedLink = null }
+        KoraScreen(onBack = { openedLink = null }, homeUrl = link.url, pageTitle = link.label)
+        return
     }
     Scaffold(contentWindowInsets = WindowInsets(0), topBar = {
         TopAppBar(title = { Text(lookup.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },

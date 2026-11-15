@@ -17,7 +17,7 @@ import org.jsoup.nodes.Document
 /** Resolve public episode servers afresh; never persist session URLs as source identifiers. */
 class EgyBestSourceProvider : WatchSourceProvider {
     private val embeds = TopCinemaSourceProvider()
-    private val probe = StreamProbe()
+    private val probe = StreamProbe(verifyHlsSegments = true)
 
     override suspend fun search(query: SourceQuery): List<WatchSource> = withContext(Dispatchers.IO) {
         if (!query.valid) return@withContext emptyList()
@@ -69,12 +69,18 @@ class EgyBestSourceProvider : WatchSourceProvider {
         safelyResolve(read("$BASE?p=$post"), query, aliases(query))
     }
 
+    override suspend fun findVariant(query: SourceQuery, id: String, variantId: String): WatchSource? = withContext(Dispatchers.IO) {
+        if (!query.valid) return@withContext null
+        val post = Regex("egybest-(\\d{1,10})").matchEntire(id)?.groupValues?.get(1) ?: return@withContext null
+        resolve(read("$BASE?p=$post"), query, aliases(query), variantId)
+    }
+
     private suspend fun safelyResolve(doc: Document, query: SourceQuery, titles: List<String>): WatchSource? = try {
         resolve(doc, query, titles)
     } catch (e: CancellationException) { throw e }
     catch (_: Exception) { null }
 
-    private suspend fun resolve(doc: Document, query: SourceQuery, titles: List<String>): WatchSource? {
+    private suspend fun resolve(doc: Document, query: SourceQuery, titles: List<String>, targetId: String? = null): WatchSource? {
         val page = doc.location().toHttpUrlOrNull()?.takeIf { it.host == HOST } ?: return null
         val title = doc.selectFirst("h1.main-title")?.text() ?: return null
         if (!titleMatches(title, query, titles, true)) return null
@@ -98,10 +104,16 @@ class EgyBestSourceProvider : WatchSourceProvider {
         }.distinctBy { it.url }
         val limit = Semaphore(4)
         val variants = coroutineScope {
-            servers.withIndex().filter { it.value.url.toHttpUrlOrNull()?.host in EMBED_HOSTS }.map { (index, server) -> async {
+            servers.withIndex().filter { (index, server) ->
+                server.url.toHttpUrlOrNull()?.host in EMBED_HOSTS &&
+                    (targetId == null || targetId.startsWith("egy-${serverKey(server.url)}-") || targetId.startsWith("server-$index-"))
+            }.map { (index, server) -> async {
                 limit.withPermit {
                     try {
                         embeds.resolveEmbed(server.url, page.toString(), server.label, index.toString(), EMBED_HOSTS)
+                            .map { variant -> variant.copy(id = if (targetId?.startsWith("server-") == true) variant.id
+                                else "egy-${serverKey(server.url)}-${variantKey(variant)}") }
+                            .filter { targetId == null || it.id == targetId }
                             .filter { probe.compatible(it) }
                     } catch (e: CancellationException) { throw e }
                     catch (_: Exception) { emptyList() }
@@ -136,6 +148,14 @@ class EgyBestSourceProvider : WatchSourceProvider {
 
     private fun aliases(query: SourceQuery) = listOfNotNull(query.searchTitle, query.originalTitle)
         .filter { it.isNotBlank() }.distinctBy { SourceQuery.titleKey(it) }
+
+    /** Host order can change on the website; source identity must follow the embed, not its row. */
+    private fun serverKey(url: String): String = java.security.MessageDigest.getInstance("SHA-256")
+        .digest(url.toByteArray(Charsets.UTF_8)).take(8).joinToString("") { "%02x".format(it.toInt() and 255) }
+
+    private fun variantKey(variant: SourceVariant): String =
+        Regex("/(hls[234]?)(?:/|_)").find(variant.url.toHttpUrlOrNull()?.encodedPath.orEmpty())?.groupValues?.get(1)
+            ?: "${variant.transport.name.lowercase(java.util.Locale.ROOT)}-${variant.id.substringAfterLast('-')}"
 
     private fun read(url: String): Document {
         val parsed = url.toHttpUrlOrNull()?.takeIf { it.isHttps && it.host == HOST } ?: throw SourceException("رابط EgyBest غير متوافق")
