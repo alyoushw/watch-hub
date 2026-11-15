@@ -174,7 +174,7 @@ fun SourceWatchScreen(
                             val pages = source.webLinks.filter { it.download == downloading }
                             if (pages.isNotEmpty()) {
                                 Text(if (downloading && source.providerId == "akwam") "جميع سيرفرات الموقع · اختر وجرّب"
-                                    else if (downloading) "صفحات التحميل الأصلية" else "صفحات المشاهدة والموقع · تفتح داخل التطبيق")
+                                    else if (downloading) "صفحات التحميل الأصلية" else "جميع سيرفرات المشاهدة وصفحات الموقع · اختر وجرّب")
                                 pages.forEach { link ->
                                     OutlinedButton(onClick = { openedLink = link; chooseSource = false },
                                         modifier = Modifier.fillMaxWidth().focusFrame()) {

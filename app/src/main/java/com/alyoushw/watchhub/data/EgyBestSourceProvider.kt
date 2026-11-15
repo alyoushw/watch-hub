@@ -27,11 +27,14 @@ class EgyBestSourceProvider : WatchSourceProvider {
             else listOf(title)
         }.distinct()
         val visited = mutableSetOf<String>()
+        var failed: Exception? = null
         for (search in searches) {
             var next = BASE.toHttpUrl().newBuilder().addQueryParameter("s", search)
                 .addQueryParameter("type", if (query.type == MediaType.TV) "series" else "movies").build().toString()
             for (page in 1..4) {
-                val doc = read(next)
+                val doc = try { read(next) }
+                    catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { failed = e; break }
                 val candidates = doc.select("a.block[href]").filter {
                     it.absUrl("href").toHttpUrlOrNull()?.host == HOST &&
                         titleMatches(it.selectFirst("h3.title")?.text().orEmpty(), query, titles, false)
@@ -40,8 +43,10 @@ class EgyBestSourceProvider : WatchSourceProvider {
                     if (!visited.add(candidate.absUrl("href"))) continue
                     val details = try { read(candidate.absUrl("href")) }
                         catch (e: CancellationException) { throw e }
-                        catch (_: Exception) { continue }
-                    safelyResolve(details, query, titles)?.let { return@withContext listOf(it) }
+                        catch (e: Exception) { failed = e; continue }
+                    try { safelyResolve(details, query, titles)?.let { return@withContext listOf(it) } }
+                    catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { failed = e }
                     if (query.type == MediaType.TV) {
                         val episodes = details.select("a.block[href]").filter {
                             it.absUrl("href").toHttpUrlOrNull()?.host == HOST &&
@@ -52,7 +57,7 @@ class EgyBestSourceProvider : WatchSourceProvider {
                             try {
                                 safelyResolve(read(episode.absUrl("href")), query, titles)?.let { return@withContext listOf(it) }
                             } catch (e: CancellationException) { throw e }
-                            catch (_: Exception) { /* Continue to another matching episode page. */ }
+                            catch (e: Exception) { failed = e }
                         }
                     }
                 }
@@ -60,6 +65,7 @@ class EgyBestSourceProvider : WatchSourceProvider {
                     .map { it.absUrl("href") }.firstOrNull { it.toHttpUrlOrNull()?.host == HOST } ?: break
             }
         }
+        failed?.let { throw it }
         emptyList()
     }
 
@@ -75,10 +81,8 @@ class EgyBestSourceProvider : WatchSourceProvider {
         resolve(read("$BASE?p=$post"), query, aliases(query), variantId)
     }
 
-    private suspend fun safelyResolve(doc: Document, query: SourceQuery, titles: List<String>): WatchSource? = try {
+    private suspend fun safelyResolve(doc: Document, query: SourceQuery, titles: List<String>): WatchSource? =
         resolve(doc, query, titles)
-    } catch (e: CancellationException) { throw e }
-    catch (_: Exception) { null }
 
     private suspend fun resolve(doc: Document, query: SourceQuery, titles: List<String>, targetId: String? = null): WatchSource? {
         val page = doc.location().toHttpUrlOrNull()?.takeIf { it.host == HOST } ?: return null
@@ -94,7 +98,7 @@ class EgyBestSourceProvider : WatchSourceProvider {
         val post = doc.selectFirst("link[rel=shortlink]")?.absUrl("href")?.toHttpUrlOrNull()?.queryParameter("p")
             ?.takeIf { it.matches(Regex("\\d{1,10}")) } ?: return null
         val servers = doc.select("#WatchServers [data-embed-url]").mapNotNull {
-            val url = it.attr("data-embed-url").toHttpUrlOrNull()?.takeIf { parsed -> parsed.isHttps } ?: return@mapNotNull null
+            val url = it.absUrl("data-embed-url").toHttpUrlOrNull()?.takeIf { parsed -> parsed.isHttps } ?: return@mapNotNull null
             SourceWebLink(it.text().ifBlank { url.host }, url.toString())
         }.distinctBy { it.url }
         val downloads = doc.select(".download-section .tr, .downloads .tr").mapNotNull { row ->

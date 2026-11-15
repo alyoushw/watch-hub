@@ -1,6 +1,11 @@
 package com.alyoushw.watchhub.data
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.Cookie
 import okhttp3.FormBody
@@ -19,37 +24,44 @@ class TopCinemaSourceProvider : WatchSourceProvider {
         if (!query.valid) return@withContext emptyList()
         val base = base()
         val aliases = listOfNotNull(query.searchTitle, query.originalTitle).filter { it.isNotBlank() }.distinctBy { SourceQuery.titleKey(it) }
+        var failed: Exception? = null
         for (title in aliases.take(2)) {
             val text = if (query.type == MediaType.TV) "$title الموسم ${ORDINALS.getOrNull((query.season ?: 1) - 1) ?: query.season} الحلقة ${query.episode}" else title
             val url = base.newBuilder().addPathSegment("search").addPathSegment("")
                 .addQueryParameter("query", text).addQueryParameter("type", if (query.type == MediaType.TV) "series" else "movies").build()
-            val doc = read(url.toString(), base.toString()).doc
+            val doc = try { read(url.toString(), base.toString()).doc }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { failed = e; continue }
             val candidates = doc.select(".Small--Box a[href][title]").distinctBy { it.absUrl("href") }.filter {
                 val page = it.absUrl("href").toHttpUrlOrNull()
                 page?.host == base.host && titleMatches(it.attr("title"), query, aliases)
             }
             for (candidate in candidates.take(3)) {
-                val source = safelyResolve(candidate.absUrl("href"), base, query, aliases)
+                val source = try { safelyResolve(candidate.absUrl("href"), base, query, aliases) }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (e: Exception) { failed = e; continue }
                 if (source != null) return@withContext listOf(source)
             }
         }
+        failed?.let { throw it }
         emptyList()
     }
 
-    override suspend fun find(query: SourceQuery, id: String): WatchSource? = withContext(Dispatchers.IO) {
+    override suspend fun find(query: SourceQuery, id: String): WatchSource? = findPost(query, id, null)
+    override suspend fun findVariant(query: SourceQuery, id: String, variantId: String): WatchSource? = findPost(query, id, variantId)
+
+    private suspend fun findPost(query: SourceQuery, id: String, variantId: String?): WatchSource? = withContext(Dispatchers.IO) {
         if (!query.valid) return@withContext null
         val post = Regex("topcinema-(\\d{1,10})").matchEntire(id)?.groupValues?.get(1) ?: return@withContext null
         val base = base()
         safelyResolve(base.newBuilder().addQueryParameter("p", post).build().toString(), base, query,
-            listOfNotNull(query.originalTitle, query.searchTitle))
+            listOfNotNull(query.originalTitle, query.searchTitle), variantId)
     }
 
-    private suspend fun safelyResolve(url: String, base: HttpUrl, query: SourceQuery, aliases: List<String>): WatchSource? = try {
-        resolvePage(read(url, base.toString()).doc, base, query, aliases)
-    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-    catch (_: Exception) { null }
+    private suspend fun safelyResolve(url: String, base: HttpUrl, query: SourceQuery, aliases: List<String>, targetId: String? = null): WatchSource? =
+        resolvePage(read(url, base.toString()).doc, base, query, aliases, targetId)
 
-    private suspend fun resolvePage(doc: Document, base: HttpUrl, query: SourceQuery, aliases: List<String>): WatchSource? {
+    private suspend fun resolvePage(doc: Document, base: HttpUrl, query: SourceQuery, aliases: List<String>, targetId: String? = null): WatchSource? {
         if (doc.location().toHttpUrlOrNull()?.host != base.host) return null
         val title = doc.selectFirst("h1.post-title")?.text() ?: return null
         if (!titleMatches(title, query, aliases)) return null
@@ -71,32 +83,39 @@ class TopCinemaSourceProvider : WatchSourceProvider {
             webLinks = listOf(SourceWebLink("صفحة المشاهدة الأصلية", watchUrl.toString())),
             issues = listOf(sourceFailure("صفحة المشاهدة", e))) }
         val servers = watch.select("li.server--item[data-id][data-server]").filter {
-            it.attr("data-id") == post && it.attr("data-server").matches(Regex("\\d{1,3}")) && supported(it.text())
-        }.sortedBy { priority(it.text()) }
-        val variants = mutableListOf<SourceVariant>()
-        val issues = mutableListOf<SourceIssue>()
-        for (server in servers.take(4)) {
+            it.attr("data-id") == post && it.attr("data-server").matches(Regex("\\d{1,3}"))
+        }.distinctBy { it.attr("data-server") }
+        val limit = Semaphore(4)
+        val resolved = coroutineScope { servers.map { server -> async { limit.withPermit {
             val name = server.selectFirst("span")?.text()?.ifBlank { null } ?: server.text()
             val index = server.attr("data-server")
-            try {
-                val response = read(base.resolve("/wp-content/themes/movies2023/Ajaxat/Single/Server.php")!!.toString(), watchUrl.toString(),
-                    FormBody.Builder().add("id", post).add("i", index).build())
-                val embed = response.doc.selectFirst("iframe[src]")?.absUrl("src")
-                if (embed == null) { issues += SourceIssue(name, SourceHealth.UNVERIFIED); continue }
-                val media = resolveEmbed(embed, watchUrl.toString(), name, index)
-                if (media.isEmpty()) issues += SourceIssue(name, SourceHealth.UNVERIFIED)
-                for (variant in media) {
-                    val check = probe.inspect(variant)
-                    if (check.playable) { variants += variant; break }
-                    issues += check.issue(name)
-                }
-                if (variants.size >= 2) break
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (e: Exception) { issues += sourceFailure(name, e) }
-        }
-        return WatchSource("topcinema-$post", "topcinema", "TopCinema", query, variants,
+            val variants = mutableListOf<SourceVariant>()
+            val issues = mutableListOf<SourceIssue>()
+            var link = SourceWebLink("$name · اختره من قائمة الموقع", watchUrl.toString())
+            if (targetId == null || targetId.startsWith("server-$index-")) {
+                try {
+                    val response = read(base.resolve("/wp-content/themes/movies2023/Ajaxat/Single/Server.php")!!.toString(), watchUrl.toString(),
+                        FormBody.Builder().add("id", post).add("i", index).build())
+                    val embed = response.doc.selectFirst("iframe[src]")?.absUrl("src")?.toHttpUrlOrNull()?.takeIf { it.isHttps }
+                    if (embed == null) throw SourceException("لم تعلن الصفحة رابط الخادم")
+                    link = SourceWebLink(name, embed.toString())
+                    val media = resolveEmbed(embed.toString(), watchUrl.toString(), name, index)
+                    if (media.isEmpty()) issues += SourceIssue(name, SourceHealth.UNVERIFIED)
+                    for (variant in media) {
+                        if (targetId != null && variant.id != targetId) continue
+                        val check = probe.inspect(variant)
+                        if (check.playable) { variants += variant; continue }
+                        issues += check.issue(name)
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (e: Exception) { issues += sourceFailure(name, e) }
+            }
+            Triple(variants.toList(), link, issues.toList())
+        } } }.awaitAll() }
+        return WatchSource("topcinema-$post", "topcinema", "TopCinema", query, resolved.flatMap { it.first }.distinctBy { it.url },
             attribution = "TopCinema · ${query.originalTitle} (${query.year}) · $canonical", licenceUrl = canonical.toString(),
-            webLinks = listOf(SourceWebLink("صفحة المشاهدة الأصلية", watchUrl.toString())), issues = issues.distinct())
+            webLinks = resolved.map { it.second } + SourceWebLink("صفحة المشاهدة الأصلية", watchUrl.toString()),
+            issues = resolved.flatMap { it.third }.distinct())
     }
 
     internal fun resolveEmbed(url: String, referer: String, name: String, index: String, extraHosts: Set<String> = emptySet(),
@@ -180,8 +199,6 @@ class TopCinemaSourceProvider : WatchSourceProvider {
         }
     }
 
-    private fun supported(name: String) = listOf("uqload", "streamwish", "videotube", "updown").any { name.contains(it, true) }
-    private fun priority(name: String) = when { name.contains("uqload", true) -> 0; name.contains("streamwish", true) -> 1; else -> 2 }
     private fun embedHost(host: String) = listOf("uqload.net", "uqload.vc", "streamwish.fun", "vidtube.one", "updown.cam")
         .any { host == it || host.endsWith(".$it") }
     private fun arabic(text: String) = text.map { char -> when (char) {
