@@ -68,7 +68,8 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
         val page = doc.location().toHttpUrlOrNull()?.takeIf { it.host == HOST && it.isHttps } ?: return null
         val slug = page.pathSegments.filter { it.isNotEmpty() }.singleOrNull()?.takeIf(::safeSlug) ?: return null
         val id = "akw-" + Base64.getUrlEncoder().withoutPadding().encodeToString(slug.toByteArray(Charsets.UTF_8))
-        val verified = if (query.type == MediaType.MOVIE) query.year.toString() in arabic(title) else confirmSeries(query, titles)
+        val (verified, requiresHostYear) = if (query.type == MediaType.MOVIE)
+            (query.year.toString() in arabic(title)) to false else confirmSeries(query, titles)
         if (!verified) return WatchSource(id, "akwam", "أكوام", query, emptyList(), attribution = "Akwam · $title", licenceUrl = page.toString(),
             webLinks = listOf(SourceWebLink("نتيجة محتملة — افتح التفاصيل للتحقق", page.toString())),
             issues = listOf(SourceIssue("مطابقة العمل", SourceHealth.UNVERIFIED)), matchVerified = false)
@@ -76,12 +77,14 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
         val download = try { read(downloadUrl) }
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { return WatchSource(id, "akwam", "أكوام", query, emptyList(), attribution = "Akwam · $title", licenceUrl = page.toString(),
-            webLinks = listOf(SourceWebLink("صفحة التحميل الأصلية", downloadUrl, true)), issues = listOf(sourceFailure("صفحة التحميل", e))) }
+            webLinks = listOf(SourceWebLink("صفحة التحميل الأصلية", downloadUrl, true)), issues = listOf(sourceFailure("صفحة التحميل", e)),
+            matchVerified = !requiresHostYear) }
         val links = download.select(".br-download-row").mapNotNull { row ->
             val url = row.selectFirst("a[href]")?.absUrl("href")?.toHttpUrlOrNull()?.takeIf { it.isHttps } ?: return@mapNotNull null
             SourceWebLink((row.selectFirst("strong")?.text() ?: "تحميل") + " · " + url.host, url.toString(), true)
         }.distinctBy { it.url }
         val issues = java.util.Collections.synchronizedList(mutableListOf<SourceIssue>())
+        val identityConfirmed = java.util.concurrent.atomic.AtomicBoolean(!requiresHostYear)
         val limit = Semaphore(3)
         val variants = coroutineScope {
             links.withIndex().map { (index, link) -> async {
@@ -90,10 +93,10 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
                     try {
                         val url = link.url.toHttpUrl()
                         val media = when {
-                            url.encodedPath.endsWith(".mp4", true) -> listOf(SourceVariant("direct", link.label, link.url, SourceTransport.MP4))
+                            url.encodedPath.endsWith(".mp4", true) && !requiresHostYear -> listOf(SourceVariant("direct", link.label, link.url, SourceTransport.MP4))
                             url.host in MIXDROP_HOSTS && url.encodedPath.startsWith("/f/") ||
                                 url.host in LULU_HOSTS && url.encodedPath.startsWith("/d/") ->
-                                resolveDownloadHost(link, downloadUrl, query, titles, index)
+                                resolveDownloadHost(link, downloadUrl, query, titles, index, requiresHostYear) { identityConfirmed.set(true) }
                             else -> { issues += SourceIssue(link.label, SourceHealth.UNSUPPORTED); emptyList() }
                         }
                         if (media.isEmpty() && (url.host in MIXDROP_HOSTS || url.host in LULU_HOSTS)) issues += SourceIssue(link.label, SourceHealth.UNVERIFIED)
@@ -109,12 +112,14 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
                 }
             } }.awaitAll().flatten().distinctBy { it.url }
         }
+        if (!identityConfirmed.get()) issues += SourceIssue("مطابقة سنة المسلسل", SourceHealth.UNVERIFIED)
         return WatchSource(id, "akwam", "أكوام", query, variants, attribution = "Akwam · $title", licenceUrl = page.toString(),
             webLinks = links + listOf(SourceWebLink("صفحة التحميل الأصلية · جميع السيرفرات", downloadUrl, true),
-                    SourceWebLink("صفحة العمل الأصلية", page.toString())), issues = issues.toList().distinct())
+                    SourceWebLink("صفحة العمل الأصلية", page.toString())), issues = issues.toList().distinct(), matchVerified = identityConfirmed.get())
     }
 
-    private fun resolveDownloadHost(link: SourceWebLink, referer: String, query: SourceQuery, titles: List<String>, index: Int): List<SourceVariant> {
+    private fun resolveDownloadHost(link: SourceWebLink, referer: String, query: SourceQuery, titles: List<String>, index: Int,
+        requiresHostYear: Boolean, confirmIdentity: () -> Unit): List<SourceVariant> {
         val owner = link.url.toHttpUrl()
         val hosts = if (owner.host in MIXDROP_HOSTS) MIXDROP_HOSTS else LULU_HOSTS
         val fileId = owner.pathSegments.lastOrNull()?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{4,80}")) } ?: return emptyList()
@@ -128,11 +133,15 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
         val landing = fetch(link.url, referer)
         // Match real filename metadata when available; generic "Loading" pages rely on the verified parent and file ID.
         val name = landing.first.title()
-        if (Regex("\\b(?:18|19|20|21)\\d{2}\\b").containsMatchIn(name)) {
+        val years = Regex("\\b(?:18|19|20|21)\\d{2}\\b").findAll(name).mapNotNull { it.value.toIntOrNull() }.toSet()
+        if (requiresHostYear && years.isEmpty()) throw SourceException("لم يعلن الخادم سنة تميّز هذا المسلسل عن الأعمال المشابهة")
+        if (years.isNotEmpty()) {
             val named = titles.any { " ${SourceQuery.titleKey(it)} " in " ${SourceQuery.titleKey(name)} " }
-            val numbered = if (query.type == MediaType.MOVIE) query.year.toString() in name else
-                Regex("(?i)s0*${query.season}[ ._-]*e0*${query.episode}(?![0-9])").containsMatchIn(name)
+            val yearMatches = query.year in years || query.type == MediaType.TV && query.seasonYear != null && query.seasonYear in years
+            val numbered = yearMatches && (query.type == MediaType.MOVIE ||
+                Regex("(?i)s0*${query.season}[ ._-]*e0*${query.episode}(?![0-9])").containsMatchIn(name))
             if (!named || !numbered) throw SourceException("بيانات الخادم لا تطابق العمل المطلوب")
+            confirmIdentity()
         }
         val iframe = landing.first.select("iframe[src]").mapNotNull { it.absUrl("src").toHttpUrlOrNull() }
             .firstOrNull { it.isHttps && it.host in hosts && it.encodedPath.trim('/') == "e/$fileId" }
@@ -142,13 +151,15 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
         return embeds.mediaFromPage(player.first, label, index.toString(), hosts, AkwamChromium.USER_AGENT, player.second)
     }
 
-    private suspend fun confirmSeries(query: SourceQuery, titles: List<String>): Boolean {
-        // The site exposes upload dates, not a trustworthy debut year. Confirm a unique TMDB identity instead.
+    private suspend fun confirmSeries(query: SourceQuery, titles: List<String>): Pair<Boolean, Boolean> {
+        // Unrelated search results must not invalidate the requested TMDB identity and debut year.
         for (title in titles.take(2)) try {
             val result = api.searchPage(title)
-            if (result.totalPages == 1 && result.results.filter { it.type == MediaType.TV }.singleOrNull()?.id == query.tmdbId) return true
+            val series = result.results.filter { it.type == MediaType.TV }
+            if (series.any { it.id == query.tmdbId && it.firstAirDate?.take(4)?.toIntOrNull() == query.year })
+                return true to series.any { it.id != query.tmdbId }
         } catch (e: CancellationException) { throw e } catch (_: Exception) { /* Keep uncertain matches website-only. */ }
-        return false
+        return false to false
     }
 
     private fun matches(raw: String, query: SourceQuery, titles: List<String>, full: Boolean): Boolean {
