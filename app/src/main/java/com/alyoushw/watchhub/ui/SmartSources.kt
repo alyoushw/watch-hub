@@ -169,18 +169,23 @@ fun SourceWatchScreen(
                         Text(variant.label, style = MaterialTheme.typography.bodySmall)
                         Text(source.attribution, style = MaterialTheme.typography.labelSmall)
                     }
+                    if (source.webLinks.isNotEmpty()) {
+                        listOf(false, true).forEach { downloading ->
+                            val pages = source.webLinks.filter { it.download == downloading }
+                            if (pages.isNotEmpty()) {
+                                Text(if (downloading) "صفحات التحميل الأصلية" else "صفحات المشاهدة والموقع · تفتح داخل التطبيق")
+                                pages.forEach { link ->
+                                    OutlinedButton(onClick = { openedLink = link; chooseSource = false },
+                                        modifier = Modifier.fillMaxWidth().focusFrame()) {
+                                        Text((if (link.download) "صفحة تحميل · " else "فتح الصفحة · ") + link.label)
+                                    }
+                                }
+                            }
+                        }
+                    }
                     source.issues.distinct().forEach { issue ->
                         Text(issue.server + " — " + sourceIssueLabel(issue), style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    if (source.webLinks.isNotEmpty()) {
-                        Text("روابط الموقع الأصلية · ليست ملفات فيديو مفحوصة للمشغّل الرئيسي")
-                        source.webLinks.forEach { link ->
-                            OutlinedButton(onClick = { openedLink = link; chooseSource = false },
-                                modifier = Modifier.fillMaxWidth().focusFrame()) {
-                                Text((if (link.download) "صفحة تحميل · " else "مشغّل الموقع · ") + link.label)
-                            }
-                        }
                     }
                 }
                 result?.errors?.firstOrNull()?.let { Text(it, color = MaterialTheme.colorScheme.error) }

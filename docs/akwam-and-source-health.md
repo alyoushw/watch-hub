@@ -53,3 +53,20 @@ guarantee future server availability or an entire film's playback.
 
 No new tests, CI/workflow changes, local Gradle build or emulator run were added.
 The existing unit/lint and APK build workflow is used after the live media checks.
+
+## Declared website playback pages
+
+Download-page iframes provide additional website viewing choices: MixDrop's
+observed `/f/<id>` page declares `/e/<id>`, and Lulu's `/d/<id>` page declares
+`https://luluvid.com/e/<id>`. Collect only declared HTTPS iframe URLs on the
+known host families with the same file ID; never synthesize a playback route.
+Keep their original server order and remove duplicates. Other hosts without
+an exposed playback page retain their original download-page action.
+
+The selection dialog displays verified native streams first, website viewing
+pages next, original download pages next, and diagnostic details afterwards.
+Website pages open the existing in-app browser, independently of Media3 streams.
+Before building this change, the declared Lulu viewing page decoded a video
+frame successfully for the supplied episode; the Diabolic viewing page returned
+HTTP 200 with the matching filename. MixDrop's declared viewing page returned
+HTTP 200 after its normal redirect, but its full playback was not verified.

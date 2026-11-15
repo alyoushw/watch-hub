@@ -79,6 +79,7 @@ class AkwamSourceProvider(private val api: TmdbApi) : WatchSourceProvider {
             SourceWebLink((row.selectFirst("strong")?.text() ?: "تحميل") + " · " + url.host, url.toString(), true)
         }.distinctBy { it.url }
         val issues = java.util.Collections.synchronizedList(mutableListOf<SourceIssue>())
+        val watchPages = java.util.Collections.synchronizedList(mutableListOf<Pair<Int, SourceWebLink>>())
         val limit = Semaphore(3)
         val variants = coroutineScope {
             links.withIndex().map { (index, link) -> async {
@@ -92,10 +93,18 @@ class AkwamSourceProvider(private val api: TmdbApi) : WatchSourceProvider {
                                 embeds.resolveEmbed(link.url, downloadUrl, link.label, index.toString(), setOf("lulustream.com")) { hostPage ->
                                     val key = " ${SourceQuery.titleKey(hostPage.title())} "
                                     val named = titles.any { " ${SourceQuery.titleKey(it)} " in key }
-                                    named && if (query.type == MediaType.TV)
+                                    val accepted = named && if (query.type == MediaType.TV)
                                         Regex("(?i)s0*${query.season}[ ._-]*e0*${query.episode}(?![0-9])").containsMatchIn(hostPage.title())
                                     else Regex("(?<![0-9])${query.year}(?![0-9])").containsMatchIn(hostPage.title())
+                                    if (accepted) watchPages += discoverWatchPages(hostPage, link).map { index to it }
+                                    accepted
                                 }
+                            url.host in MIXDROP_HOSTS && url.encodedPath.startsWith("/f/") -> {
+                                val hostPage = readDownloadHost(link.url, downloadUrl)
+                                watchPages += discoverWatchPages(hostPage, link).map { index to it }
+                                issues += SourceIssue(link.label, SourceHealth.UNSUPPORTED)
+                                emptyList()
+                            }
                             else -> { issues += SourceIssue(link.label, SourceHealth.UNSUPPORTED); emptyList() }
                         }
                         if (media.isEmpty() && url.host == "lulustream.com") issues += SourceIssue(link.label, SourceHealth.UNVERIFIED)
@@ -112,7 +121,32 @@ class AkwamSourceProvider(private val api: TmdbApi) : WatchSourceProvider {
             } }.awaitAll().flatten().distinctBy { it.url }
         }
         return WatchSource(id, "akwam", "أكوام", query, variants, attribution = "Akwam · $title", licenceUrl = page.toString(),
-            webLinks = links + SourceWebLink("صفحة العمل الأصلية", page.toString()), issues = issues.toList().distinct())
+            webLinks = watchPages.toList().sortedBy { it.first }.map { it.second }.distinctBy { it.url } +
+                links + SourceWebLink("صفحة العمل الأصلية", page.toString()), issues = issues.toList().distinct())
+    }
+
+    /** Follow only an embed actually declared by the download page for the same file ID. */
+    private fun discoverWatchPages(doc: Document, link: SourceWebLink): List<SourceWebLink> {
+        val owner = link.url.toHttpUrl()
+        val id = owner.pathSegments.lastOrNull()?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{4,80}")) } ?: return emptyList()
+        val hosts = if (owner.host == "lulustream.com") setOf("lulustream.com", "luluvid.com") else MIXDROP_HOSTS
+        return doc.select("iframe[src]").mapNotNull {
+            val url = it.absUrl("src").toHttpUrlOrNull()?.takeIf { u ->
+                u.isHttps && u.host in hosts && u.encodedPath.trim('/') == "e/$id"
+            } ?: return@mapNotNull null
+            SourceWebLink(link.label.replaceFirst("تحميل", "مشاهدة"), url.toString())
+        }.distinctBy { it.url }
+    }
+
+    private fun readDownloadHost(url: String, referer: String): Document {
+        require(url.toHttpUrl().host in MIXDROP_HOSTS)
+        return SourceHttp.client.newCall(Request.Builder().url(url).header("User-Agent", AGENT).header("Referer", referer).build()).execute().use { response ->
+            if (!response.isSuccessful) throw SourceException("تعذّر فتح صفحة الخادم (${response.code})", response.code)
+            if (response.request.url.host !in MIXDROP_HOSTS) throw SourceException("تعذّر تأكيد عنوان صفحة الخادم")
+            val body = response.body?.source() ?: throw SourceException("صفحة الخادم فارغة")
+            if (body.request(2 * 1024 * 1024L + 1)) throw SourceException("صفحة الخادم أكبر من الحد المسموح")
+            checkedSourcePage(Jsoup.parse(body.readByteArray().toString(Charsets.UTF_8), response.request.url.toString()))
+        }
     }
 
     private suspend fun confirmSeries(query: SourceQuery, titles: List<String>): Boolean {
@@ -161,6 +195,7 @@ class AkwamSourceProvider(private val api: TmdbApi) : WatchSourceProvider {
         private const val HOST = "akw.cam"
         private const val BASE = "https://akw.cam/"
         private const val AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+        private val MIXDROP_HOSTS = setOf("mixdrop.ag", "mixdrop.top", "mixdrop.ps", "mixdrop.co", "mixdrop.to", "mxdrop.click")
         private val ORDINALS = listOf("الاول", "الثاني", "الثالث", "الرابع", "الخامس", "السادس", "السابع", "الثامن", "التاسع", "العاشر")
     }
 }
