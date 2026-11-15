@@ -137,6 +137,13 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
             val url = row.selectFirst("a[href]")?.absUrl("href")?.toHttpUrlOrNull()?.takeIf { it.isHttps } ?: return@mapNotNull null
             SourceWebLink((row.selectFirst("strong")?.text() ?: "تحميل") + " · " + url.host, url.toString(), true)
         }.distinctBy { it.url }
+        // These aliases identify files only; the website page must still match the requested title/S/E above.
+        val hostTitles = if (titles.any { name -> name.any { it in '\u0600'..'\u06ff' } }) {
+            val aliases = try { api.alternativeTitles(query.type, query.tmdbId) }
+            catch (e: CancellationException) { throw e }
+            catch (_: Exception) { emptyList() }
+            (titles + aliases).distinctBy { SourceQuery.titleKey(arabic(it)) }
+        } else titles
         val issues = java.util.Collections.synchronizedList(mutableListOf<SourceIssue>())
         val identityConfirmed = java.util.concurrent.atomic.AtomicBoolean(!requiresHostYear)
         val limit = Semaphore(3)
@@ -149,11 +156,13 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
                         val media = when {
                             url.encodedPath.endsWith(".mp4", true) && !requiresHostYear -> listOf(SourceVariant("direct", link.label, link.url, SourceTransport.MP4))
                             url.host in MIXDROP_HOSTS && url.encodedPath.startsWith("/f/") ||
-                                url.host in LULU_HOSTS && url.encodedPath.startsWith("/d/") ->
-                                resolveDownloadHost(link, downloadUrl, query, titles, index, requiresHostYear) { identityConfirmed.set(true) }
+                                url.host in LULU_HOSTS && url.encodedPath.startsWith("/d/") ||
+                                url.host in MEDIAFIRE_HOSTS && url.encodedPath.startsWith("/file/") ->
+                                resolveDownloadHost(link, downloadUrl, query, hostTitles, index, requiresHostYear) { identityConfirmed.set(true) }
                             else -> { issues += SourceIssue(link.label, SourceHealth.UNSUPPORTED); emptyList() }
                         }
-                        if (media.isEmpty() && (url.host in MIXDROP_HOSTS || url.host in LULU_HOSTS)) issues += SourceIssue(link.label, SourceHealth.UNVERIFIED)
+                        if (media.isEmpty() && (url.host in MIXDROP_HOSTS || url.host in LULU_HOSTS || url.host in MEDIAFIRE_HOSTS))
+                            issues += SourceIssue(link.label, SourceHealth.UNVERIFIED)
                         media.map { it.copy(id = "download-$index-${it.transport.name.lowercase(java.util.Locale.ROOT)}-${it.id.substringAfterLast('-')}",
                             label = link.label.replaceFirst("تحميل", "سيرفر") + " · " + it.label) }
                             .filter { targetId == null || it.id == targetId }.filter { variant ->
@@ -175,10 +184,13 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
     private fun resolveDownloadHost(link: SourceWebLink, referer: String, query: SourceQuery, titles: List<String>, index: Int,
         requiresHostYear: Boolean, confirmIdentity: () -> Unit): List<SourceVariant> {
         val owner = link.url.toHttpUrl()
-        val hosts = if (owner.host in MIXDROP_HOSTS) MIXDROP_HOSTS else LULU_HOSTS
-        val fileId = owner.pathSegments.lastOrNull()?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{4,80}")) } ?: return emptyList()
+        val mediaFire = owner.host in MEDIAFIRE_HOSTS
+        val hosts = when { mediaFire -> MEDIAFIRE_HOSTS; owner.host in MIXDROP_HOSTS -> MIXDROP_HOSTS; else -> LULU_HOSTS }
+        val agent = if (mediaFire) MEDIAFIRE_AGENT else AkwamChromium.USER_AGENT
+        val fileId = (if (mediaFire) owner.pathSegments.getOrNull(1) else owner.pathSegments.lastOrNull())
+            ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{4,80}")) } ?: return emptyList()
         fun fetch(url: String, ref: String): Pair<Document, List<okhttp3.Cookie>> {
-            val response = AkwamChromium.fetch(context, url, mapOf("Referer" to ref), hosts)
+            val response = AkwamChromium.fetch(context, url, mapOf("Referer" to ref, "User-Agent" to agent), hosts)
             if (response.status !in 200..299) throw SourceException("تعذر فتح الخادم (${response.status})", response.status)
             val doc = checkedSourcePage(Jsoup.parse(response.body.toString(Charsets.UTF_8), response.url))
             val cookies = response.cookies.mapNotNull { okhttp3.Cookie.parse(response.url.toHttpUrl(), it) }
@@ -186,18 +198,33 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
         }
         val landing = fetch(link.url, referer)
         // Match real filename metadata when available; generic "Loading" pages rely on the verified parent and file ID.
-        val name = arabic(landing.first.title())
+        val name = arabic(if (mediaFire) landing.first.selectFirst(".filename")?.text() ?: landing.first.title() else landing.first.title())
         val years = Regex("\\b(?:18|19|20|21)\\d{2}\\b").findAll(name).mapNotNull { it.value.toIntOrNull() }.toSet()
         if (requiresHostYear && years.isEmpty()) throw SourceException("لم يعلن الخادم سنة تميّز هذا المسلسل عن الأعمال المشابهة")
-        val explicitEpisode = query.type == MediaType.TV && Regex("(?i)\\bs\\d+[ ._-]*e\\d+(?![0-9])").containsMatchIn(name)
-        if (years.isNotEmpty() || explicitEpisode) {
+        val numberedEpisode = Regex("(?i)\\b(?:s(\\d+)[ ._-]*)?e(\\d+)(?![0-9])").find(name)
+        val explicitEpisode = query.type == MediaType.TV && numberedEpisode != null
+        if (mediaFire || years.isNotEmpty() || explicitEpisode) {
             val named = titles.any { " ${SourceQuery.titleKey(arabic(it))} " in " ${SourceQuery.titleKey(name)} " }
             val yearMatches = years.isEmpty() && !requiresHostYear || query.year in years ||
                 query.type == MediaType.TV && query.seasonYear != null && query.seasonYear in years
-            val numbered = yearMatches && (query.type == MediaType.MOVIE ||
-                Regex("(?i)s0*${query.season}[ ._-]*e0*${query.episode}(?![0-9])").containsMatchIn(name))
+            val fileSeason = numberedEpisode?.groupValues?.get(1)?.takeIf { it.isNotEmpty() }?.toIntOrNull() ?: 1
+            val fileEpisode = numberedEpisode?.groupValues?.get(2)?.toIntOrNull()
+            val numbered = yearMatches && (query.type == MediaType.MOVIE || fileSeason == query.season && fileEpisode == query.episode)
             if (!named || !numbered) throw SourceException("بيانات الخادم لا تطابق العمل المطلوب")
             confirmIdentity()
+        }
+        if (mediaFire) {
+            val type = when {
+                name.endsWith(".mp4", true) -> SourceTransport.MP4
+                name.endsWith(".mkv", true) -> SourceTransport.MKV
+                else -> throw SourceException("ملف MediaFire ليس فيديو مدعوماً", health = SourceHealth.UNSUPPORTED)
+            }
+            val video = AnimeifyApi.mediaFireUrl(landing.first.outerHtml())
+                ?: throw SourceException("لم يعلن MediaFire رابط فيديو مباشراً؛ قد يطلب تحققاً", health = SourceHealth.BLOCKED)
+            val headers = mutableMapOf("User-Agent" to agent, "Referer" to landing.first.location())
+            val cookie = landing.second.filter { it.matches(video.toHttpUrl()) }.joinToString("; ") { "${it.name}=${it.value}" }
+            if (cookie.isNotBlank()) headers["Cookie"] = cookie
+            return listOf(SourceVariant("mediafire-$index-0", "MediaFire · ${type.name}", video, type, headers))
         }
         val iframe = landing.first.select("iframe[src]").mapNotNull { it.absUrl("src").toHttpUrlOrNull() }
             .firstOrNull { it.isHttps && it.host in hosts && it.encodedPath.trim('/') == "e/$fileId" }
@@ -284,6 +311,8 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
         private const val AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
         private val MIXDROP_HOSTS = setOf("mixdrop.ag", "mixdrop.top", "mixdrop.ps", "mixdrop.co", "mixdrop.to", "mxdrop.click")
         private val LULU_HOSTS = setOf("lulustream.com", "luluvid.com")
+        private val MEDIAFIRE_HOSTS = setOf("www.mediafire.com", "mediafire.com")
+        private const val MEDIAFIRE_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36"
         private val ORDINALS = listOf("الاول", "الثاني", "الثالث", "الرابع", "الخامس", "السادس", "السابع", "الثامن", "التاسع", "العاشر",
             "الحادي عشر", "الثاني عشر", "الثالث عشر", "الرابع عشر", "الخامس عشر", "السادس عشر", "السابع عشر", "الثامن عشر", "التاسع عشر", "العشرون",
             "الحادي والعشرون", "الثاني والعشرون", "الثالث والعشرون", "الرابع والعشرون", "الخامس والعشرون", "السادس والعشرون", "السابع والعشرون", "الثامن والعشرون", "التاسع والعشرون", "الثلاثون")
