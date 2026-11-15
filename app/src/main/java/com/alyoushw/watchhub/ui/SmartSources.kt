@@ -90,6 +90,7 @@ fun SourceWatchScreen(
     var loading by remember(query, catalogue, indexed, retry) { mutableStateOf(query.valid) }
     var result by remember(query, catalogue, indexed, retry) { mutableStateOf<SourceSearch?>(null) }
     var openedLink by remember(query) { mutableStateOf<SourceWebLink?>(null) }
+    var showWebsiteDetails by remember(query) { mutableStateOf(false) }
     LaunchedEffect(query, catalogue, indexed, retry) {
         result = null
         if (!query.valid) return@LaunchedEffect
@@ -164,12 +165,21 @@ fun SourceWatchScreen(
                             else PlayerActivity.start(context, listOf(QueueItem(emptyList(), sourceEntry(lookup, ref))), 0)
                             chooseSource = false
                         }, modifier = Modifier.fillMaxWidth().focusFrame()) {
-                            Text(source.providerName + " · " + sourceQualityLabel(variant.label))
+                            Text(if (source.providerId == "akwam") "تشغيل · " + variant.label
+                                else source.providerName + " · " + sourceQualityLabel(variant.label))
                         }
-                        Text(variant.label, style = MaterialTheme.typography.bodySmall)
-                        Text(source.attribution, style = MaterialTheme.typography.labelSmall)
+                        if (source.providerId != "akwam") {
+                            Text(variant.label, style = MaterialTheme.typography.bodySmall)
+                            Text(source.attribution, style = MaterialTheme.typography.labelSmall)
+                        }
                     }
-                    if (source.webLinks.isNotEmpty()) {
+                    if (source.providerId == "akwam" && source.variants.isNotEmpty()) Text(source.attribution, style = MaterialTheme.typography.labelSmall)
+                    if (source.providerId == "akwam" && (source.webLinks.isNotEmpty() || source.issues.isNotEmpty())) {
+                        TextButton(onClick = { showWebsiteDetails = !showWebsiteDetails }, modifier = Modifier.focusFrame()) {
+                            Text(if (showWebsiteDetails) "إخفاء تفاصيل الموقع" else "تفاصيل الخوادم وصفحات الموقع · فتح يدوي")
+                        }
+                    }
+                    if ((source.providerId != "akwam" || showWebsiteDetails) && source.webLinks.isNotEmpty()) {
                         (if (source.providerId == "akwam") listOf(true, false) else listOf(false, true)).forEach { downloading ->
                             val pages = source.webLinks.filter { it.download == downloading }
                             if (pages.isNotEmpty()) {
@@ -184,7 +194,7 @@ fun SourceWatchScreen(
                             }
                         }
                     }
-                    source.issues.distinct().forEach { issue ->
+                    source.issues.distinct().filter { source.providerId != "akwam" || showWebsiteDetails }.forEach { issue ->
                         Text(issue.server + " — " + sourceIssueLabel(issue), style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }

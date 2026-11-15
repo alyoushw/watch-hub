@@ -82,7 +82,6 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
             SourceWebLink((row.selectFirst("strong")?.text() ?: "تحميل") + " · " + url.host, url.toString(), true)
         }.distinctBy { it.url }
         val issues = java.util.Collections.synchronizedList(mutableListOf<SourceIssue>())
-        val watchPages = java.util.Collections.synchronizedList(mutableListOf<Pair<Int, SourceWebLink>>())
         val limit = Semaphore(3)
         val variants = coroutineScope {
             links.withIndex().map { (index, link) -> async {
@@ -92,23 +91,14 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
                         val url = link.url.toHttpUrl()
                         val media = when {
                             url.encodedPath.endsWith(".mp4", true) -> listOf(SourceVariant("direct", link.label, link.url, SourceTransport.MP4))
-                            url.host == "lulustream.com" && url.encodedPath.startsWith("/d/") ->
-                                embeds.resolveEmbed(link.url, downloadUrl, link.label, index.toString(), setOf("lulustream.com")) { hostPage ->
-                                    val key = " ${SourceQuery.titleKey(hostPage.title())} "
-                                    val named = titles.any { " ${SourceQuery.titleKey(it)} " in key }
-                                    val accepted = named && if (query.type == MediaType.TV)
-                                        Regex("(?i)s0*${query.season}[ ._-]*e0*${query.episode}(?![0-9])").containsMatchIn(hostPage.title())
-                                    else Regex("(?<![0-9])${query.year}(?![0-9])").containsMatchIn(hostPage.title())
-                                    if (accepted) watchPages += discoverWatchPages(hostPage, link).map { index to it }
-                                    accepted
-                                }
-                            // Keep original hosting pages available without waiting for each host to respond.
-                            // MixDrop /f/ pages already contain their player and must not be treated as video URLs.
+                            url.host in MIXDROP_HOSTS && url.encodedPath.startsWith("/f/") ||
+                                url.host in LULU_HOSTS && url.encodedPath.startsWith("/d/") ->
+                                resolveDownloadHost(link, downloadUrl, query, titles, index)
                             else -> { issues += SourceIssue(link.label, SourceHealth.UNSUPPORTED); emptyList() }
                         }
-                        if (media.isEmpty() && url.host == "lulustream.com") issues += SourceIssue(link.label, SourceHealth.UNVERIFIED)
+                        if (media.isEmpty() && (url.host in MIXDROP_HOSTS || url.host in LULU_HOSTS)) issues += SourceIssue(link.label, SourceHealth.UNVERIFIED)
                         media.map { it.copy(id = "download-$index-${it.transport.name.lowercase(java.util.Locale.ROOT)}-${it.id.substringAfterLast('-')}",
-                            label = link.label + " · " + it.transport.name + " · مشاهدة من رابط التحميل") }
+                            label = link.label.replaceFirst("تحميل", "سيرفر") + " · " + it.label) }
                             .filter { targetId == null || it.id == targetId }.filter { variant ->
                                 val check = probe.inspect(variant)
                                 if (!check.playable) issues += check.issue(link.label)
@@ -120,22 +110,36 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
             } }.awaitAll().flatten().distinctBy { it.url }
         }
         return WatchSource(id, "akwam", "أكوام", query, variants, attribution = "Akwam · $title", licenceUrl = page.toString(),
-            webLinks = watchPages.toList().sortedBy { it.first }.map { it.second }.distinctBy { it.url } +
-                links + listOf(SourceWebLink("صفحة التحميل الأصلية · جميع السيرفرات", downloadUrl, true),
+            webLinks = links + listOf(SourceWebLink("صفحة التحميل الأصلية · جميع السيرفرات", downloadUrl, true),
                     SourceWebLink("صفحة العمل الأصلية", page.toString())), issues = issues.toList().distinct())
     }
 
-    /** Follow only an embed actually declared by the download page for the same file ID. */
-    private fun discoverWatchPages(doc: Document, link: SourceWebLink): List<SourceWebLink> {
+    private fun resolveDownloadHost(link: SourceWebLink, referer: String, query: SourceQuery, titles: List<String>, index: Int): List<SourceVariant> {
         val owner = link.url.toHttpUrl()
-        val id = owner.pathSegments.lastOrNull()?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{4,80}")) } ?: return emptyList()
-        val hosts = if (owner.host == "lulustream.com") setOf("lulustream.com", "luluvid.com") else MIXDROP_HOSTS
-        return doc.select("iframe[src]").mapNotNull {
-            val url = it.absUrl("src").toHttpUrlOrNull()?.takeIf { u ->
-                u.isHttps && u.host in hosts && u.encodedPath.trim('/') == "e/$id"
-            } ?: return@mapNotNull null
-            SourceWebLink(link.label.replaceFirst("تحميل", "مشاهدة"), url.toString())
-        }.distinctBy { it.url }
+        val hosts = if (owner.host in MIXDROP_HOSTS) MIXDROP_HOSTS else LULU_HOSTS
+        val fileId = owner.pathSegments.lastOrNull()?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{4,80}")) } ?: return emptyList()
+        fun fetch(url: String, ref: String): Pair<Document, List<okhttp3.Cookie>> {
+            val response = AkwamChromium.fetch(context, url, mapOf("Referer" to ref), hosts)
+            if (response.status !in 200..299) throw SourceException("تعذر فتح الخادم (${response.status})", response.status)
+            val doc = checkedSourcePage(Jsoup.parse(response.body.toString(Charsets.UTF_8), response.url))
+            val cookies = response.cookies.mapNotNull { okhttp3.Cookie.parse(response.url.toHttpUrl(), it) }
+            return doc to cookies
+        }
+        val landing = fetch(link.url, referer)
+        // Match real filename metadata when available; generic "Loading" pages rely on the verified parent and file ID.
+        val name = landing.first.title()
+        if (Regex("\\b(?:18|19|20|21)\\d{2}\\b").containsMatchIn(name)) {
+            val named = titles.any { " ${SourceQuery.titleKey(it)} " in " ${SourceQuery.titleKey(name)} " }
+            val numbered = if (query.type == MediaType.MOVIE) query.year.toString() in name else
+                Regex("(?i)s0*${query.season}[ ._-]*e0*${query.episode}(?![0-9])").containsMatchIn(name)
+            if (!named || !numbered) throw SourceException("بيانات الخادم لا تطابق العمل المطلوب")
+        }
+        val iframe = landing.first.select("iframe[src]").mapNotNull { it.absUrl("src").toHttpUrlOrNull() }
+            .firstOrNull { it.isHttps && it.host in hosts && it.encodedPath.trim('/') == "e/$fileId" }
+        val player = iframe?.let { fetch(it.toString(), landing.first.location()) } ?: landing
+        val quality = Regex("(?i)\\b(2160|1080|720|480|360)p\\b").findAll(name).lastOrNull()?.value.orEmpty()
+        val label = (if (owner.host in MIXDROP_HOSTS) "MixDrop" else "Lulu") + quality.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
+        return embeds.mediaFromPage(player.first, label, index.toString(), hosts, AkwamChromium.USER_AGENT, player.second)
     }
 
     private suspend fun confirmSeries(query: SourceQuery, titles: List<String>): Boolean {
@@ -211,6 +215,7 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
         private const val BASE = "https://akw.cam/"
         private const val AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
         private val MIXDROP_HOSTS = setOf("mixdrop.ag", "mixdrop.top", "mixdrop.ps", "mixdrop.co", "mixdrop.to", "mxdrop.click")
+        private val LULU_HOSTS = setOf("lulustream.com", "luluvid.com")
         private val ORDINALS = listOf("الاول", "الثاني", "الثالث", "الرابع", "الخامس", "السادس", "السابع", "الثامن", "التاسع", "العاشر")
     }
 }

@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 /** Chromium networking for Akwam HTML/assets only. The existing video player is unchanged. */
 internal object AkwamChromium {
+    const val USER_AGENT = "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Mobile Safari/537.36"
     data class Page(val url: String, val status: Int, val body: ByteArray, val headers: Map<String, String>, val cookies: List<String>)
     @Volatile private var engine: CronetEngine? = null
     private val callbacks = Executors.newSingleThreadExecutor { Thread(it, "akwam-http").apply { isDaemon = true } }
@@ -24,13 +25,17 @@ internal object AkwamChromium {
         engine ?: try {
             CronetEngine.Builder(context.applicationContext).enableQuic(true).enableHttp2(true).enableBrotli(true)
                 // The site advertises h3=":443" in its HTTPS Alt-Svc header.
-                .addQuicHint("akw.cam", 443, 443).build().also { engine = it }
+                .apply {
+                    listOf("akw.cam", "mixdrop.ag", "mixdrop.ps", "mxdrop.click", "lulustream.com", "luluvid.com")
+                        .forEach { addQuicHint(it, 443, 443) }
+                }.build().also { engine = it }
         } catch (e: RuntimeException) { throw IOException("تعذر بدء محرك Chromium", e) }
         catch (e: LinkageError) { throw IOException("محرك Chromium غير متاح على الجهاز", e) }
     }
 
-    fun fetch(context: Context, url: String, headers: Map<String, String> = emptyMap()): Page {
-        fun allowed(value: String) = value.toHttpUrlOrNull()?.let { it.isHttps && it.host == "akw.cam" } == true
+    fun fetch(context: Context, url: String, headers: Map<String, String> = emptyMap(),
+        allowedHosts: Set<String> = setOf("akw.cam")): Page {
+        fun allowed(value: String) = value.toHttpUrlOrNull()?.let { it.isHttps && it.host in allowedHosts } == true
         require(allowed(url))
         val finished = CountDownLatch(1)
         val outcome = AtomicReference<Result<Page>?>(null)
@@ -68,7 +73,7 @@ internal object AkwamChromium {
         }
         val builder = engine(context).newUrlRequestBuilder(url, callback, callbacks).disableCache()
         val requestHeaders = java.util.TreeMap<String, String>(String.CASE_INSENSITIVE_ORDER).apply {
-            put("User-Agent", "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Mobile Safari/537.36")
+            put("User-Agent", USER_AGENT)
             put("Referer", "https://akw.cam/")
             putAll(headers)
         }

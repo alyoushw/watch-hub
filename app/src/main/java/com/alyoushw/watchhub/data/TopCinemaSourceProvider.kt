@@ -123,8 +123,13 @@ class TopCinemaSourceProvider : WatchSourceProvider {
         val parsed = url.toHttpUrlOrNull()?.takeIf { it.isHttps && (embedHost(it.host) || it.host in extraHosts) } ?: return emptyList()
         val page = read(parsed.toString(), referer)
         if (!acceptPage(page.doc)) return emptyList()
-        val origin = page.doc.location().toHttpUrlOrNull() ?: return emptyList()
-        val scripts = page.doc.select("script:not([src])").map { it.data() }
+        return mediaFromPage(page.doc, name, index, extraHosts, AGENT, page.cookies)
+    }
+
+    internal fun mediaFromPage(doc: Document, name: String, index: String, extraHosts: Set<String> = emptySet(),
+        agent: String = AGENT, cookies: List<Cookie> = emptyList()): List<SourceVariant> {
+        val origin = doc.location().toHttpUrlOrNull() ?: return emptyList()
+        val scripts = doc.select("script:not([src])").map { it.data() }
         val decoded = scripts.flatMap { script -> listOf(script) + unpack(script) }
         return decoded.filter { "sources" in it || "MDCore" in it || origin.host in extraHosts && "player.src(" in it }.flatMap { script ->
             MEDIA_FIELD.findAll(script).mapNotNull { match ->
@@ -138,8 +143,8 @@ class TopCinemaSourceProvider : WatchSourceProvider {
                     path.endsWith(".mkv") -> SourceTransport.MKV
                     else -> return@mapNotNull null
                 }
-                val headers = mutableMapOf("User-Agent" to AGENT, "Referer" to origin.toString())
-                val cookie = page.cookies.filter { it.matches(media) }.joinToString("; ") { "${it.name}=${it.value}" }
+                val headers = mutableMapOf("User-Agent" to agent, "Referer" to origin.toString())
+                val cookie = cookies.filter { it.matches(media) }.joinToString("; ") { "${it.name}=${it.value}" }
                 if (cookie.isNotBlank()) headers["Cookie"] = cookie
                 Triple(media.toString(), type, headers.toMap())
             }.toList()
