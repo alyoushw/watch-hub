@@ -56,8 +56,8 @@ internal object AkwamChromium {
                 request.read(data)
             }
             override fun onSucceeded(request: UrlRequest, info: UrlResponseInfo) {
-                val responseHeaders = info.allHeaders.groupBy({ it.key }, { it.value }).mapValues { it.value.joinToString(", ") }
-                val cookies = info.allHeaders.filter { it.key.equals("Set-Cookie", true) }.map { it.value }
+                val responseHeaders = info.allHeaders.mapValues { it.value.joinToString(", ") }
+                val cookies = info.allHeaders.filterKeys { it.equals("Set-Cookie", true) }.values.flatten()
                 finish(Result.success(Page(info.url, info.httpStatusCode, bytes.toByteArray(), responseHeaders, cookies)))
             }
             override fun onFailed(request: UrlRequest, info: UrlResponseInfo?, error: CronetException) {
