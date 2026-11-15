@@ -158,7 +158,9 @@ class OpenFilmSourceProvider : WatchSourceProvider {
     }
 }
 
-data class SourceSearch(val sources: List<WatchSource>, val errors: List<String>)
+data class SourceAvailability(val providerId: String, val episodes: Map<Int, List<Int>>, val message: String)
+internal class SourceAvailabilityException(val availability: SourceAvailability) : Exception(availability.message)
+data class SourceSearch(val sources: List<WatchSource>, val errors: List<String>, val availability: List<SourceAvailability> = emptyList())
 data class ResolvedWatchSource(val source: WatchSource, val variant: SourceVariant, val uri: String)
 
 /** Search, compatibility checks and playback preparation remain separate. */
@@ -168,6 +170,7 @@ class WatchSources(private val providers: () -> List<WatchSourceProvider>, priva
         val results = providers().map { provider -> async {
             try { SourceSearch(provider.search(query).filter { it.compatible(query) }, emptyList()) }
             catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: SourceAvailabilityException) { SourceSearch(emptyList(), emptyList(), listOf(e.availability)) }
             catch (e: Exception) { SourceSearch(emptyList(), listOf(e.message ?: "تعذّر الاتصال بأحد المصادر")) }
         } }.awaitAll()
         val valid = results.flatMap { it.sources }.distinctBy { "${it.providerId}:${it.id}" }.map { source -> async {
@@ -180,7 +183,7 @@ class WatchSources(private val providers: () -> List<WatchSourceProvider>, priva
             }
             source.copy(variants = variants, issues = issues.distinct()).takeIf { variants.isNotEmpty() || source.webLinks.isNotEmpty() }
         } }.awaitAll().filterNotNull()
-        SourceSearch(valid, results.flatMap { it.errors })
+        SourceSearch(valid, results.flatMap { it.errors }, results.flatMap { it.availability })
     }
 
     suspend fun resolve(ref: WatchSourceRef, engines: PlaybackEngines, progress: (Float) -> Unit = {}): ResolvedWatchSource {

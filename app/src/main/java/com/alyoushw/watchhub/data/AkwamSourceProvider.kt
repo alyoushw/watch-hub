@@ -24,33 +24,87 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
         if (!query.valid) return@withContext emptyList()
         val titles = aliases(query)
         val visited = mutableSetOf<String>()
+        val available = sortedMapOf<Int, MutableSet<Int>>()
+        var seriesSeen = false
+        var fallback: WatchSource? = null
         var failed: Exception? = null
-        for (title in titles.take(3)) {
-            val url = BASE.toHttpUrl().resolve("search")!!.newBuilder().addQueryParameter("q", title).build()
+        fun observe(raw: String) {
+            if (query.type != MediaType.TV || !matches(raw, query, titles, false)) return
+            seriesSeen = true
+            season(raw)?.let { number -> episode(raw)?.takeIf { it > 0 }?.let { available.getOrPut(number) { sortedSetOf() }.add(it) } }
+        }
+        for (title in titles.take(3)) for (term in searchTerms(title, query)) {
+            val url = BASE.toHttpUrl().resolve("search")!!.newBuilder().addQueryParameter("q", term).build()
             val doc = try { read(url.toString()) }
             catch (e: CancellationException) { throw e }
             catch (e: Exception) { failed = e; continue }
             val links = doc.select("a.br-card-link[href]").filter {
                 sameSite(it.absUrl("href")) && matches(it.selectFirst(".br-card-title")?.text().orEmpty(), query, titles, false)
             }.distinctBy { it.absUrl("href") }
-            for (link in links.take(4)) {
+            links.forEach { observe(it.selectFirst(".br-card-title")?.text().orEmpty()) }
+            val candidates = if (query.type == MediaType.TV) links.filter {
+                season(it.selectFirst(".br-card-title")?.text().orEmpty()) == query.season
+            }.sortedBy { if (episode(it.selectFirst(".br-card-title")?.text().orEmpty()) == query.episode) 0 else 1 }
+            else links.take(4)
+            for (link in candidates) {
                 if (!visited.add(link.absUrl("href"))) continue
                 try {
                     var details = read(link.absUrl("href"))
-                    if (query.type == MediaType.TV && episode(details.title()) != query.episode) {
-                        val item = details.select(".br-episode-grid a[href]").firstOrNull {
-                            Regex("\\d+").find(arabic(it.text()))?.value?.toIntOrNull() == query.episode && sameSite(it.absUrl("href"))
-                        } ?: continue
-                        details = read(item.absUrl("href"))
+                    val heading = details.selectFirst("h1")?.text().orEmpty()
+                    observe(heading)
+                    if (query.type == MediaType.TV) {
+                        val selectedSeason = query.season ?: continue
+                        if (!matches(heading, query, titles, false) || season(heading) != selectedSeason) continue
+                        val grid = details.select(".br-episode-grid a[href]").filter { sameSite(it.absUrl("href")) }
+                        grid.mapNotNull { Regex("\\d+").find(arabic(it.text()))?.value?.toIntOrNull() }
+                            .filter { it > 0 }.forEach { available.getOrPut(selectedSeason) { sortedSetOf() }.add(it) }
+                        if (episode(heading) != query.episode) {
+                            val item = grid.firstOrNull {
+                                Regex("\\d+").find(arabic(it.text()))?.value?.toIntOrNull() == query.episode
+                            } ?: continue
+                            if (!visited.add(item.absUrl("href"))) continue
+                            details = read(item.absUrl("href"))
+                        }
                     }
-                    resolve(details, query, titles)?.let { return@withContext listOf(it) }
+                    resolve(details, query, titles)?.let { source ->
+                        if (query.type == MediaType.MOVIE || source.matchVerified && source.variants.isNotEmpty()) return@withContext listOf(source)
+                        val previous = fallback
+                        if (previous == null || !previous.matchVerified && source.matchVerified ||
+                            previous.matchVerified == source.matchVerified && source.webLinks.size > previous.webLinks.size) fallback = source
+                    }
                 } catch (e: CancellationException) { throw e }
                 catch (e: Exception) { failed = e }
             }
         }
+        fallback?.let { return@withContext listOf(it) }
+        if (seriesSeen) {
+            val requestedSeason = query.season ?: 1
+            val requestedEpisode = query.episode ?: 1
+            val message = when {
+                available.isEmpty() -> "وجدت نتائج للمسلسل في أكوام، لكن تعذّر قراءة الموسم والحلقة من عناوينها."
+                requestedSeason !in available -> "وجدت نتائج للمسلسل في أكوام. المواسم الظاهرة: ${available.keys.joinToString("، ")}. لم يظهر الموسم $requestedSeason المطلوب في النتائج التي وصلت."
+                requestedEpisode !in available[requestedSeason].orEmpty() -> "الموسم $requestedSeason ظاهر في أكوام، لكن الحلقة $requestedEpisode لم تظهر في النتائج التي وصلت."
+                else -> "وجدت صفحة للموسم ${query.season} والحلقة ${query.episode}، لكن تعذّر التحقق منها${failed?.message?.take(100)?.let { ": $it" }.orEmpty()}."
+            }
+            throw SourceAvailabilityException(SourceAvailability("akwam", available.mapValues { it.value.toList() }, message))
+        }
         failed?.let { throw SourceException("تعذّر الاتصال بأكوام: ${it.message.orEmpty().take(100)}", (it as? SourceException)?.httpStatus,
             sourceFailure("البحث", it).health) }
         emptyList()
+    }
+
+    private fun searchTerms(title: String, query: SourceQuery): List<String> {
+        if (query.type != MediaType.TV) return listOf(title)
+        val ordinal = ORDINALS.getOrNull((query.season ?: 1) - 1) ?: query.season.toString()
+        return buildList {
+            add("$title الموسم $ordinal الحلقة ${query.episode}")
+            if (query.season == 1) {
+                add("$title الموسم الأول الحلقة ${query.episode}")
+                add("$title الحلقة ${query.episode}")
+            }
+            add("$title الموسم $ordinal")
+            add(title)
+        }.distinct()
     }
 
     override suspend fun find(query: SourceQuery, id: String): WatchSource? = findPost(query, id, null)
@@ -135,9 +189,11 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
         val name = arabic(landing.first.title())
         val years = Regex("\\b(?:18|19|20|21)\\d{2}\\b").findAll(name).mapNotNull { it.value.toIntOrNull() }.toSet()
         if (requiresHostYear && years.isEmpty()) throw SourceException("لم يعلن الخادم سنة تميّز هذا المسلسل عن الأعمال المشابهة")
-        if (years.isNotEmpty()) {
+        val explicitEpisode = query.type == MediaType.TV && Regex("(?i)\\bs\\d+[ ._-]*e\\d+(?![0-9])").containsMatchIn(name)
+        if (years.isNotEmpty() || explicitEpisode) {
             val named = titles.any { " ${SourceQuery.titleKey(arabic(it))} " in " ${SourceQuery.titleKey(name)} " }
-            val yearMatches = query.year in years || query.type == MediaType.TV && query.seasonYear != null && query.seasonYear in years
+            val yearMatches = years.isEmpty() && !requiresHostYear || query.year in years ||
+                query.type == MediaType.TV && query.seasonYear != null && query.seasonYear in years
             val numbered = yearMatches && (query.type == MediaType.MOVIE ||
                 Regex("(?i)s0*${query.season}[ ._-]*e0*${query.episode}(?![0-9])").containsMatchIn(name))
             if (!named || !numbered) throw SourceException("بيانات الخادم لا تطابق العمل المطلوب")
@@ -178,7 +234,8 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
 
     private fun episode(text: String) = Regex("الحلقه\\s*(\\d+)").find(arabic(text))?.groupValues?.get(1)?.toIntOrNull()
     private fun season(text: String): Int? {
-        val value = Regex("الموسم\\s+(\\d+|الاول|الثاني|الثالث|الرابع|الخامس|السادس|السابع|الثامن|التاسع|العاشر)").find(arabic(text))?.groupValues?.get(1) ?: return 1
+        val normalized = arabic(text)
+        val value = SEASON_PATTERN.find(normalized)?.groupValues?.get(1) ?: return if ("الموسم" in normalized) null else 1
         return value.toIntOrNull() ?: ORDINALS.indexOf(value).takeIf { it >= 0 }?.plus(1)
     }
     private fun aliases(query: SourceQuery) = query.websiteTitles()
@@ -227,6 +284,9 @@ class AkwamSourceProvider(private val api: TmdbApi, private val context: android
         private const val AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
         private val MIXDROP_HOSTS = setOf("mixdrop.ag", "mixdrop.top", "mixdrop.ps", "mixdrop.co", "mixdrop.to", "mxdrop.click")
         private val LULU_HOSTS = setOf("lulustream.com", "luluvid.com")
-        private val ORDINALS = listOf("الاول", "الثاني", "الثالث", "الرابع", "الخامس", "السادس", "السابع", "الثامن", "التاسع", "العاشر")
+        private val ORDINALS = listOf("الاول", "الثاني", "الثالث", "الرابع", "الخامس", "السادس", "السابع", "الثامن", "التاسع", "العاشر",
+            "الحادي عشر", "الثاني عشر", "الثالث عشر", "الرابع عشر", "الخامس عشر", "السادس عشر", "السابع عشر", "الثامن عشر", "التاسع عشر", "العشرون",
+            "الحادي والعشرون", "الثاني والعشرون", "الثالث والعشرون", "الرابع والعشرون", "الخامس والعشرون", "السادس والعشرون", "السابع والعشرون", "الثامن والعشرون", "التاسع والعشرون", "الثلاثون")
+        private val SEASON_PATTERN = Regex("الموسم\\s+(\\d+|${ORDINALS.asReversed().joinToString("|") { Regex.escape(it) }})(?![\\p{L}\\p{N}])")
     }
 }

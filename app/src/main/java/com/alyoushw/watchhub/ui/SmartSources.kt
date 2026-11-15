@@ -200,7 +200,23 @@ fun SourceWatchScreen(
                     }
                 }
                 result?.errors?.firstOrNull()?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                if (!loading && result?.sources?.isEmpty() == true) {
+                result?.availability?.forEach { known ->
+                    Text(known.message, color = Gold)
+                    known.episodes.keys.sorted().filter { it != season && lookup.seasons.any { item -> item.number == it } }.forEach { availableSeason ->
+                        TextButton(onClick = { season = availableSeason; chooseSource = false }, modifier = Modifier.focusFrame()) {
+                            Text("عرض الموسم $availableSeason الموجود في الموقع")
+                        }
+                    }
+                    known.episodes[season]?.let { episodes ->
+                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                            episodes.sorted().forEach { availableEpisode ->
+                                TextButton(onClick = { if (number == availableEpisode) retry++ else number = availableEpisode },
+                                    modifier = Modifier.focusFrame()) { Text("الحلقة $availableEpisode") }
+                            }
+                        }
+                    }
+                }
+                if (!loading && result?.sources?.isEmpty() == true && result?.availability?.isEmpty() == true) {
                     Text(if (result?.errors?.isNotEmpty() == true) "تعذّر البحث أو التحقق في الموقع؛ لا يمكن الحكم على توفر العمل الآن."
                         else "لم يعثر البحث على نتيجة مؤكدة المطابقة. قد يختلف الاسم أو تكون نتائج الموقع محدودة؛ هذا لا يثبت حذف العمل.")
                 }
