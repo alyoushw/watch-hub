@@ -344,6 +344,7 @@ class PlayerActivity : ComponentActivity() {
                         "moviz-time" -> container.movizTimeSources
                         "topcinema" -> container.topCinemaSources
                         "egybest" -> container.egyBestSources
+                        "arablionz" -> container.arabLionzSources
                         else -> container.watchSources
                     }
                     val resolved = repository.resolve(sourceRef, container.playbackEngines) { progress ->

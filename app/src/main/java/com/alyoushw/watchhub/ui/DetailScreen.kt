@@ -474,9 +474,12 @@ private fun DetailContent(
             }
         }
 
-        item { WatchButtons(info, links, subscribedKeys, onWatch) }
+        item { Column(Modifier.padding(horizontal = 16.dp)) {
+            SourceWatchButton(info.sourceLookup().copy(providerId = "arablionz"), onOpenSources,
+                Modifier.fillMaxWidth(), label = "تشغيل عرب ليونز")
+        } }
 
-        item { Column(Modifier.padding(horizontal = 16.dp)) { SourceWatchButton(info.sourceLookup(), onOpenSources, Modifier.fillMaxWidth()) } }
+        item { WatchButtons(info, links, subscribedKeys, onWatch) }
 
         item { Column(Modifier.padding(horizontal = 16.dp)) {
             SourceWatchButton(info.sourceLookup().copy(providerId = "moviz-time"), onOpenSources,
@@ -503,6 +506,8 @@ private fun DetailContent(
                 }
             }
         }
+
+        item { Column(Modifier.padding(horizontal = 16.dp)) { SourceWatchButton(info.sourceLookup(), onOpenSources, Modifier.fillMaxWidth()) } }
 
         item {
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
