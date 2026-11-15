@@ -13,7 +13,7 @@ import org.jsoup.nodes.Document
 
 /** Website search and public server selection; temporary video URLs are resolved on replay. */
 class TopCinemaSourceProvider : WatchSourceProvider {
-    private val probe = StreamProbe()
+    private val probe = StreamProbe(verifyHlsSegments = true)
 
     override suspend fun search(query: SourceQuery): List<WatchSource> = withContext(Dispatchers.IO) {
         if (!query.valid) return@withContext emptyList()
@@ -64,33 +64,46 @@ class TopCinemaSourceProvider : WatchSourceProvider {
         val canonical = doc.selectFirst("link[rel=canonical]")?.absUrl("href")?.toHttpUrlOrNull()
             ?.takeIf { it.host == base.host } ?: doc.location().toHttpUrlOrNull() ?: return null
         val watchUrl = canonical.newBuilder().query(null).addPathSegment("watch").addPathSegment("").build()
-        val watch = read(watchUrl.toString(), canonical.toString()).doc
+        val watch = try { read(watchUrl.toString(), canonical.toString()).doc }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Exception) { return WatchSource("topcinema-$post", "topcinema", "TopCinema", query, emptyList(),
+            attribution = "TopCinema · ${query.originalTitle} (${query.year}) · $canonical", licenceUrl = canonical.toString(),
+            webLinks = listOf(SourceWebLink("صفحة المشاهدة الأصلية", watchUrl.toString())),
+            issues = listOf(sourceFailure("صفحة المشاهدة", e))) }
         val servers = watch.select("li.server--item[data-id][data-server]").filter {
             it.attr("data-id") == post && it.attr("data-server").matches(Regex("\\d{1,3}")) && supported(it.text())
         }.sortedBy { priority(it.text()) }
         val variants = mutableListOf<SourceVariant>()
+        val issues = mutableListOf<SourceIssue>()
         for (server in servers.take(4)) {
             val name = server.selectFirst("span")?.text()?.ifBlank { null } ?: server.text()
             val index = server.attr("data-server")
             try {
                 val response = read(base.resolve("/wp-content/themes/movies2023/Ajaxat/Single/Server.php")!!.toString(), watchUrl.toString(),
                     FormBody.Builder().add("id", post).add("i", index).build())
-                val embed = response.doc.selectFirst("iframe[src]")?.absUrl("src") ?: continue
-                for (variant in resolveEmbed(embed, watchUrl.toString(), name, index)) {
-                    if (probe.compatible(variant)) { variants += variant; break }
+                val embed = response.doc.selectFirst("iframe[src]")?.absUrl("src")
+                if (embed == null) { issues += SourceIssue(name, SourceHealth.UNVERIFIED); continue }
+                val media = resolveEmbed(embed, watchUrl.toString(), name, index)
+                if (media.isEmpty()) issues += SourceIssue(name, SourceHealth.UNVERIFIED)
+                for (variant in media) {
+                    val check = probe.inspect(variant)
+                    if (check.playable) { variants += variant; break }
+                    issues += check.issue(name)
                 }
                 if (variants.size >= 2) break
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { /* A missing/blocked host must not hide other working servers. */ }
+            catch (e: Exception) { issues += sourceFailure(name, e) }
         }
-        if (variants.isEmpty()) return null
         return WatchSource("topcinema-$post", "topcinema", "TopCinema", query, variants,
-            attribution = "TopCinema · ${query.originalTitle} (${query.year}) · $canonical", licenceUrl = canonical.toString())
+            attribution = "TopCinema · ${query.originalTitle} (${query.year}) · $canonical", licenceUrl = canonical.toString(),
+            webLinks = listOf(SourceWebLink("صفحة المشاهدة الأصلية", watchUrl.toString())), issues = issues.distinct())
     }
 
-    internal fun resolveEmbed(url: String, referer: String, name: String, index: String, extraHosts: Set<String> = emptySet()): List<SourceVariant> {
+    internal fun resolveEmbed(url: String, referer: String, name: String, index: String, extraHosts: Set<String> = emptySet(),
+        acceptPage: (Document) -> Boolean = { true }): List<SourceVariant> {
         val parsed = url.toHttpUrlOrNull()?.takeIf { it.isHttps && (embedHost(it.host) || it.host in extraHosts) } ?: return emptyList()
         val page = read(parsed.toString(), referer)
+        if (!acceptPage(page.doc)) return emptyList()
         val origin = page.doc.location().toHttpUrlOrNull() ?: return emptyList()
         val scripts = page.doc.select("script:not([src])").map { it.data() }
         val decoded = scripts.flatMap { script -> listOf(script) + unpack(script) }
@@ -160,10 +173,10 @@ class TopCinemaSourceProvider : WatchSourceProvider {
         val request = Request.Builder().url(parsed).header("User-Agent", AGENT).header("Referer", referer)
             .apply { if (form != null) post(form).header("X-Requested-With", "XMLHttpRequest") }.build()
         return SourceHttp.client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw SourceException("تعذر الوصول إلى TopCinema أو السيرفر (${response.code})")
+            if (!response.isSuccessful) throw SourceException("تعذر الوصول إلى TopCinema أو السيرفر (${response.code})", response.code)
             val input = response.body?.source() ?: throw SourceException("رد TopCinema فارغ")
             if (input.request(2 * 1024 * 1024L + 1)) throw SourceException("صفحة TopCinema أكبر من الحد المسموح")
-            Page(Jsoup.parse(input.readByteArray().toString(Charsets.UTF_8), response.request.url.toString()), Cookie.parseAll(response.request.url, response.headers))
+            Page(checkedSourcePage(Jsoup.parse(input.readByteArray().toString(Charsets.UTF_8), response.request.url.toString())), Cookie.parseAll(response.request.url, response.headers))
         }
     }
 

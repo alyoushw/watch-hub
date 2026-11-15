@@ -51,14 +51,48 @@ data class SourceSubtitle(val id: String, val label: String, val language: Strin
 data class SourceWebLink(val label: String, val url: String, val download: Boolean = false)
 
 @Serializable
+enum class SourceHealth { PLAYABLE, UNAVAILABLE, BLOCKED, NETWORK_ERROR, UNSUPPORTED, UNVERIFIED }
+
+@Serializable
+data class SourceIssue(val server: String, val health: SourceHealth, val httpStatus: Int? = null)
+
+data class SourceCheck(val health: SourceHealth, val httpStatus: Int? = null) {
+    val playable: Boolean get() = health == SourceHealth.PLAYABLE
+    fun issue(server: String) = SourceIssue(server, health, httpStatus)
+}
+
+internal fun sourceHttpCheck(code: Int) = SourceCheck(when (code) {
+    401, 403, 429 -> SourceHealth.BLOCKED
+    404, 410 -> SourceHealth.UNAVAILABLE
+    in 500..599 -> SourceHealth.UNAVAILABLE
+    else -> SourceHealth.UNVERIFIED
+}, code)
+
+internal fun sourceFailure(server: String, error: Exception): SourceIssue =
+    (if (error is SourceException && error.health != null) SourceCheck(error.health, error.httpStatus)
+    else if (error is SourceException && error.httpStatus != null) sourceHttpCheck(error.httpStatus)
+    else SourceCheck(if (error is java.io.IOException) SourceHealth.NETWORK_ERROR else SourceHealth.UNVERIFIED)).issue(server)
+
+internal fun checkedSourcePage(doc: org.jsoup.nodes.Document): org.jsoup.nodes.Document {
+    val title = doc.title().lowercase(Locale.ROOT)
+    if (title.startsWith("just a moment") || title.startsWith("attention required") || title.trim() in setOf("access denied", "verify you are human") ||
+        doc.select("#challenge-form").isNotEmpty())
+        throw SourceException("الموقع يطلب تحققاً أو يمنع الوصول؛ لا يمكن تأكيد توفر العمل الآن", health = SourceHealth.BLOCKED)
+    return doc
+}
+
+@Serializable
 data class WatchSource(
     val id: String, val providerId: String, val providerName: String, val query: SourceQuery,
     val variants: List<SourceVariant>, val subtitles: List<SourceSubtitle> = emptyList(),
     val attribution: String, val licenceUrl: String,
     val webLinks: List<SourceWebLink> = emptyList(),
+    val issues: List<SourceIssue> = emptyList(),
+    val matchVerified: Boolean = true,
 ) {
     fun compatible(query: SourceQuery): Boolean = this.query.matches(query) && Regex("[\\p{L}\\p{N}_.:-]{1,160}").matches(id) &&
         Regex("[a-zA-Z0-9_.:-]{1,80}").matches(providerId) && attribution.isNotBlank() && licenceUrl.toHttpUrlOrNull() != null &&
+        (matchVerified || variants.isEmpty()) &&
         (variants.isNotEmpty() || webLinks.isNotEmpty()) && webLinks.all { it.label.isNotBlank() && it.url.toHttpUrlOrNull()?.isHttps == true } && variants.all { variant ->
             variant.id.isNotBlank() && if (variant.transport == SourceTransport.MAGNET) magnetHash(variant.url) != null
             else variant.url.toHttpUrlOrNull() != null
@@ -75,7 +109,7 @@ interface WatchSourceProvider {
     suspend fun findVariant(query: SourceQuery, id: String, variantId: String): WatchSource? = find(query, id)
 }
 
-class SourceException(message: String) : Exception(message)
+class SourceException(message: String, val httpStatus: Int? = null, val health: SourceHealth? = null) : Exception(message)
 
 class ManifestSourceProvider(
     private val endpoint: String,
@@ -123,7 +157,7 @@ data class SourceSearch(val sources: List<WatchSource>, val errors: List<String>
 data class ResolvedWatchSource(val source: WatchSource, val variant: SourceVariant, val uri: String)
 
 /** Search, compatibility checks and playback preparation remain separate. */
-class WatchSources(private val providers: () -> List<WatchSourceProvider>, private val probe: SourceProbe = StreamProbe()) {
+class WatchSources(private val providers: () -> List<WatchSourceProvider>, private val probe: SourceProbe = StreamProbe(verifyHlsSegments = true)) {
     suspend fun search(query: SourceQuery): SourceSearch = coroutineScope {
         if (!query.valid) return@coroutineScope SourceSearch(emptyList(), listOf("بيانات العمل أو الموسم والحلقة غير مكتملة"))
         val results = providers().map { provider -> async {
@@ -132,10 +166,14 @@ class WatchSources(private val providers: () -> List<WatchSourceProvider>, priva
             catch (e: Exception) { SourceSearch(emptyList(), listOf(e.message ?: "تعذّر الاتصال بأحد المصادر")) }
         } }.awaitAll()
         val valid = results.flatMap { it.sources }.distinctBy { "${it.providerId}:${it.id}" }.map { source -> async {
+            val issues = source.issues.toMutableList()
             val variants = source.variants.mapNotNull { variant ->
-                if (variant.transport in setOf(SourceTransport.TORRENT, SourceTransport.MAGNET) || probe.compatible(variant)) variant else null
+                if (variant.transport in setOf(SourceTransport.TORRENT, SourceTransport.MAGNET)) variant else {
+                    val check = probe.inspect(variant)
+                    if (check.playable) variant else { issues += check.issue(variant.label); null }
+                }
             }
-            source.copy(variants = variants).takeIf { variants.isNotEmpty() || source.webLinks.isNotEmpty() }
+            source.copy(variants = variants, issues = issues.distinct()).takeIf { variants.isNotEmpty() || source.webLinks.isNotEmpty() }
         } }.awaitAll().filterNotNull()
         SourceSearch(valid, results.flatMap { it.errors })
     }
@@ -154,11 +192,16 @@ class WatchSources(private val providers: () -> List<WatchSourceProvider>, priva
     }
 }
 
-fun interface SourceProbe { suspend fun compatible(variant: SourceVariant): Boolean }
+fun interface SourceProbe {
+    suspend fun compatible(variant: SourceVariant): Boolean
+    suspend fun inspect(variant: SourceVariant): SourceCheck =
+        SourceCheck(if (compatible(variant)) SourceHealth.PLAYABLE else SourceHealth.UNVERIFIED)
+}
 
 class StreamProbe(private val http: OkHttpClient = SourceHttp.client, private val verifyHlsSegments: Boolean = false) : SourceProbe {
-    override suspend fun compatible(variant: SourceVariant): Boolean = withContext(Dispatchers.IO) {
-        if (variant.transport !in setOf(SourceTransport.MP4, SourceTransport.HLS, SourceTransport.MKV)) return@withContext false
+    override suspend fun compatible(variant: SourceVariant): Boolean = inspect(variant).playable
+    override suspend fun inspect(variant: SourceVariant): SourceCheck = withContext(Dispatchers.IO) {
+        if (variant.transport !in setOf(SourceTransport.MP4, SourceTransport.HLS, SourceTransport.MKV)) return@withContext SourceCheck(SourceHealth.UNSUPPORTED)
         try {
             val host = variant.url.toHttpUrlOrNull()?.host
             val transport = if (variant.httpHeaders.isEmpty()) http else http.newBuilder().addNetworkInterceptor { chain ->
@@ -171,48 +214,58 @@ class StreamProbe(private val http: OkHttpClient = SourceHttp.client, private va
             }.build()
             val request = Request.Builder().url(variant.url).header("Range", "bytes=0-4095").build()
             transport.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@use false
-                val body = response.body ?: return@use false
+                if (!response.isSuccessful) return@use sourceHttpCheck(response.code)
+                val body = response.body ?: return@use SourceCheck(SourceHealth.UNAVAILABLE)
                 val source = body.source()
                 // Wait for a bounded prefix even when a slow server splits the playlist across packets.
                 source.request(4096)
                 val bytes = source.readByteArray(minOf(4096L, source.buffer.size))
-                signatureMatches(variant.transport, bytes) &&
-                    (!verifyHlsSegments || variant.transport != SourceTransport.HLS ||
-                        playableHls(transport, response.request.url, bytes.toString(Charsets.UTF_8)))
+                if (!signatureMatches(variant.transport, bytes)) {
+                    val text = bytes.toString(Charsets.UTF_8).lowercase(Locale.ROOT)
+                    return@use SourceCheck(if (listOf("just a moment", "verify you are human", "access denied", "cf-chl-").any { it in text })
+                        SourceHealth.BLOCKED else SourceHealth.UNSUPPORTED)
+                }
+                if (verifyHlsSegments && variant.transport == SourceTransport.HLS)
+                    playableHls(transport, response.request.url, bytes.toString(Charsets.UTF_8))
+                else SourceCheck(SourceHealth.PLAYABLE)
             }
         } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-        catch (_: Exception) { false }
+        catch (e: Exception) { SourceCheck(if (e is java.io.IOException) SourceHealth.NETWORK_ERROR else SourceHealth.UNVERIFIED) }
     }
 
     /** Some hosts return a valid master but blocked child playlists or image-wrapped segments. */
-    private fun playableHls(client: OkHttpClient, base: okhttp3.HttpUrl, text: String, depth: Int = 0): Boolean {
-        if (depth > 3 || !signatureMatches(SourceTransport.HLS, text.toByteArray(Charsets.UTF_8))) return false
-        val uri = text.removePrefix("\uFEFF").lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() && !it.startsWith('#') } ?: return false
-        val next = base.resolve(uri)?.takeIf { it.isHttps } ?: return false
-        val media = prefix(client, next) ?: return false
-        if (media.second.toString(Charsets.UTF_8).trimStart().startsWith("#EXTM3U"))
-            return playableHls(client, media.first, media.second.toString(Charsets.UTF_8), depth + 1)
-        if (!text.contains("#EXTINF:")) return false
+    private fun playableHls(client: OkHttpClient, base: okhttp3.HttpUrl, text: String, depth: Int = 0): SourceCheck {
+        val unsupported = SourceCheck(SourceHealth.UNSUPPORTED)
+        if (depth > 3 || !signatureMatches(SourceTransport.HLS, text.toByteArray(Charsets.UTF_8))) return unsupported
+        val uri = text.removePrefix("\uFEFF").lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() && !it.startsWith('#') } ?: return unsupported
+        val next = base.resolve(uri)?.takeIf { it.isHttps } ?: return unsupported
+        val media = prefix(client, next)
+        media.failure?.let { return it }
+        if (media.bytes.toString(Charsets.UTF_8).trimStart().startsWith("#EXTM3U"))
+            return playableHls(client, media.url, media.bytes.toString(Charsets.UTF_8), depth + 1)
+        if (!text.contains("#EXTINF:")) return unsupported
         val init = Regex("""#EXT-X-MAP:[^\r\n]*URI="([^"]+)"""").find(text)?.groupValues?.get(1)
         if (init != null) {
-            val initUrl = base.resolve(init)?.takeIf { it.isHttps } ?: return false
-            if (!isoMedia(prefix(client, initUrl)?.second ?: return false)) return false
+            val initUrl = base.resolve(init)?.takeIf { it.isHttps } ?: return unsupported
+            val initData = prefix(client, initUrl)
+            initData.failure?.let { return it }
+            if (!isoMedia(initData.bytes)) return unsupported
         }
-        val bytes = media.second
+        val bytes = media.bytes
         val ts = bytes.size >= 188 && bytes[0] == 0x47.toByte() && (bytes.size <= 188 || bytes[188] == 0x47.toByte())
-        return ts || isoMedia(bytes)
+        return SourceCheck(if (ts || isoMedia(bytes)) SourceHealth.PLAYABLE else SourceHealth.UNSUPPORTED)
     }
 
     private fun isoMedia(bytes: ByteArray): Boolean = bytes.size >= 8 &&
         String(bytes, 4, 4, Charsets.US_ASCII) in setOf("ftyp", "styp", "moof", "sidx")
 
-    private fun prefix(client: OkHttpClient, url: okhttp3.HttpUrl): Pair<okhttp3.HttpUrl, ByteArray>? =
+    private data class Prefix(val url: okhttp3.HttpUrl, val bytes: ByteArray = byteArrayOf(), val failure: SourceCheck? = null)
+    private fun prefix(client: OkHttpClient, url: okhttp3.HttpUrl): Prefix =
         client.newCall(Request.Builder().url(url).header("Range", "bytes=0-4095").build()).execute().use { response ->
-            if (!response.isSuccessful) return@use null
-            val source = response.body?.source() ?: return@use null
+            if (!response.isSuccessful) return@use Prefix(response.request.url, failure = sourceHttpCheck(response.code))
+            val source = response.body?.source() ?: return@use Prefix(response.request.url, failure = SourceCheck(SourceHealth.UNAVAILABLE))
             source.request(4096)
-            response.request.url to source.readByteArray(minOf(4096L, source.buffer.size))
+            Prefix(response.request.url, source.readByteArray(minOf(4096L, source.buffer.size)))
         }
 
     companion object {

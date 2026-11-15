@@ -69,11 +69,12 @@ fun SourceWatchScreen(
 ) {
     val container = appContainer()
     val context = LocalContext.current
-    val website = when (lookup.providerId) { "moviz-time" -> "Moviz Time"; "topcinema" -> "TopCinema"; "egybest" -> "EgyBest"; else -> null }
+    val website = when (lookup.providerId) { "moviz-time" -> "Moviz Time"; "topcinema" -> "TopCinema"; "egybest" -> "EgyBest"; "akwam" -> "أكوام"; else -> null }
     val repository = sources ?: when (lookup.providerId) {
         "moviz-time" -> container.movizTimeSources
         "topcinema" -> container.topCinemaSources
         "egybest" -> container.egyBestSources
+        "akwam" -> container.akwamSources
         else -> container.watchSources
     }
     val catalogue by container.settings.sourceCatalogue.collectAsStateWithLifecycle()
@@ -117,7 +118,7 @@ fun SourceWatchScreen(
                         if (lookup.overview.isNotBlank()) TranslatedText(lookup.overview, isEnglish = lookup.overviewIsEnglish,
                             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text((if (series) "الموسم $season" else "فيلم") + (website?.let { " · $it" } ?: " · تورنت"), color = Gold, style = MaterialTheme.typography.labelMedium)
-                        Text(if (lookup.providerId == "egybest") "تظهر روابط المشاهدة والتحميل كما يعلنها الموقع. الروابط المتوافقة تُشغّل بالمشغّل الرئيسي، والبقية تفتح بمشغّل الموقع داخل التطبيق."
+                        Text(if (lookup.providerId in setOf("egybest", "akwam")) "تظهر روابط المشاهدة والتحميل كما يعلنها الموقع. الروابط المتوافقة تُشغّل بالمشغّل الرئيسي، والبقية تفتح بمشغّل الموقع داخل التطبيق."
                             else if (website != null) "اختر الفيلم أو الحلقة لعرض سيرفرات $website المتوافقة. تُجلب روابط التشغيل من الموقع عند كل مشاهدة."
                             else "يبدأ التشغيل بعد تجهيز الأجزاء الأولى ويستمر التنزيل أثناء المشاهدة. سرعة البداية تعتمد على الأقران والاتصال.",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -155,6 +156,7 @@ fun SourceWatchScreen(
             Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (loading) CircularProgressIndicator()
                 result?.sources?.forEach { source ->
+                    Text(source.providerName + " · " + sourceStatus(source), color = Gold)
                     source.variants.forEach { variant ->
                         Button(onClick = {
                             val ref = WatchSourceRef(source.providerId, source.id, query, variant.id, source.providerName)
@@ -167,9 +169,12 @@ fun SourceWatchScreen(
                         Text(variant.label, style = MaterialTheme.typography.bodySmall)
                         Text(source.attribution, style = MaterialTheme.typography.labelSmall)
                     }
+                    source.issues.distinct().forEach { issue ->
+                        Text(issue.server + " — " + sourceIssueLabel(issue), style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     if (source.webLinks.isNotEmpty()) {
-                        if (source.variants.isEmpty()) Text("العمل موجود في الموقع، ولم يتوفر رابط فيديو متوافق مع المشغّل الرئيسي. يمكنك تجربة روابط الموقع أدناه.")
-                        else Text("روابط الموقع الأصلية · قد تتطلب تفاعلاً أو تكون غير متاحة")
+                        Text("روابط الموقع الأصلية · ليست ملفات فيديو مفحوصة للمشغّل الرئيسي")
                         source.webLinks.forEach { link ->
                             OutlinedButton(onClick = { openedLink = link; chooseSource = false },
                                 modifier = Modifier.fillMaxWidth().focusFrame()) {
@@ -179,11 +184,49 @@ fun SourceWatchScreen(
                     }
                 }
                 result?.errors?.firstOrNull()?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                if (!loading && result?.sources?.isEmpty() == true) Text("لا يوجد مصدر مطابق متاح حالياً لهذا العمل أو الحلقة.")
+                if (!loading && result?.sources?.isEmpty() == true) {
+                    Text(if (result?.errors?.isNotEmpty() == true) "تعذّر البحث أو التحقق في الموقع؛ لا يمكن الحكم على توفر العمل الآن."
+                        else "لم يعثر البحث على نتيجة مؤكدة المطابقة. قد يختلف الاسم أو تكون نتائج الموقع محدودة؛ هذا لا يثبت حذف العمل.")
+                }
+                if (!loading && website != null) sourceSiteSearch(lookup, query)?.let { url ->
+                    TextButton(onClick = { openedLink = SourceWebLink("البحث في $website", url); chooseSource = false },
+                        modifier = Modifier.fillMaxWidth().focusFrame()) { Text("تحقق بنفسك في بحث $website") }
+                }
                 if (!loading && (result?.sources?.isEmpty() == true || result?.errors?.isNotEmpty() == true))
                     TextButton(onClick = { retry++ }, modifier = Modifier.focusFrame()) { Text("إعادة البحث") }
             }
         }, confirmButton = { TextButton(onClick = { chooseSource = false }, modifier = Modifier.focusFrame()) { Text("إغلاق") } })
+}
+
+private fun sourceStatus(source: WatchSource): String = when {
+    !source.matchVerified -> "نتيجة محتملة؛ لم تُؤكّد هوية العمل"
+    source.variants.isNotEmpty() && source.variants.all { it.transport in setOf(SourceTransport.MAGNET, SourceTransport.TORRENT) } -> "مصدر تورنت مفهرس؛ تُفحص جاهزيته عند التشغيل"
+    source.variants.isNotEmpty() -> "العمل موجود · ${source.variants.count { it.transport !in setOf(SourceTransport.MAGNET, SourceTransport.TORRENT) }} رابط اجتاز فحص البداية"
+    source.issues.isNotEmpty() && source.issues.all { it.health == SourceHealth.UNAVAILABLE } -> "العمل موجود، لكن الروابط المفحوصة غير متاحة حالياً"
+    source.issues.any { it.health in setOf(SourceHealth.BLOCKED, SourceHealth.NETWORK_ERROR) } -> "العمل موجود، لكن تعذّر التحقق بسبب الاتصال أو الحماية"
+    else -> "العمل موجود؛ لم يتوفر رابط مباشر مؤكّد للمشغّل الرئيسي"
+}
+
+private fun sourceIssueLabel(issue: SourceIssue): String = when (issue.health) {
+    SourceHealth.PLAYABLE -> "اجتاز فحص بداية الفيديو"
+    SourceHealth.UNAVAILABLE -> "الرابط غير متاح حالياً" + (issue.httpStatus?.let { " ($it)" } ?: "")
+    SourceHealth.BLOCKED -> "الوصول محجوب أو يتطلب تفاعلاً في الموقع" + (issue.httpStatus?.let { " ($it)" } ?: "")
+    SourceHealth.NETWORK_ERROR -> "تعذّر الاتصال أو انتهت المهلة؛ حالة الفيديو غير معروفة"
+    SourceHealth.UNSUPPORTED -> "ليس رابط فيديو متوافقاً؛ قد يحتاج مشغّل الموقع"
+    SourceHealth.UNVERIFIED -> "لم نتمكن من تأكيد رابط فيديو؛ لا يعني ذلك أن العمل غير موجود"
+}
+
+private fun sourceSiteSearch(lookup: SourceLookup, query: SourceQuery): String? {
+    val title = query.searchTitle?.takeIf { it.isNotBlank() } ?: query.originalTitle
+    val base = when (lookup.providerId) {
+        "egybest" -> "https://egytbest.live/"
+        "moviz-time" -> "https://moviz-time.buzz/"
+        "topcinema" -> "https://web6.topcinema.fan/search/"
+        "akwam" -> "https://akw.cam/search"
+        else -> return null
+    }
+    val param = when (lookup.providerId) { "topcinema" -> "query"; "akwam" -> "q"; else -> "s" }
+    return Uri.parse(base).buildUpon().appendQueryParameter(param, title).build().toString()
 }
 
 internal fun sourceQualityLabel(label: String): String = when {

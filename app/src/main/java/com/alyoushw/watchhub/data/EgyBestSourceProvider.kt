@@ -103,6 +103,7 @@ class EgyBestSourceProvider : WatchSourceProvider {
             SourceWebLink(label, url.toString(), download = true)
         }.distinctBy { it.url }
         val limit = Semaphore(4)
+        val issues = java.util.Collections.synchronizedList(mutableListOf<SourceIssue>())
         val variants = coroutineScope {
             servers.withIndex().filter { (index, server) ->
                 server.url.toHttpUrlOrNull()?.host in EMBED_HOSTS &&
@@ -110,20 +111,25 @@ class EgyBestSourceProvider : WatchSourceProvider {
             }.map { (index, server) -> async {
                 limit.withPermit {
                     try {
-                        embeds.resolveEmbed(server.url, page.toString(), server.label, index.toString(), EMBED_HOSTS)
+                        val media = embeds.resolveEmbed(server.url, page.toString(), server.label, index.toString(), EMBED_HOSTS)
+                        if (media.isEmpty()) issues += SourceIssue(server.label, SourceHealth.UNVERIFIED)
+                        media
                             .map { variant -> variant.copy(id = if (targetId?.startsWith("server-") == true) variant.id
                                 else "egy-${serverKey(server.url)}-${variantKey(variant)}") }
                             .filter { targetId == null || it.id == targetId }
-                            .filter { probe.compatible(it) }
+                            .filter { variant ->
+                                val check = probe.inspect(variant)
+                                if (!check.playable) issues += check.issue(server.label)
+                                check.playable
+                            }
                     } catch (e: CancellationException) { throw e }
-                    catch (_: Exception) { emptyList() }
+                    catch (e: Exception) { issues += sourceFailure(server.label, e); emptyList() }
                 }
             } }.awaitAll().flatten().distinctBy { it.url }
         }
-        if (variants.isEmpty() && servers.isEmpty() && downloads.isEmpty()) return null
         return WatchSource("egybest-$post", "egybest", "EgyBest", query, variants,
             attribution = "EgyBest · ${query.originalTitle} (${query.year}) · $page", licenceUrl = page.toString(),
-            webLinks = servers + downloads)
+            webLinks = servers + downloads + SourceWebLink("صفحة العمل الأصلية", page.toString()), issues = issues.toList().distinct())
     }
 
     private fun titleMatches(raw: String, query: SourceQuery, titles: List<String>, requireEpisode: Boolean): Boolean {
@@ -160,10 +166,10 @@ class EgyBestSourceProvider : WatchSourceProvider {
     private fun read(url: String): Document {
         val parsed = url.toHttpUrlOrNull()?.takeIf { it.isHttps && it.host == HOST } ?: throw SourceException("رابط EgyBest غير متوافق")
         return SourceHttp.client.newCall(Request.Builder().url(parsed).header("User-Agent", AGENT).build()).execute().use { response ->
-            if (!response.isSuccessful || response.request.url.host != HOST) throw SourceException("تعذر الوصول إلى EgyBest (${response.code})")
+            if (!response.isSuccessful || response.request.url.host != HOST) throw SourceException("تعذر الوصول إلى EgyBest (${response.code})", response.code)
             val source = response.body?.source() ?: throw SourceException("صفحة EgyBest فارغة")
             if (source.request(2 * 1024 * 1024L + 1)) throw SourceException("صفحة EgyBest أكبر من الحد المسموح")
-            Jsoup.parse(source.readByteArray().toString(Charsets.UTF_8), response.request.url.toString())
+            checkedSourcePage(Jsoup.parse(source.readByteArray().toString(Charsets.UTF_8), response.request.url.toString()))
         }
     }
 
