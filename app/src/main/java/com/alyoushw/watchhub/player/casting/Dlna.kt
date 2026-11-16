@@ -45,6 +45,8 @@ internal data class CastLan(val network: Network, val address: Inet4Address) {
     }
 }
 
+internal const val DLNA_FEATURES = "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000"
+
 internal data class DlnaDevice(val id: String, val name: String, val controlUrl: String, val serviceType: String)
 internal data class DlnaStatus(val playing: Boolean, val positionMs: Long?, val state: String)
 
@@ -124,8 +126,11 @@ internal class Dlna(private val context: Context) {
             control.toString(), service.getElementsByTag("serviceType").text())
     }
 
-    suspend fun load(device: DlnaDevice, url: String, title: String, mime: String, positionMs: Long): Boolean {
-        val metadata = "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"><item id=\"0\" parentID=\"0\" restricted=\"1\"><dc:title>${escape(title)}</dc:title><upnp:class>object.item.videoItem</upnp:class><res protocolInfo=\"http-get:*:${escape(mime)}:*\">${escape(url)}</res></item></DIDL-Lite>"
+    suspend fun load(device: DlnaDevice, url: String, title: String, mime: String, positionMs: Long, durationMs: Long = 0): Boolean {
+        // Strict renderers (Sony, LG) refuse a bare "*" profile; advertise a plain streamable HTTP resource.
+        val info = "http-get:*:$mime:" + if (mime == "video/mp2t") DLNA_FEATURES.replace("OP=01", "OP=00") else DLNA_FEATURES
+        val length = if (durationMs > 0) (durationMs / 1000).let { " duration=\"" + String.format(java.util.Locale.US, "%d:%02d:%02d.000", it / 3600, it / 60 % 60, it % 60) + "\"" } else ""
+        val metadata = "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"><item id=\"0\" parentID=\"0\" restricted=\"1\"><dc:title>${escape(title)}</dc:title><upnp:class>object.item.videoItem.movie</upnp:class><res protocolInfo=\"${escape(info)}\"$length>${escape(url)}</res></item></DIDL-Lite>"
         action(device, "SetAVTransportURI", mapOf("CurrentURI" to url, "CurrentURIMetaData" to metadata))
         action(device, "Play", mapOf("Speed" to "1"))
         if (positionMs <= 0) return true

@@ -64,6 +64,7 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
     private var wasPlaying = false
     private var closed = false
     private var epoch = 0
+    private var offset = 0L
 
     private val mediaCallback = object : RemoteMediaClient.Callback() {
         override fun onStatusUpdated() {
@@ -97,13 +98,37 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
         try {
             CastLan.find(activity)
             source() // Check readiness before opening discovery.
-            val context = cast ?: CastContext.getSharedInstance(activity).also {
-                cast = it
-                it.sessionManager.addSessionManagerListener(listener, CastSession::class.java)
-            }
-            pendingGoogle = true
-            val session = context.sessionManager.currentCastSession
-            if (session?.isConnected == true) { loadGoogle(session); return }
+        } catch (e: Exception) {
+            error = e.message ?: "تعذّر تجهيز البث."
+            return
+        }
+        cast?.let { openGoogle(it); return }
+        busy = true
+        try {
+            // The asynchronous form loads the Cast module safely; the synchronous one fails on some phones.
+            CastContext.getSharedInstance(activity, ContextCompat.getMainExecutor(activity))
+                .addOnSuccessListener(activity) { context ->
+                    busy = false
+                    if (closed) return@addOnSuccessListener
+                    cast = context
+                    context.sessionManager.addSessionManagerListener(listener, CastSession::class.java)
+                    openGoogle(context)
+                }
+                .addOnFailureListener(activity) { e ->
+                    busy = false
+                    error = "تعذّر تشغيل Google Cast على الجوال. حدّث خدمات Google Play ثم أعد المحاولة. (${e.javaClass.simpleName})"
+                }
+        } catch (e: Exception) {
+            busy = false
+            error = "تعذّر تشغيل Google Cast على الجوال. حدّث خدمات Google Play ثم أعد المحاولة. (${e.javaClass.simpleName})"
+        }
+    }
+
+    private fun openGoogle(context: CastContext) {
+        pendingGoogle = true
+        val session = context.sessionManager.currentCastSession
+        if (session?.isConnected == true) { loadGoogle(session); return }
+        try {
             val themed = ContextThemeWrapper(activity, androidx.appcompat.R.style.Theme_AppCompat_Dialog)
             chooser = MediaRouteChooserDialog(themed).apply {
                 routeSelector = MediaRouteSelector.Builder().addControlCategory(
@@ -113,9 +138,9 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
                 show()
             }
             dialog = false
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             pendingGoogle = false
-            error = "تعذّر فتح Google Cast. تأكد من Wi-Fi وخدمات Google Play على الجوال."
+            error = "تعذّر فتح قائمة أجهزة Google Cast. (${e.javaClass.simpleName})"
         }
     }
 
@@ -175,10 +200,16 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
             try {
                 val media = source()
                 wasPlaying = player.playWhenReady
-                val url = prepare(media)
-                val resumed = dlna.load(device, url, media.title, media.mime, if (media.live) 0 else media.positionMs)
+                val flat = media.mime.contains("mpegurl", true)
+                val url = prepare(media, flat)
+                val start = if (media.live) 0 else media.positionMs
+                // A flattened HLS stream already starts at the watch position, so the renderer must not seek.
+                val resumed = dlna.load(device, url, media.title, if (flat) "video/mp2t" else media.mime,
+                    if (flat) 0L else start, media.durationMs.takeIf { !flat && !media.live } ?: 0L)
                 this@PhoneCastController.device = device
+                offset = if (flat) start else 0
                 transferred(media, device.name, "DLNA")
+                if (flat) duration = 0 // No remote seeking inside a flattened stream.
                 if (!resumed) error = "بدأ البث من البداية؛ الجهاز لم يقبل الانتقال إلى موضع المشاهدة السابق."
             } catch (_: TimeoutCancellationException) { error = "انتهت مهلة تجهيز البث إلى جهاز DLNA." }
             catch (e: CancellationException) { throw e }
@@ -187,7 +218,7 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
         }
     }
 
-    private suspend fun prepare(media: CastSource): String {
+    private suspend fun prepare(media: CastSource, flatHls: Boolean = false): String {
         val lan = CastLan.find(activity)
         if (relay == null) {
             val ready = CompletableDeferred<CastRelayService>()
@@ -202,7 +233,7 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
             relay = withTimeout(10_000) { ready.await() }
             relay?.onStopCasting = { disconnect() }
         }
-        return checkNotNull(relay).open(lan, media)
+        return checkNotNull(relay).open(lan, media, flatHls)
     }
 
     private fun transferred(media: CastSource, name: String, method: String) {
@@ -230,7 +261,7 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
                         val status = dlna.status(target)
                         remotePlaying = status.playing
                         if (status.playing) confirmed = true
-                        status.positionMs?.let { remotePosition = it }
+                        status.positionMs?.let { remotePosition = it + offset }
                         if (!confirmed && android.os.SystemClock.elapsedRealtime() - acceptedAt > 15_000 && status.state in setOf("STOPPED", "NO_MEDIA_PRESENT")) {
                             error = "جهاز DLNA لم يبدأ تشغيل الفيديو؛ قد لا يدعم صيغته أو تعذّر وصوله إلى الجوال."
                             dialog = true

@@ -18,7 +18,7 @@ internal data class CastSource(val url: String, val mime: String, val title: Str
     val positionMs: Long, val durationMs: Long, val headers: Map<String, String>)
 
 /** One media session, bound to Wi-Fi only. Opaque URLs never expose provider credentials. */
-internal class CastMediaRelay(lan: CastLan, private val source: CastSource) : NanoHTTPD(lan.address.hostAddress, 0), Closeable {
+internal class CastMediaRelay(lan: CastLan, private val source: CastSource, private val flatHls: Boolean = false) : NanoHTTPD(lan.address.hostAddress, 0), Closeable {
     private data class Resource(val url: HttpUrl, val mime: String?)
     private val secret = Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(24).also { SecureRandom().nextBytes(it) })
     private val resources = java.util.LinkedHashMap<String, Resource>(64, 0.75f, true)
@@ -41,7 +41,7 @@ internal class CastMediaRelay(lan: CastLan, private val source: CastSource) : Na
             }.build())
         }.build()
     private val host = lan.address.hostAddress
-    val mediaUrl: String get() = register(root, source.mime)
+    val mediaUrl: String get() = if (flatHls) "http://$host:$listeningPort/$secret/stream.ts" else register(root, source.mime)
     init { resources["0"] = Resource(root, source.mime); keys[root.toString()] = "0" }
 
     @Synchronized private fun register(url: HttpUrl, mime: String? = null): String {
@@ -58,6 +58,8 @@ internal class CastMediaRelay(lan: CastLan, private val source: CastSource) : Na
         val suffix = when {
             mime?.contains("mpegurl", true) == true || url.encodedPath.endsWith(".m3u8", true) -> ".m3u8"
             mime == "video/mp4" || url.encodedPath.endsWith(".mp4", true) -> ".mp4"
+            mime == "video/x-matroska" || url.encodedPath.endsWith(".mkv", true) -> ".mkv"
+            mime == "video/mp2t" || url.encodedPath.endsWith(".ts", true) -> ".ts"
             else -> ""
         }
         return "http://$host:$listeningPort/$secret/$id$suffix"
@@ -66,6 +68,14 @@ internal class CastMediaRelay(lan: CastLan, private val source: CastSource) : Na
     override fun serve(session: IHTTPSession): Response {
         val parts = session.uri.split('/').filter { it.isNotEmpty() }
         if (parts.size != 2 || parts[0] != secret) return text(Response.Status.NOT_FOUND)
+        if (flatHls && parts[1] == "stream.ts") {
+            if (session.method !in setOf(Method.GET, Method.HEAD)) return text(Response.Status.METHOD_NOT_ALLOWED)
+            val body = if (session.method == Method.HEAD) ByteArrayInputStream(byteArrayOf()) else HlsStream(if (source.live) -1 else source.positionMs)
+            return cors(newChunkedResponse(Response.Status.OK, "video/mp2t", body)).apply {
+                addHeader("transferMode.dlna.org", "Streaming")
+                addHeader("contentFeatures.dlna.org", DLNA_FEATURES.replace("OP=01", "OP=00"))
+            }
+        }
         val resource = synchronized(this) { resources[parts[1].substringBefore('.')] } ?: return text(Response.Status.NOT_FOUND)
         if (session.method == Method.OPTIONS) return text(Response.Status.OK)
         if (session.method !in setOf(Method.GET, Method.HEAD)) return text(Response.Status.METHOD_NOT_ALLOWED)
@@ -124,6 +134,7 @@ internal class CastMediaRelay(lan: CastLan, private val source: CastSource) : Na
             val result = if (length >= 0) newFixedLengthResponse(status, mime, input, length) else newChunkedResponse(status, mime, input)
             for (name in listOf("Content-Range", "Accept-Ranges", "ETag", "Last-Modified")) response.header(name)?.let { result.addHeader(name, it) }
             result.addHeader("transferMode.dlna.org", "Streaming")
+            result.addHeader("contentFeatures.dlna.org", DLNA_FEATURES)
             cors(result)
         } catch (_: Exception) { text(badGateway) }
     }
@@ -162,8 +173,98 @@ internal class CastMediaRelay(lan: CastLan, private val source: CastSource) : Na
             source.mime, input, end - start + 1)).apply {
             addHeader("Accept-Ranges", "bytes")
             addHeader("transferMode.dlna.org", "Streaming")
+            addHeader("contentFeatures.dlna.org", DLNA_FEATURES)
             if (range != null) addHeader("Content-Range", "bytes $start-$end/$length")
         }
+    }
+
+    /**
+     * DLNA renderers rarely understand HLS playlists, so the segments are joined into one continuous
+     * MPEG-TS (or fMP4) stream that starts at [startMs]; live playlists are followed as they grow.
+     */
+    private inner class HlsStream(private val startMs: Long) : InputStream() {
+        private val queue = ArrayDeque<HttpUrl>()
+        private var current: InputStream? = null
+        private var response: okhttp3.Response? = null
+        private var media: HttpUrl? = null
+        private var lastSequence = -1L
+        private var initDone = false
+        private var ended = false
+        private var waitMs = 2000L
+        @Volatile private var closed = false
+
+        private fun fetch(url: HttpUrl): String = http.newCall(Request.Builder().url(url).build()).execute().use { r ->
+            if (!r.isSuccessful) throw java.io.IOException("HTTP ${r.code}")
+            r.body?.string()?.removePrefix("\uFEFF") ?: ""
+        }
+
+        private fun refill() {
+            var url = media ?: root
+            var text = fetch(url)
+            if (media == null && text.contains("#EXT-X-STREAM-INF:")) {
+                // Pick the best variant; the TV has the bandwidth and screen for it.
+                val lines = text.lines()
+                val best = lines.indices.filter { lines[it].startsWith("#EXT-X-STREAM-INF:") }.maxByOrNull { i ->
+                    Regex("""BANDWIDTH=(\d+)""").find(lines[i])?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+                }?.let { i -> lines.drop(i + 1).firstOrNull { it.isNotBlank() && !it.startsWith('#') } } ?: throw java.io.IOException("Empty HLS master")
+                url = url.resolve(best.trim()) ?: throw java.io.IOException("Bad variant")
+                text = fetch(url)
+            }
+            media = url
+            var sequence = Regex("""#EXT-X-MEDIA-SEQUENCE:(\d+)""").find(text)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+            Regex("""#EXT-X-TARGETDURATION:(\d+)""").find(text)?.groupValues?.get(1)?.toLongOrNull()?.let { waitMs = (it * 500).coerceIn(1000, 6000) }
+            ended = text.contains("#EXT-X-ENDLIST")
+            val segments = mutableListOf<Triple<Long, Double, HttpUrl>>()
+            var duration = 0.0
+            for (raw in text.lines()) {
+                val line = raw.trim()
+                when {
+                    line.startsWith("#EXT-X-KEY:") && !line.contains("METHOD=NONE") -> throw java.io.IOException("Encrypted HLS")
+                    line.startsWith("#EXT-X-MAP:") && !initDone -> Regex("""URI="([^"]+)"""").find(line)?.groupValues?.get(1)
+                        ?.let { url.resolve(it) }?.let { queue.addLast(it); initDone = true }
+                    line.startsWith("#EXTINF:") -> duration = line.removePrefix("#EXTINF:").substringBefore(',').toDoubleOrNull() ?: 0.0
+                    line.isNotEmpty() && !line.startsWith('#') -> { url.resolve(line)?.let { segments += Triple(sequence, duration, it) }; sequence++ }
+                }
+            }
+            if (lastSequence < 0) {
+                // First fill: VOD starts at the watch position, live starts near the edge.
+                var skip = if (startMs < 0 || !ended) (segments.size - 3).coerceAtLeast(0) else 0
+                if (startMs > 0 && ended) {
+                    var elapsed = 0.0
+                    skip = segments.indexOfFirst { elapsed += it.second; elapsed * 1000 > startMs }.coerceAtLeast(0)
+                }
+                segments.drop(skip).forEach { queue.addLast(it.third); lastSequence = it.first }
+                if (lastSequence < 0) lastSequence = sequence - 1
+            } else segments.filter { it.first > lastSequence }.forEach { queue.addLast(it.third); lastSequence = it.first }
+        }
+
+        private fun next(): InputStream? {
+            while (!closed) {
+                if (queue.isEmpty()) {
+                    if (ended && lastSequence >= 0) return null
+                    if (lastSequence >= 0) Thread.sleep(waitMs)
+                    refill()
+                    continue
+                }
+                val r = http.newCall(Request.Builder().url(queue.removeFirst()).build()).execute()
+                if (!r.isSuccessful || r.body == null) { r.close(); throw java.io.IOException("Segment HTTP ${r.code}") }
+                response = r
+                return r.body!!.byteStream()
+            }
+            return null
+        }
+
+        override fun read(): Int { val one = ByteArray(1); return if (read(one, 0, 1) < 0) -1 else one[0].toInt() and 0xFF }
+        override fun read(bytes: ByteArray, offset: Int, count: Int): Int {
+            while (!closed) {
+                val input = current ?: next()?.also { current = it } ?: return -1
+                val read = input.read(bytes, offset, count)
+                if (read >= 0) return read
+                response?.close(); response = null; current = null
+            }
+            return -1
+        }
+        override fun close() { closed = true; response?.close(); response = null; current = null }
     }
 
     private fun text(status: Response.IStatus) = cors(newFixedLengthResponse(status, "text/plain", status.description))

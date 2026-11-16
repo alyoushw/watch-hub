@@ -37,9 +37,9 @@ class CastRelayService : Service() {
         if (intent?.action == "stop") { onStopCasting?.invoke(); stopSelf() }
         return START_NOT_STICKY
     }
-    internal suspend fun open(lan: CastLan, source: CastSource): String = withContext(Dispatchers.IO) {
+    internal suspend fun open(lan: CastLan, source: CastSource, flatHls: Boolean = false): String = withContext(Dispatchers.IO) {
         relay?.close()
-        val server = CastMediaRelay(lan, source)
+        val server = CastMediaRelay(lan, source, flatHls)
         try {
             server.start(10_000, true)
             relay = server
