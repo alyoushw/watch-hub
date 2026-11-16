@@ -344,10 +344,12 @@ fun PlayerScreen(
         onDispose { runCatching { enhancer?.release() } }
     }
 
-    // Controls fade out after a few seconds of playing untouched.
-    LaunchedEffect(controls, touchedAt, playing, menu) {
-        if (controls && playing && menu == null) {
-            delay(4_000)
+    // TV: leave room for the 300 ms fade within 2.5 s, including idle settings menus.
+    val autoHideReady = tv || playing
+    LaunchedEffect(controls, touchedAt, autoHideReady, menu, tv) {
+        if ((controls || tv && menu != null) && autoHideReady && (tv || menu == null)) {
+            delay(if (tv) 2_200L else 4_000L)
+            if (tv) menu = null
             controls = false
         }
     }
@@ -360,7 +362,10 @@ fun PlayerScreen(
 
     BackHandler(enabled = menu != null || (tv && controls) || session.upNext != null) {
         when {
-            menu != null -> menu = null
+            menu != null -> {
+                menu = null
+                if (tv) controls = false
+            }
             session.upNext != null && !controls -> onCancelUpNext()
             else -> controls = false
         }
