@@ -91,7 +91,13 @@ class Updater(private val context: Context) {
                 val apk = o["assets"]?.jsonArray?.map { it.jsonObject }
                     ?.firstOrNull { it["name"]?.jsonPrimitive?.contentOrNull?.endsWith(".apk") == true }
                     ?.get("browser_download_url")?.jsonPrimitive?.contentOrNull ?: return@use null
-                AppUpdate(build, apk, o["body"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() })
+                val notes = o["body"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                    ?: runCatching { // The release has no text: use the notes file committed with that build.
+                        http.newCall(Request.Builder().url("$NOTES/build-$build/docs/whats-new.md").build()).execute().use { r ->
+                            r.body?.string()?.takeIf { r.isSuccessful && it.isNotBlank() }
+                        }
+                    }.getOrNull()
+                AppUpdate(build, apk, notes)
             }
         }.getOrNull()
         if (found != null) lastCheck = System.currentTimeMillis()
@@ -198,6 +204,7 @@ class Updater(private val context: Context) {
     }
 
     companion object {
+        private const val NOTES = "https://raw.githubusercontent.com/alyoushw/watch-hub"
         private const val LATEST = "https://api.github.com/repos/alyoushw/watch-hub/releases/latest"
         private const val KEY_DISMISSED = "dismissed"
         private const val KEY_NOTIFIED = "notified"

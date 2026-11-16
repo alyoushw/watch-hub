@@ -8,6 +8,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -80,6 +83,14 @@ fun UpdateNotice() {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("النسخة ${u.build} جاهزة (عندك ${updater.currentBuild}).")
+                u.notes?.let { notes ->
+                    // What is new in this build (release notes, or docs/whats-new.md at its tag).
+                    Text(
+                        notes.trim(),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState()),
+                    )
+                }
                 if (!canInstall) {
                     Text(
                         "أول مرة بس: اسمح لـ Watch Hub يثبّت التحديثات (يفتح لك الإعدادات، فعّل «السماح من هذا المصدر» وارجع).",

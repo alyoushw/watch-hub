@@ -25,3 +25,7 @@ Before starting any task
 Big features
 
 - Only when the owner calls it a big/new feature may you add tests, and still never make the emulator test mandatory.
+
+Update notes (every release)
+
+- Before pushing anything that will be published, rewrite docs/whats-new.md: short Arabic bullet points of what is new in this build, for the owner (no technical jargon). The app shows this file in the "يوجد تحديث جديد" dialog.
