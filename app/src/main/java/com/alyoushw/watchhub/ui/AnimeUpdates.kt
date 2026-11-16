@@ -3,6 +3,8 @@ package com.alyoushw.watchhub.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -40,7 +42,13 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
 /** Source IDs and published episode numbers, independently of TMDB home recommendations. */
-class AnimeUpdatesViewModel(private val api: AnimeifyApi) : ViewModel() {
+class AnimeUpdatesViewModel(private val api: AnimeifyApi, private val tmdb: TmdbApi) : ViewModel() {
+    private val detailsCache = mutableMapOf<String, List<SearchResult>>()
+
+    suspend fun detailsMatches(anime: AnimeifyTitle): List<SearchResult> {
+        detailsCache[anime.id]?.let { return it }
+        return tmdb.animeDetailsMatches(anime).also { if (it.isNotEmpty()) detailsCache[anime.id] = it }
+    }
     var latest by mutableStateOf<List<AnimeifyUpdate>>(emptyList()); private set
     var airing by mutableStateOf<List<AnimeifyUpdate>>(emptyList()); private set
     var latestLoading by mutableStateOf(false); private set
@@ -198,6 +206,29 @@ fun AnimeUpdatesRow(vm: AnimeUpdatesViewModel, currentlyAiring: Boolean, onOpen:
     }
     selected?.let { update ->
         val anime = update.title
+        var lookupAttempt by remember(anime.id) { mutableIntStateOf(0) }
+        var resolving by remember(anime.id) { mutableStateOf(false) }
+        var detailError by remember(anime.id) { mutableStateOf<String?>(null) }
+        var matches by remember(anime.id) { mutableStateOf<List<SearchResult>?>(null) }
+        fun openDetails(hit: SearchResult) {
+            val type = hit.type ?: return
+            selected = null
+            expanded = false
+            onOpenDetails(type, hit.id)
+        }
+        LaunchedEffect(lookupAttempt) {
+            if (lookupAttempt == 0) return@LaunchedEffect
+            resolving = true
+            detailError = null
+            matches = null
+            try {
+                val found = vm.detailsMatches(anime)
+                matches = found
+                found.singleOrNull()?.let(::openDetails)
+            } catch (e: ApiException) {
+                detailError = "تعذّر التحقق من TMDB: ${e.message}. لا يعني ذلك أن الأنمي غير موجود."
+            } finally { resolving = false }
+        }
         fun openSource(play: Boolean) {
             selected = null
             expanded = false
@@ -206,13 +237,29 @@ fun AnimeUpdatesRow(vm: AnimeUpdatesViewModel, currentlyAiring: Boolean, onOpen:
                 initialEpisode = if (play) update.episode.number else null))
         }
         AlertDialog(onDismissRequest = { selected = null }, title = { Text(anime.title) }, text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (showDetails) {
-                    val malId = anime.malId?.takeIf { it > 0 }
-                    Button(onClick = {
-                        if (malId != null) { selected = null; expanded = false; onOpenDetails(MediaType.ANIME, malId) }
-                    }, enabled = malId != null, modifier = Modifier.fillMaxWidth().focusFrame()) { Text("معلومات الأنمي في Watch Hub") }
-                    if (malId == null) Text("صفحة معلومات هذا الأنمي غير متاحة حالياً", style = MaterialTheme.typography.bodySmall)
+                    Button(onClick = { lookupAttempt++ }, enabled = !resolving,
+                        modifier = Modifier.fillMaxWidth().focusFrame()) { Text(if (lookupAttempt == 0) "معلومات الأنمي من TMDB" else "إعادة البحث في TMDB") }
+                    if (resolving) CircularProgressIndicator(Modifier.size(24.dp), color = Gold)
+                    detailError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    if (matches?.isEmpty() == true) {
+                        Text("لم أعثر على تطابق مؤكّد لهذا الأنمي في TMDB.")
+                        anime.malId?.takeIf { it > 0 }?.let { malId ->
+                            Text("أنمي فاي يربط هذا العمل بـMyAnimeList؛ يمكنك فتح معلوماته هناك باختيارك.", style = MaterialTheme.typography.bodySmall)
+                            OutlinedButton(onClick = {
+                                selected = null; expanded = false; onOpenDetails(MediaType.ANIME, malId)
+                            }, modifier = Modifier.fillMaxWidth().focusFrame()) { Text("فتح معلومات MyAnimeList") }
+                        }
+                    }
+                    if ((matches?.size ?: 0) > 1) {
+                        Text("وجدت أكثر من تطابق في TMDB؛ اختر العمل المقصود:")
+                        matches.orEmpty().forEach { hit ->
+                            OutlinedButton(onClick = { openDetails(hit) }, modifier = Modifier.fillMaxWidth().focusFrame()) {
+                                Text(listOfNotNull(hit.displayTitle, hit.year).joinToString(" · "))
+                            }
+                        }
+                    }
                 } else {
                     Button(onClick = { openSource(true) }, modifier = Modifier.fillMaxWidth().focusFrame()) {
                         Text("تشغيل الحلقة ${update.episode.number}")

@@ -402,7 +402,7 @@ fun HomeScreen(
 ) {
     val container = appContainer()
     val vm: HomeViewModel = viewModel { HomeViewModel(container) }
-    val animeUpdates: AnimeUpdatesViewModel = viewModel { AnimeUpdatesViewModel(container.animeify) }
+    val animeUpdates: AnimeUpdatesViewModel = viewModel { AnimeUpdatesViewModel(container.animeify, container.api) }
     val apiKey by container.settings.apiKey.collectAsStateWithLifecycle()
     val region by container.settings.region.collectAsStateWithLifecycle()
 

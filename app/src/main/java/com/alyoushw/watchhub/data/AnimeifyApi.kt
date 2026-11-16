@@ -41,6 +41,7 @@ data class AnimeifyTitle(
     val relation: String,
     val poster: String? = null,
     val status: String = "",
+    val alternativeTitles: List<String> = emptyList(),
 )
 
 data class AnimeifyEpisode(val number: String, val extra: String = "")
@@ -190,7 +191,9 @@ class AnimeifyApi(
                     o.text("Season").toIntOrNull()?.coerceAtLeast(1) ?: 1, o.text("RelationId"),
                     o.text("Thumbnail").takeIf { it.isNotBlank() }?.let { name ->
                         "https://animeify.net/animeify/files/thumbnails/".toHttpUrlOrNull()!!.newBuilder().addPathSegment(name).build().toString()
-                    }, o.text("Status"))
+                    }, o.text("Status"),
+                    (listOf(o.text("JP_Title"), o.text("AR_Title"), o.text("Synonyms")) +
+                        o.text("Synonyms").split(';', '|', '\n')).map { it.trim() }.filter { it.isNotBlank() }.distinct())
             }.distinctBy { it.id }
 
         internal fun parseEpisodes(element: JsonElement): List<AnimeifyEpisode> = (element as? JsonArray).orEmpty()
