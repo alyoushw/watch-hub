@@ -32,6 +32,52 @@ enum class Genre(
     fun idFor(type: MediaType): Int = if (type == MediaType.MOVIE) movieId else tvId
 }
 
+/**
+ * Story topics beyond TMDB's genres ("سيارات", "سرقة", "زومبي"…). [terms] are TMDB keyword names,
+ * looked up when searching; a topic matches titles tagged with any of them.
+ */
+@Serializable
+enum class Topic(val label: String, val words: List<String>, val terms: List<String>) {
+    CARS("سيارات وسباقات", listOf("سيار", "سباق", "درفت", "تفحيط"), listOf("car race", "street racing", "car chase", "race car")),
+    SUPERHERO("أبطال خارقين", listOf("خارق", "سوبرهيرو", "سوبر هيرو", "مارفل"), listOf("superhero", "marvel cinematic universe (mcu)")),
+    FOOTBALL("كرة قدم", listOf("كره قدم", "كوره", "فوتبول"), listOf("football (soccer)", "soccer")),
+    BOXING("ملاكمة وقتال", listOf("ملاكم", "مصارع", "كونغ فو", "كاراتيه", "فنون قتاليه"), listOf("boxing", "martial arts", "kung fu")),
+    HEIST("سرقة وسطو", listOf("سرق", "سطو", "عصابه سرقه"), listOf("heist", "bank robbery", "robbery")),
+    PRISON("سجون", listOf("سجن", "سجون", "هروب من السجن"), listOf("prison", "prison escape")),
+    SCHOOL("مدرسة وجامعة", listOf("مدرس", "ثانوي", "جامع", "طلاب"), listOf("high school", "school", "college")),
+    VAMPIRE("مصاصي دماء", listOf("مصاص", "مصاصين"), listOf("vampire")),
+    ZOMBIE("زومبي", listOf("زومبي"), listOf("zombie")),
+    TIME_TRAVEL("سفر عبر الزمن", listOf("الزمن", "زمني"), listOf("time travel")),
+    SURVIVAL("نجاة", listOf("نجاه", "بقاء", "جزيره"), listOf("survival")),
+    SPY("جاسوسية", listOf("جاسوس", "تجسس", "مخابرات"), listOf("spy", "espionage")),
+    POLICE("شرطة وتحقيق", listOf("شرطه", "شرطي", "محقق", "تحقيق"), listOf("police", "detective", "investigation")),
+    MEDICAL("أطباء ومستشفيات", listOf("طبيب", "دكتور", "مستشفي", "اطباء"), listOf("hospital", "doctor")),
+    LAWYER("محاكم ومحاماة", listOf("محامي", "محكمه", "محاكم", "قاضي"), listOf("lawyer", "courtroom")),
+    COOKING("طبخ", listOf("طبخ", "مطبخ", "طباخ", "شيف"), listOf("cooking", "chef")),
+    MUSIC("موسيقى وغناء", listOf("موسيق", "غناء", "مغني", "فرقه"), listOf("musician", "music", "singer")),
+    ANIMALS("حيوانات", listOf("حيوان", "كلب", "كلاب", "قطط"), listOf("animal", "dog")),
+    SHARK("أسماك القرش", listOf("قرش"), listOf("shark")),
+    ALIENS("كائنات فضائية", listOf("كائنات", "فضائيين", "غزو"), listOf("alien", "alien invasion")),
+    ROBOTS("روبوتات وذكاء اصطناعي", listOf("روبوت", "ذكاء اصطناعي"), listOf("robot", "artificial intelligence (a.i.)")),
+    DINOSAURS("ديناصورات", listOf("ديناصور"), listOf("dinosaur")),
+    PIRATES("قراصنة", listOf("قراصن", "قرصان"), listOf("pirate")),
+    SAMURAI("ساموراي ونينجا", listOf("ساموراي", "نينجا"), listOf("samurai", "ninja")),
+    TRUE_STORY("قصة حقيقية", listOf("قصه حقيقيه", "واقعيه", "احداث حقيقيه"), listOf("based on true story")),
+    REVENGE("انتقام", listOf("انتقام"), listOf("revenge")),
+    SERIAL_KILLER("قاتل متسلسل", listOf("متسلسل", "سفاح"), listOf("serial killer")),
+    HITMAN("قاتل مأجور", listOf("ماجور", "قناص", "اغتيال"), listOf("hitman", "assassin")),
+    DISASTER("كوارث", listOf("كارث", "زلزال", "تسونامي", "اعصار", "بركان"), listOf("natural disaster", "disaster")),
+    APOCALYPSE("نهاية العالم", listOf("نهايه العالم"), listOf("post-apocalyptic future", "apocalypse")),
+    KIDNAPPING("خطف", listOf("خطف", "اختطاف", "رهائن"), listOf("kidnapping", "hostage")),
+    DRUGS("مخدرات", listOf("مخدرات", "كارتل"), listOf("drug cartel", "drug dealer")),
+    WEDDING("زواج وأعراس", listOf("زواج", "عرس", "زفاف"), listOf("wedding", "marriage")),
+    DESERT("صحراء", listOf("صحرا", "بدو"), listOf("desert")),
+    SEA("بحر وغوص", listOf("البحر", "بحار", "محيط", "غواص", "غوص"), listOf("ocean", "sea")),
+    SPACE("فضاء", listOf("فضاء", "فضائيه", "رائد فضاء"), listOf("space", "astronaut")),
+    GAMES("ألعاب فيديو", listOf("قيمز", "العاب فيديو", "بلايستيشن"), listOf("video game", "based on video game")),
+    NOVEL("مقتبس من رواية", listOf("روايه", "رواية", "مقتبس"), listOf("based on novel or book")),
+}
+
 /** Where a title comes from, as TMDB's original language. */
 @Serializable
 enum class Origin(
@@ -78,15 +124,21 @@ data class DiscoverFilter(
     val yearFrom: Int? = null,
     val yearTo: Int? = null,
     val minRating: Int? = null,
+    /** Story topics (TMDB keywords), all of which must match. */
+    val topics: Set<Topic> = emptySet(),
+    /** Actors or directors by name ("محمد سعد", "Tom Cruise"), looked up on TMDB when searching. */
+    val people: List<String> = emptyList(),
 ) {
     val isEmpty: Boolean
-        get() = genres.isEmpty() && origin == null && services.isEmpty() &&
+        get() = genres.isEmpty() && origin == null && services.isEmpty() && topics.isEmpty() && people.isEmpty() &&
             yearFrom == null && yearTo == null && minRating == null && sort == SortMode.POPULAR
 
     /** Short labels describing the filter, e.g. ["مسلسلات", "دراما", "كوري"]. */
     fun summary(): List<String> = buildList {
         add(if (type == MediaType.MOVIE) "أفلام" else "مسلسلات")
         genres.forEach { add(it.label) }
+        topics.forEach { add(it.label) }
+        people.forEach { add("🎭 $it") }
         origin?.let { add(it.label) }
         services.mapNotNull { StreamingService.forKey(it)?.label }.forEach { add(it) }
         if (sort != SortMode.POPULAR) add(sort.label)
@@ -136,7 +188,11 @@ data class DiscoverFilter(
                 put("sort_by", "vote_average.desc")
                 put("vote_count.gte", if (type == MediaType.MOVIE) "300" else "100")
             }
-            SortMode.RECENT -> {
+            // "آخر فيلم لمحمد سعد": newest first across all years, released titles only.
+            SortMode.RECENT -> if (people.isNotEmpty()) {
+                put("sort_by", "$dateField.desc")
+                if (yearTo == null) put("$dateField.lte", today.toString())
+            } else {
                 put("sort_by", "popularity.desc")
                 if (yearFrom == null) put("$dateField.gte", today.minusYears(1).toString())
                 if (yearTo == null) put("$dateField.lte", today.toString())
@@ -172,6 +228,16 @@ object SmartSearch {
     private val ratingPattern = Regex("(?:فوق|اكثر من|اعلي من|تقييم)\\s*(\\d+)")
     private val prefixes = listOf("وال", "بال", "فال", "كال", "لل", "ال", "و", "ب", "ل", "ف")
     private val titleNoise = listOf("الفيلم", "المسلسل", "فيلم", "مسلسل", "انمي", "أنمي", "الانمي", "الأنمي")
+    /** Words that carry no search meaning of their own (requests, types, sorting…). */
+    private val fillerWords = listOf(
+        "ابي", "ابغي", "ابغا", "ابا", "اريد", "ودي", "عطني", "اعطني", "رشح", "رشحلي", "ابحث", "دور", "دورلي", "شي", "شيء",
+        "حلو", "حلوه", "زين", "قوي", "مره", "مرره", "فيه", "في", "عن", "من", "مع", "او", "بس", "لي", "الي", "اللي",
+        "حق", "تبع", "بطوله", "تمثيل", "ممثل", "الممثل", "مخرج", "المخرج", "اخراج", "كل", "نوع", "يكون", "عشان",
+        "فيلم", "فلم", "افلام", "مسلسل", "مسلسلات", "انمي", "سيريس", "حلقات", "movie", "series",
+        "افضل", "احسن", "اقوي", "اعلي", "جديد", "احدث", "اخر", "نازل", "حديث", "قديم", "كلاسيك", "تسعينات", "ثمانينات", "الفينات",
+        "نتفلكس", "نتفليكس", "netflix", "برايم", "امازون", "prime", "كرنشي", "كرانشي", "crunchyroll", "قائمتي", "ذوقي",
+        "قبل", "بعد", "فوق", "اكثر", "تقييم", "سنه", "سنة", "عام", "اللي", "هذا", "هذي", "شوف", "ابيه", "ابيها",
+    )
     private val tailNoise = Regex("\\s*(?:الي|اللي|اللى|الى)\\s+(?:عجبني|حبيته|شفته|شفتها).*$")
 
     fun normalize(text: String): String = text.lowercase()
@@ -221,6 +287,7 @@ object SmartSearch {
         if (listOf("قائمتي", "قايمتي", "ذوقي", "اضفته", "بناء علي").any(::hasWord)) return SmartQuery.FromWatchlist
 
         val genres = Genre.entries.filter { g -> g.words.any(::hasWord) }.toMutableSet()
+        val topics = Topic.entries.filter { t -> t.words.any(::hasWord) }.toSet()
         // "خيال علمي" is sci-fi, not fantasy.
         if (Genre.SCIFI in genres) genres.remove(Genre.FANTASY)
         val named = Origin.entries.filter { o -> o.words.any(::hasWord) }
@@ -272,7 +339,18 @@ object SmartSearch {
             type = if (listOf("فيلم", "افلام", "فلم").any(::hasWord)) MediaType.MOVIE else MediaType.TV
         }
 
-        val understood = genres.isNotEmpty() || origin != null || services.isNotEmpty() ||
+        // Words nobody claimed, e.g. "محمد سعد" in "آخر فيلم لمحمد سعد": maybe an actor or director.
+        val stems = (Genre.entries.flatMap { it.words } + Origin.entries.flatMap { it.words } + Topic.entries.flatMap { it.words })
+            .map(::normalize)
+        val fillers = fillerWords.map(::normalize).toSet()
+        fun bare(token: String) = listOf(token) + prefixes.filter { token.startsWith(it) }.map { token.removePrefix(it) }
+        fun claimed(token: String) = bare(token).any { t -> t in fillers } ||
+            stems.any { w -> if (' ' in w) token in w.split(' ') else bare(token).any { it.startsWith(w) } }
+        val leftover = tokens.filterNot { it.length < 2 || it.all(Char::isDigit) || claimed(it) }
+            .map { t -> if (t.length > 4 && t.startsWith("ل") && !t.startsWith("لل")) t.drop(1) else t }
+        val people = if (leftover.size in 2..4) listOf(leftover.joinToString(" ")) else emptyList()
+
+        val understood = genres.isNotEmpty() || origin != null || services.isNotEmpty() || topics.isNotEmpty() ||
             sort != SortMode.POPULAR || yearFrom != null || yearTo != null || minRating != null || explicitType != null
         if (!understood) return SmartQuery.Plain(text)
 
@@ -288,6 +366,8 @@ object SmartSearch {
             yearFrom = yearFrom,
             yearTo = yearTo,
             minRating = minRating,
+            topics = topics,
+            people = people,
         )
         // Only a type word and nothing else (e.g. "فيلم Inception"): treat it as a title search.
         if (filter.isEmpty && explicitType != null && tokens.size > 1) return SmartQuery.Plain(text)

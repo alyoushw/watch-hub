@@ -166,6 +166,7 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
             try {
                 val media = source().let { if (startAt != null) it.copy(positionMs = startAt) else it }
                 if (!forceRelay) wasPlaying = player.playWhenReady
+                releaseLocal()
                 val client = session.remoteMediaClient ?: error("مشغّل Google Cast غير جاهز.")
                 // Direct first: the TV downloads the original link itself and keeps playing without the phone.
                 val viaTv = !forceRelay && directable(media) && castLoad(client, media, media.url, 20_000)
@@ -176,9 +177,10 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
                 direct = viaTv
                 client.registerCallback(mediaCallback)
                 transferred(media, session.castDevice?.friendlyName ?: "Google Cast", if (viaTv) "Google Cast · بث مباشر" else "Google Cast · عبر الجوال")
+                if (!media.live && media.positionMs > 15_000) resumeAt(media.positionMs)
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { error = e.message?.takeIf { !it.contains("http", true) } ?: "تعذّر إرسال الفيديو إلى Google Cast."; disconnect(resume = false) }
-            finally { if (ticket == epoch) { busy = false; if (!connected || direct) stopRelay() } }
+            finally { if (ticket == epoch) { busy = false; if (!connected || direct) stopRelay(); if (!connected) restoreLocal() } }
         }
     }
 
@@ -229,6 +231,7 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
             try {
                 val media = source().let { if (startAt != null) it.copy(positionMs = startAt) else it }
                 if (!forceRelay) wasPlaying = player.playWhenReady
+                releaseLocal()
                 val start = if (media.live) 0 else media.positionMs
                 // A flattened HLS stream already starts at the watch position, so the renderer must not seek.
                 suspend fun send(url: String, flat: Boolean) = dlna.load(device, url, media.title, if (flat) "video/mp2t" else media.mime,
@@ -254,7 +257,7 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
             } catch (_: TimeoutCancellationException) { error = "انتهت مهلة تجهيز البث إلى جهاز DLNA." }
             catch (e: CancellationException) { throw e }
             catch (e: Exception) { error = e.message?.takeIf { !it.contains("http", true) } ?: "تعذّر إرسال الفيديو إلى جهاز DLNA."; stopRelay() }
-            finally { if (ticket == epoch) { busy = false; if (!connected) stopRelay() } }
+            finally { if (ticket == epoch) { busy = false; if (!connected) { stopRelay(); restoreLocal() } } }
         }
     }
 
@@ -321,6 +324,28 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
         }
     }
 
+    /**
+     * IPTV (Xtream) accounts often allow a single connection: the phone's own player lets go of the
+     * stream before the TV asks for it, and takes it again when casting ends or fails.
+     */
+    private var localStopped = false
+    private fun releaseLocal() { if (!localStopped) { localStopped = true; player.stop() } }
+    private fun restoreLocal() { if (localStopped) { localStopped = false; player.prepare() } }
+
+    /** Some receivers ignore the start time (servers without byte ranges): seek once playback runs. */
+    private fun resumeAt(positionMs: Long) {
+        scope.launch {
+            repeat(15) {
+                delay(1000)
+                val client = ownedSession?.remoteMediaClient ?: return@launch
+                if (client.mediaStatus?.playerState == MediaStatus.PLAYER_STATE_PLAYING) {
+                    if (client.approximateStreamPosition < positionMs - 15_000) client.seek(positionMs)
+                    return@launch
+                }
+            }
+        }
+    }
+
     private fun diag(state: String? = null) = relay?.stats()?.let {
         "\n(" + listOfNotNull(state, "طلبات التلفاز: ${it.first}", "رد المصدر: ${it.second}").joinToString(" · ") + ")"
     } ?: ""
@@ -367,6 +392,7 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
         remotePlaying = false
         busy = false
         stopRelay()
+        restoreLocal()
         if (wasConnected && !live && remotePosition > 0) player.seekTo(remotePosition)
         if (wasConnected && resume && wasPlaying && activity.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) player.play()
     }

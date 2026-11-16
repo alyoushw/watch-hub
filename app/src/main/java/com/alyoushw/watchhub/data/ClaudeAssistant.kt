@@ -41,6 +41,8 @@ private data class ClaudeIntent(
     @SerialName("min_rating") val minRating: Int,
     val title: String,
     val explanation: String,
+    val topics: List<String> = emptyList(),
+    val people: List<String> = emptyList(),
 )
 
 /**
@@ -150,6 +152,8 @@ class ClaudeAssistant(private val settings: SettingsStore) {
                     yearFrom = yearFrom.takeIf { it in 1900..2100 },
                     yearTo = yearTo.takeIf { it in 1900..2100 },
                     minRating = minRating.takeIf { it in 1..9 },
+                    topics = topics.mapNotNull { name -> Topic.entries.firstOrNull { it.name == name } }.toSet(),
+                    people = people.map { it.trim() }.filter { it.isNotEmpty() }.take(3),
                 ),
             )
         }
@@ -170,6 +174,11 @@ class ClaudeAssistant(private val settings: SettingsStore) {
         "يبكي" is DRAMA, "خفيف" is COMEDY or FAMILY. Anime means media_type "tv" (or "movie" if they say film),
         genre ANIMATION and origin JAPANESE. If they don't say movie or series, choose what fits best
         (Korean/Turkish drama -> tv). Use sort TOP_RATED for "best/أفضل", RECENT for "new/جديد".
+        Story subjects go in `topics` ("سيارات" is CARS, "سرقة بنك" is HEIST, "زومبي" is ZOMBIE), never as a title.
+        Actors and directors go in `people`, by the name TMDB knows them under, in English if you know it
+        (e.g. "محمد سعد" -> "Mohamed Saad", "عادل امام" -> "Adel Emam"). "آخر فيلم لـ X" is intent "filter",
+        sort RECENT, with X in people. Add the origin and genres you know fit them (Mohamed Saad: EGYPTIAN, COMEDY)
+        only if the user implied them; otherwise leave them out so all of that person's work shows.
         Use 0 for year_from, year_to and min_rating when not given, "NONE" for origin, [] for empty lists,
         and "" for title when there is none.
 
@@ -191,6 +200,8 @@ class ClaudeAssistant(private val settings: SettingsStore) {
             "min_rating" to mapOf("type" to "integer"),
             "title" to mapOf("type" to "string"),
             "explanation" to mapOf("type" to "string"),
+            "topics" to mapOf("type" to "array", "items" to enumOf(Topic.entries.map { it.name })),
+            "people" to mapOf("type" to "array", "items" to mapOf("type" to "string")),
         )
         return JsonOutputFormat.Schema.builder()
             .putAdditionalProperty("type", JsonValue.from("object"))

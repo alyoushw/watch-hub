@@ -90,6 +90,7 @@ import com.alyoushw.watchhub.data.SmartQuery
 import com.alyoushw.watchhub.data.SmartSearch
 import com.alyoushw.watchhub.data.SortMode
 import com.alyoushw.watchhub.data.StreamingService
+import com.alyoushw.watchhub.data.Topic
 import com.alyoushw.watchhub.data.WatchItem
 import com.alyoushw.watchhub.data.countryFlag
 import com.alyoushw.watchhub.data.countryLabel
@@ -113,6 +114,8 @@ sealed interface SearchState {
         val filter: DiscoverFilter? = null,
         val canLoadMore: Boolean = false,
         val titleQuery: String? = null,
+        /** "ضيّق البحث": ready narrower filters picked from what these results have in common. */
+        val narrow: List<Pair<String, DiscoverFilter>> = emptyList(),
     ) : SearchState
 
     data class Failed(val message: String) : SearchState
@@ -210,7 +213,7 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
         val out = mutableListOf<SearchResult>()
         var read = 0
         while (out.size < wanted && page < totalPages && read < 6) {
-            val response = container.api.discoverPage(filter.type, filter.toParams(), page + 1, streamableOnly = false)
+            val response = container.api.discoverPage(filter.type, filter.toParams() + extraParams, page + 1, streamableOnly = false)
             page = response.page.coerceAtLeast(page + 1)
             totalPages = response.totalPages.coerceIn(1, 500)
             out += response.results.filter(filter::matches)
@@ -255,11 +258,73 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    private suspend fun filterResults(filter: DiscoverFilter, heading: String): SearchState {
+    /** TMDB ids for the filter's topics and people, looked up once per search. */
+    private var extraParams: Map<String, String> = emptyMap()
+
+    private suspend fun filterResults(requested: DiscoverFilter, heading: String): SearchState {
         page = 0
         totalPages = 1
+        var filter = requested
+        val extra = mutableMapOf<String, String>()
+        if (filter.topics.isNotEmpty()) {
+            val groups = filter.topics.map { t -> t.terms.flatMap { runCatching { container.api.keywordIds(it) }.getOrDefault(emptyList()) }.distinct() }
+                .filter { it.isNotEmpty() }
+            if (groups.isNotEmpty()) extra["with_keywords"] = groups.joinToString(",") { it.joinToString("|") }
+        }
+        if (filter.people.isNotEmpty()) {
+            val found = filter.people.mapNotNull { name -> runCatching { container.api.findPerson(name) }.getOrNull() }
+            if (found.isEmpty()) {
+                // Not a person after all ("فيلم the dark knight"): search those words as a title.
+                filter = filter.copy(people = emptyList())
+                if (filter.isEmpty) {
+                    extraParams = emptyMap()
+                    val response = container.api.searchPage(requested.people.joinToString(" "))
+                    page = response.page.coerceAtLeast(1)
+                    totalPages = response.totalPages.coerceIn(1, 500)
+                    return SearchState.Results(response.results, canLoadMore = page < totalPages, titleQuery = requested.people.joinToString(" "))
+                }
+                notice = "ما لقينا ممثل أو مخرج باسم «${requested.people.joinToString("، ")}»."
+            } else {
+                extra["with_people"] = found.joinToString(",") { it.id.toString() }
+            }
+        }
+        extraParams = extra
         val items = strictPages(filter, wanted = 15).distinctBy { "${it.mediaType}:${it.id}" }
-        return SearchState.Results(items, heading, filter.summary(), filter, canLoadMore = page < totalPages)
+        return SearchState.Results(items, heading, filter.summary(), filter, canLoadMore = page < totalPages, narrow = narrowing(filter, items))
+    }
+
+    /**
+     * Smart narrowing: what most of these results share that the filter does not ask for yet
+     * (a genre, a country, recent years, a rating bar), offered as one-tap refinements.
+     */
+    private fun narrowing(filter: DiscoverFilter, items: List<SearchResult>): List<Pair<String, DiscoverFilter>> {
+        if (items.size < 6) return emptyList()
+        fun narrows(count: Int) = count >= 3 && count <= items.size * 0.8
+        val out = mutableListOf<Pair<String, DiscoverFilter>>()
+        val genreCounts = items.flatMap { it.genreIds.distinct() }.groupingBy { it }.eachCount()
+        Genre.entries.filter { it !in filter.genres }
+            .map { g -> g to (genreCounts[g.idFor(filter.type)] ?: 0) }
+            .filter { narrows(it.second) }.sortedByDescending { it.second }.take(3)
+            .forEach { (g, _) -> out += g.label to filter.copy(genres = filter.genres + g) }
+        if (filter.origin == null) {
+            val top = items.groupingBy { (it.originalLanguage ?: "") to (it.originCountry.firstOrNull() ?: "") }.eachCount()
+                .maxByOrNull { it.value }
+            if (top != null && narrows(top.value)) {
+                val (lang, country) = top.key
+                val origin = Origin.entries.firstOrNull { o -> o.language == lang && o.countries?.split("|")?.contains(country) == true }
+                    ?: Origin.entries.firstOrNull { o -> o.language == lang && o.countries == null }
+                origin?.let { out += it.label to filter.copy(origin = it) }
+            }
+        }
+        if (filter.yearFrom == null && filter.yearTo == null) {
+            val from = LocalDate.now().year - 3
+            val recent = items.count { r -> (r.releaseDate ?: r.firstAirDate)?.take(4)?.toIntOrNull()?.let { it >= from } == true }
+            if (narrows(recent)) out += "من $from وأحدث" to filter.copy(yearFrom = from)
+        }
+        if (filter.minRating == null && narrows(items.count { (it.voteAverage ?: 0.0) >= 7.0 })) {
+            out += "تقييم 7+" to filter.copy(minRating = 7)
+        }
+        return out
     }
 
     private suspend fun similar(q: SmartQuery.Similar): SearchState {
@@ -354,6 +419,8 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
 }
 
 private val Examples = listOf(
+    "فيلم سيارات أكشن",
+    "آخر فيلم لمحمد سعد",
     "مسلسل كوري درامي",
     "فيلم رعب إندونيسي",
     "أفضل أفلام أكشن على نتفلكس",
@@ -474,6 +541,7 @@ fun SearchScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, o
                                     s,
                                     onEdit = { editing = s.filter },
                                     onSave = { savingFilter = s.filter },
+                                    onNarrow = { vm.applyFilter(it, s.heading ?: "النتائج حسب الفلتر:") },
                                 )
                             }
                         }
@@ -584,7 +652,7 @@ private fun IdleHints(onAsk: (String) -> Unit, onVoice: () -> Unit, onCatalogue:
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Understood(s: SearchState.Results, onEdit: () -> Unit, onSave: () -> Unit) {
+private fun Understood(s: SearchState.Results, onEdit: () -> Unit, onSave: () -> Unit, onNarrow: (DiscoverFilter) -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
@@ -594,6 +662,14 @@ private fun Understood(s: SearchState.Results, onEdit: () -> Unit, onSave: () ->
             if (s.chips.isNotEmpty()) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     s.chips.forEach { AssistChip(modifier = Modifier.focusFrame(), onClick = onEdit, label = { Text(it) }) }
+                }
+            }
+            if (s.narrow.isNotEmpty()) {
+                Text("ضيّق البحث:", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    s.narrow.forEach { (label, narrower) ->
+                        SuggestionChip(modifier = Modifier.focusFrame(), onClick = { onNarrow(narrower) }, label = { Text("+ $label") })
+                    }
                 }
             }
             if (s.filter != null) {
@@ -648,6 +724,25 @@ private fun FilterSheet(
                         onClick = { f = f.copy(genres = if (g in f.genres) f.genres - g else f.genres + g) },
                         label = { Text(g.label) },
                     )
+                }
+            }
+
+            FilterGroup("الموضوع (سيارات، سرقة، زومبي…)") {
+                Topic.entries.forEach { t ->
+                    FilterChip(
+                        modifier = Modifier.focusFrame(),
+                        selected = t in f.topics,
+                        onClick = { f = f.copy(topics = if (t in f.topics) f.topics - t else f.topics + t) },
+                        label = { Text(t.label) },
+                    )
+                }
+            }
+
+            if (f.people.isNotEmpty()) {
+                FilterGroup("الممثل / المخرج (اضغط للإزالة)") {
+                    f.people.forEach { name ->
+                        FilterChip(modifier = Modifier.focusFrame(), selected = true, onClick = { f = f.copy(people = f.people - name) }, label = { Text("🎭 $name ✕") })
+                    }
                 }
             }
 

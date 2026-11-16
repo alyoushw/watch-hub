@@ -49,6 +49,12 @@ sealed interface RowSource {
 }
 
 @Serializable
+data class NamedId(val id: Int, val name: String = "")
+
+@Serializable
+private data class NamedIdList(val results: List<NamedId> = emptyList())
+
+@Serializable
 data class SearchResult(
     val id: Int,
     @SerialName("media_type") val mediaType: String? = null,
@@ -271,6 +277,23 @@ class TmdbApi(private val settings: SettingsStore) {
     }
 
     suspend fun search(query: String): List<SearchResult> = searchPage(query).results
+
+    private val keywordCache = java.util.concurrent.ConcurrentHashMap<String, List<Int>>()
+    private val personCache = java.util.concurrent.ConcurrentHashMap<String, NamedId>()
+
+    /** TMDB keyword ids for a keyword name ("car race"): exact names first, else the closest one. */
+    suspend fun keywordIds(term: String): List<Int> = keywordCache[term] ?: run {
+        val found = get("search/keyword", mapOf("query" to term), NamedIdList.serializer()).results
+        val exact = found.filter { it.name.equals(term, ignoreCase = true) }
+        (exact.ifEmpty { found.take(1) }).map { it.id }.also { keywordCache[term] = it }
+    }
+
+    /** The best-known actor or director for a name (Arabic or English), or null. */
+    suspend fun findPerson(name: String): NamedId? = personCache[name] ?: get(
+        "search/person",
+        mapOf("query" to name, "language" to "ar", "include_adult" to "false"),
+        NamedIdList.serializer(),
+    ).results.firstOrNull()?.also { personCache[name] = it }
 
     suspend fun searchPage(query: String, page: Int = 1): SearchResponse {
         val response = get(
