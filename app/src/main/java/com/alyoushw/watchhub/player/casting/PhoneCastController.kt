@@ -33,6 +33,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal class PhoneCastController(private val activity: ComponentActivity, private val player: ExoPlayer,
@@ -48,6 +49,8 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
     var remotePosition by mutableStateOf(0L); private set
     var duration by mutableStateOf(0L); private set
     var live by mutableStateOf(false); private set
+    /** True when the TV fetches the video itself, so the phone may be locked, turned off or leave. */
+    var direct by mutableStateOf(false); private set
     val connected get() = deviceName != null
     val relaying get() = connected || relay != null && busy
     private val scope = activity.lifecycleScope
@@ -72,6 +75,13 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
             remotePosition = client.approximateStreamPosition.coerceAtLeast(0)
             remotePlaying = client.mediaStatus?.playerState == MediaStatus.PLAYER_STATE_PLAYING
             if (client.mediaStatus?.idleReason == MediaStatus.IDLE_REASON_ERROR) {
+                val session = ownedSession
+                if (direct && session != null) {
+                    // The source refused the TV mid-way (headers/CORS): continue through the phone.
+                    client.unregisterCallback(this)
+                    loadGoogle(session, forceRelay = true, startAt = remotePosition)
+                    return
+                }
                 error = "رفض جهاز Google Cast تشغيل الفيديو. قد لا يدعم صيغته أو ترميزه."
                 dialog = true
                 disconnect()
@@ -144,7 +154,7 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
         }
     }
 
-    private fun loadGoogle(session: CastSession) {
+    private fun loadGoogle(session: CastSession, forceRelay: Boolean = false, startAt: Long? = null) {
         pendingGoogle = false
         ownedSession = session
         job?.cancel()
@@ -153,25 +163,43 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
             busy = true
             dialog = true
             try {
-                val media = source()
-                wasPlaying = player.playWhenReady
-                val url = prepare(media)
-                val metadata = MediaMetadata(MediaMetadata.MEDIA_TYPE_MOVIE).apply { putString(MediaMetadata.KEY_TITLE, media.title) }
-                val info = MediaInfo.Builder(url).setContentType(media.mime).setMetadata(metadata)
-                    .setStreamType(if (media.live) MediaInfo.STREAM_TYPE_LIVE else MediaInfo.STREAM_TYPE_BUFFERED)
-                    .apply { if (!media.live && media.durationMs > 0) setStreamDuration(media.durationMs) }.build()
+                val media = source().let { if (startAt != null) it.copy(positionMs = startAt) else it }
+                if (!forceRelay) wasPlaying = player.playWhenReady
                 val client = session.remoteMediaClient ?: error("مشغّل Google Cast غير جاهز.")
-                val accepted = CompletableDeferred<Boolean>()
-                client.load(MediaLoadRequestData.Builder().setMediaInfo(info).setAutoplay(true)
-                    .setCurrentTime(if (media.live) 0 else media.positionMs).build()).setResultCallback { accepted.complete(it.status.isSuccess) }
-                if (!withTimeout(30_000) { accepted.await() }) error("رفض Google Cast تشغيل هذا الفيديو؛ تحقق من دعم الجهاز لصيغته.")
+                // Direct first: the TV downloads the original link itself and keeps playing without the phone.
+                val viaTv = !forceRelay && directable(media) && castLoad(client, media, media.url, 20_000)
+                if (!viaTv) {
+                    val url = prepare(media)
+                    if (!castLoad(client, media, url, 30_000)) error("رفض Google Cast تشغيل هذا الفيديو؛ تحقق من دعم الجهاز لصيغته.")
+                } else stopRelay()
+                direct = viaTv
                 client.registerCallback(mediaCallback)
-                transferred(media, session.castDevice?.friendlyName ?: "Google Cast", "Google Cast")
-            } catch (_: TimeoutCancellationException) { error = "انتهت مهلة بدء البث على Google Cast."; disconnect(resume = false) }
-            catch (e: CancellationException) { throw e }
+                transferred(media, session.castDevice?.friendlyName ?: "Google Cast", if (viaTv) "Google Cast · بث مباشر" else "Google Cast · عبر الجوال")
+            } catch (e: CancellationException) { throw e }
             catch (e: Exception) { error = e.message?.takeIf { !it.contains("http", true) } ?: "تعذّر إرسال الفيديو إلى Google Cast."; disconnect(resume = false) }
-            finally { if (ticket == epoch) { busy = false; if (!connected) stopRelay() } }
+            finally { if (ticket == epoch) { busy = false; if (!connected || direct) stopRelay() } }
         }
+    }
+
+    /** Links that need no provider headers and are reachable from the TV itself. */
+    private fun directable(media: CastSource): Boolean {
+        val uri = android.net.Uri.parse(media.url)
+        if (uri.scheme != "http" && uri.scheme != "https") return false
+        val host = uri.host?.lowercase() ?: return false
+        if (host == "localhost" || host.startsWith("127.") || host.startsWith("10.") || host.startsWith("192.168.") ||
+            Regex("""^172\.(1[6-9]|2\d|3[01])\.""").containsMatchIn(host)) return false
+        return media.headers.keys.all { it.equals("User-Agent", true) }
+    }
+
+    private suspend fun castLoad(client: RemoteMediaClient, media: CastSource, url: String, timeoutMs: Long): Boolean {
+        val metadata = MediaMetadata(MediaMetadata.MEDIA_TYPE_MOVIE).apply { putString(MediaMetadata.KEY_TITLE, media.title) }
+        val info = MediaInfo.Builder(url).setContentType(media.mime).setMetadata(metadata)
+            .setStreamType(if (media.live) MediaInfo.STREAM_TYPE_LIVE else MediaInfo.STREAM_TYPE_BUFFERED)
+            .apply { if (!media.live && media.durationMs > 0) setStreamDuration(media.durationMs) }.build()
+        val accepted = CompletableDeferred<Boolean>()
+        client.load(MediaLoadRequestData.Builder().setMediaInfo(info).setAutoplay(true)
+            .setCurrentTime(if (media.live) 0 else media.positionMs).build()).setResultCallback { accepted.complete(it.status.isSuccess) }
+        return withTimeoutOrNull(timeoutMs) { accepted.await() } ?: false
     }
 
     fun discoverDlna() {
@@ -210,7 +238,7 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
                 offset = if (flat) start else 0
                 transferred(media, device.name, "DLNA")
                 if (flat) duration = 0 // No remote seeking inside a flattened stream.
-                if (!resumed) error = "بدأ البث من البداية؛ الجهاز لم يقبل الانتقال إلى موضع المشاهدة السابق."
+                if (!resumed) error = "بدأ البث من البداية؛ الجهاز لم يقبل الانتقال إلى موضع المشاهدة السابق." + diag()
             } catch (_: TimeoutCancellationException) { error = "انتهت مهلة تجهيز البث إلى جهاز DLNA." }
             catch (e: CancellationException) { throw e }
             catch (e: Exception) { error = e.message?.takeIf { !it.contains("http", true) } ?: "تعذّر إرسال الفيديو إلى جهاز DLNA."; stopRelay() }
@@ -263,8 +291,7 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
                         if (status.playing) confirmed = true
                         status.positionMs?.let { remotePosition = it + offset }
                         if (!confirmed && android.os.SystemClock.elapsedRealtime() - acceptedAt > 15_000 && status.state in setOf("STOPPED", "NO_MEDIA_PRESENT")) {
-                            error = "جهاز DLNA لم يبدأ تشغيل الفيديو؛ قد لا يدعم صيغته أو تعذّر وصوله إلى الجوال." +
-                                (relay?.stats()?.let { "\n(${status.state} · طلبات التلفاز: ${it.first} · رد المصدر: ${it.second})" } ?: "")
+                            error = "جهاز DLNA لم يبدأ تشغيل الفيديو؛ قد لا يدعم صيغته أو تعذّر وصوله إلى الجوال." + diag(status.state)
                             dialog = true
                             disconnect()
                         }
@@ -275,6 +302,10 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
             }
         }
     }
+
+    private fun diag(state: String? = null) = relay?.stats()?.let {
+        "\n(" + listOfNotNull(state, "طلبات التلفاز: ${it.first}", "رد المصدر: ${it.second}").joinToString(" · ") + ")"
+    } ?: ""
 
     fun togglePlay() {
         error = null
@@ -313,6 +344,7 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
         if (target != null) scope.launch(NonCancellable) { runCatching { dlna.stop(target) } }
         val wasConnected = connected
         deviceName = null
+        direct = false
         if (wasConnected) activity.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         remotePlaying = false
         busy = false
@@ -331,6 +363,15 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
         closed = true
         chooser?.dismiss(); chooser = null
         cast?.sessionManager?.removeSessionManagerListener(listener, CastSession::class.java)
+        if (direct && connected) {
+            // Leave the TV playing: it no longer needs the phone.
+            ownedSession?.remoteMediaClient?.unregisterCallback(mediaCallback)
+            ownedSession = null
+            epoch++; job?.cancel(); polling?.cancel()
+            deviceName = null
+            stopRelay()
+            return
+        }
         disconnect(resume = false)
     }
     fun dismissDialog() {

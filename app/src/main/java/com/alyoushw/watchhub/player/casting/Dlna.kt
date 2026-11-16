@@ -134,6 +134,16 @@ internal class Dlna(private val context: Context) {
         action(device, "SetAVTransportURI", mapOf("CurrentURI" to url, "CurrentURIMetaData" to metadata))
         action(device, "Play", mapOf("Speed" to "1"))
         if (positionMs <= 0) return true
+        // Most TVs reject Seek while still loading; wait until playback has really started.
+        repeat(15) {
+            kotlinx.coroutines.delay(1000)
+            val state = try { status(device).state } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { "" }
+            if (state == "PLAYING" || state == "PAUSED_PLAYBACK") {
+                return try { seek(device, positionMs); true }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (_: Exception) { false }
+            }
+        }
         return try { seek(device, positionMs); true }
         catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (_: Exception) { false }

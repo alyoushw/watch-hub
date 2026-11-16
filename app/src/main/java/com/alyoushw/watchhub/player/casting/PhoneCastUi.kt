@@ -27,7 +27,8 @@ internal fun PhoneCastButton(controller: PhoneCastController) {
 
 @Composable
 internal fun PhoneCastPanel(controller: PhoneCastController) {
-    BackHandler(enabled = controller.connected && !controller.dialog) { controller.disconnect() }
+    // A direct cast survives leaving the player, so Back simply exits; the button still stops it.
+    BackHandler(enabled = controller.connected && !controller.dialog && !controller.direct) { controller.disconnect() }
     // Remote transport controls replace local playback controls while the TV is playing.
     if (controller.connected) Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
         PhoneCastButtonInCorner(controller)
@@ -35,6 +36,8 @@ internal fun PhoneCastPanel(controller: PhoneCastController) {
             Icon(PlayerIcons.Cast, null, Modifier.size(56.dp), tint = Gold)
             Text("${controller.protocol} · ${controller.deviceName}", color = Color.White, textAlign = TextAlign.Center)
             Text(if (controller.remotePlaying) "يتم التشغيل على جهاز البث" else "التحكم بالتشغيل على جهاز البث", color = Color.LightGray)
+            Text(if (controller.direct) "التلفاز يشغّل الرابط بنفسه؛ تقدر تقفل الجوال أو تطلع من التطبيق."
+                else "الفيديو يمر عبر الجوال؛ خلّه شغالاً وعلى نفس شبكة Wi-Fi.", color = Color.LightGray, textAlign = TextAlign.Center)
             if (!controller.live) Text(castTime(controller.remotePosition), color = Color.LightGray)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (!controller.live && controller.duration > 0) OutlinedButton(onClick = { controller.seekBy(-10_000) }) { Text("−10 ث") }

@@ -247,6 +247,7 @@ class PlayerActivity : ComponentActivity() {
                 seen = n
                 if (!started) return@collect
                 delay(1_000)
+                if (phoneCast?.direct == true) return@collect // The TV streams on its own.
                 phoneCast?.disconnect()
                 retries = 0
                 setMedia(if (entry?.isLive == true) 0L else player.currentPosition)
