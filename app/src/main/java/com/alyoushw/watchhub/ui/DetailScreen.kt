@@ -20,8 +20,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -56,6 +58,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -413,6 +416,13 @@ fun DetailScreen(
     val container = appContainer()
     val vm: DetailViewModel = viewModel { DetailViewModel(container, type, id) }
     val title = (vm.state as? DetailState.Loaded)?.info?.title.orEmpty()
+    val listState = rememberLazyListState()
+    val tv = isTv()
+    var backFocused by remember { mutableStateOf(false) }
+    LaunchedEffect(backFocused, tv) {
+        // The fixed back button sits outside the list; TV focus alone cannot reveal its header.
+        if (tv && backFocused) listState.scrollToItem(0)
+    }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
@@ -420,7 +430,7 @@ fun DetailScreen(
             TopAppBar(
                 title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
-                    IconButton(modifier = Modifier.focusFrame(), onClick = onBack) {
+                    IconButton(modifier = Modifier.onFocusChanged { backFocused = it.hasFocus }.focusFrame(), onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع")
                     }
                 },
@@ -431,7 +441,7 @@ fun DetailScreen(
             when (val s = vm.state) {
                 DetailState.Loading -> CenteredLoading()
                 is DetailState.Failed -> MessageBox(s.message, actionLabel = "حاول مرة ثانية", onAction = vm::load)
-                is DetailState.Loaded -> DetailContent(s.info, vm.links, vm.similar, onAdd = { vm.addToWatchlist(s.info) }, onOpen = onOpen, onOpenPerson = onOpenPerson, onOpenXtreamSeries = onOpenXtreamSeries, onOpenAnime = onOpenAnime, onOpenSources = onOpenSources)
+                is DetailState.Loaded -> DetailContent(s.info, vm.links, vm.similar, onAdd = { vm.addToWatchlist(s.info) }, onOpen = onOpen, onOpenPerson = onOpenPerson, onOpenXtreamSeries = onOpenXtreamSeries, onOpenAnime = onOpenAnime, onOpenSources = onOpenSources, listState = listState)
             }
         }
     }
@@ -449,6 +459,7 @@ private fun DetailContent(
     onOpenXtreamSeries: (String) -> Unit,
     onOpenAnime: (AnimeLookup) -> Unit,
     onOpenSources: (SourceLookup) -> Unit,
+    listState: LazyListState,
 ) {
     val container = appContainer()
     val context = LocalContext.current
@@ -460,6 +471,7 @@ private fun DetailContent(
     val isAnime = 16 in info.genreIds && (info.originalLanguage == "ja" || "JP" in info.countries)
 
     LazyColumn(
+        state = listState,
         contentPadding = PaddingValues(bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
