@@ -50,12 +50,17 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import com.alyoushw.watchhub.data.StreamProbe
 import com.alyoushw.watchhub.data.WatchEntry
 import com.alyoushw.watchhub.player.PlayerActivity
 import com.alyoushw.watchhub.player.QueueItem
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 
 /** The public sports website, including its own watch flow; no Majed APK is required. */
 @SuppressLint("SetJavaScriptEnabled")
@@ -66,7 +71,8 @@ fun KoraScreen(homeUrl: String = KORA_HOME, pageTitle: String = "كوره", onBa
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val scope = rememberCoroutineScope()
     val probe = remember { StreamProbe() }
-    val attemptedStreams = remember { mutableSetOf<String>() }
+    val attemptedStreams = remember { mutableSetOf<KoraNativeStream>() }
+    val pendingStreams = remember { linkedMapOf<KoraNativeStream, WebView>() }
     val windows = remember { mutableListOf<WebView>() }
     var web by remember { mutableStateOf<WebView?>(null) }
     var loading by remember { mutableStateOf(true) }
@@ -77,7 +83,8 @@ fun KoraScreen(homeUrl: String = KORA_HOME, pageTitle: String = "كوره", onBa
     var nativeOpening by remember { mutableStateOf(false) }
     var nativeStarted by remember { mutableStateOf(false) }
     var nativePaused by remember { mutableStateOf(false) }
-    var nativeUnavailable by remember { mutableStateOf(false) }
+    var nativeJob by remember { mutableStateOf<Job?>(null) }
+    val nativeEnabled = Uri.parse(homeUrl).host == Uri.parse(KORA_HOME).host
 
     fun closeFullscreen() {
         val callback = fullscreenCallback
@@ -144,31 +151,39 @@ fun KoraScreen(homeUrl: String = KORA_HOME, pageTitle: String = "كوره", onBa
         }
     }
     fun openNative(view: WebView, candidate: KoraNativeStream) {
-        if (view !in windows || view != web || nativeOpening || nativeUnavailable || attemptedStreams.size >= 8 ||
-            candidate.url in attemptedStreams || !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
-        attemptedStreams += candidate.url
+        if (!nativeEnabled || view !in windows || view != web || nativeStarted || attemptedStreams.size >= 8 ||
+            candidate in attemptedStreams || !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
+        attemptedStreams += candidate
+        pendingStreams[candidate] = view
+        if (nativeOpening) return
         nativeOpening = true
-        val headers = candidate.headers.toMutableMap()
-        headers["User-Agent"] = view.settings.userAgentString
-        if (headers.keys.none { it.equals("Cookie", true) }) {
-            CookieManager.getInstance().getCookie(candidate.url)?.takeIf { it.isNotBlank() }?.let { headers["Cookie"] = it }
-        }
-        val stream = candidate.copy(headers = headers.toMap())
-        view.evaluateJavascript("""(function(){var h=document.getElementById('mkHomeName'),a=document.getElementById('mkAwayName');return h&&a?h.textContent+' × '+a.textContent:'كوره · بث مباشر';})()""") { encoded ->
-            val title = runCatching { org.json.JSONTokener(encoded).nextValue() as? String }.getOrNull()
-                ?.take(160)?.takeIf { it.isNotBlank() } ?: "كوره · بث مباشر"
-            scope.launch {
-                try {
+        nativeJob = scope.launch {
+            try {
+                while (pendingStreams.isNotEmpty()) {
+                    val next = pendingStreams.entries.first()
+                    val queued = next.key
+                    val sourceView = next.value
+                    pendingStreams.remove(next.key)
+                    if (sourceView != web || sourceView !in windows) continue
+                    val headers = queued.headers.toMutableMap()
+                    if (headers.keys.none { it.equals("User-Agent", true) }) headers["User-Agent"] = sourceView.settings.userAgentString
+                    if (headers.keys.none { it.equals("Cookie", true) }) {
+                        CookieManager.getInstance().getCookie(queued.url)?.takeIf { it.isNotBlank() }?.let { headers["Cookie"] = it }
+                    }
+                    val stream = queued.copy(headers = headers.toMap())
                     if (!probe.compatible(stream.variant())) {
-                        nativeUnavailable = true
-                        error = "هذا المصدر غير متوافق مع المشغّل الداخلي؛ يمكنك مشاهدته بمشغّل الموقع."
-                        nativeOpening = false
-                        return@launch
+                        error = "تعذر التحقق من رابط البث الحالي؛ جارٍ انتظار رابط آخر من مشغّل الموقع."
+                        continue
                     }
-                    if (view != web || view !in windows || !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
-                        nativeOpening = false
-                        return@launch
+                    if (sourceView != web || sourceView !in windows || !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) continue
+                    val title = suspendCancellableCoroutine<String> { continuation ->
+                        sourceView.evaluateJavascript("""(function(){var h=document.getElementById('mkHomeName'),a=document.getElementById('mkAwayName');return h&&a?h.textContent+' × '+a.textContent:'كوره · بث مباشر';})()""") { encoded ->
+                            val value = runCatching { org.json.JSONTokener(encoded).nextValue() as? String }.getOrNull()
+                                ?.take(160)?.takeIf { it.isNotBlank() } ?: "كوره · بث مباشر"
+                            if (continuation.isActive) continuation.resume(value)
+                        }
                     }
+                    if (sourceView != web || !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) continue
                     val item = QueueItem(listOf(stream.url), WatchEntry(
                         key = "kora-session:${java.util.UUID.randomUUID()}", kind = WatchEntry.LIVE,
                         itemId = "web-live", title = title, accountId = "kora-web"),
@@ -176,19 +191,37 @@ fun KoraScreen(homeUrl: String = KORA_HOME, pageTitle: String = "كوره", onBa
                     // Remove the web player before starting Media3 so two audio streams cannot overlap.
                     closeFullscreen()
                     while (windows.size > 1) closeWindow(windows.last())
-                    web?.loadUrl(homeUrl)
                     nativePaused = false
                     nativeStarted = true
+                    pendingStreams.clear()
+                    error = null
+                    web?.loadUrl(homeUrl)
                     PlayerActivity.start(context, listOf(item), 0)
-                } catch (e: CancellationException) { throw e }
-                catch (_: Exception) {
-                    nativeUnavailable = true
-                    nativeStarted = false
-                    nativeOpening = false
-                    error = "تعذر فتح المشغّل الداخلي؛ يمكنك إعادة فتح البث من الموقع."
+                    return@launch
                 }
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) {
+                nativeStarted = false
+                error = "تعذر فتح المشغّل الداخلي؛ أعد فتح البث للمحاولة مجدداً."
+            } finally {
+                if (nativeJob === coroutineContext[Job]) nativeOpening = false
             }
         }
+    }
+    fun observePlayer(view: WebView) {
+        if (!nativeEnabled || !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) ||
+            !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
+        val origins = setOf("https://${KoraNativeStream.PLAYER_HOST}")
+        WebViewCompat.addWebMessageListener(view, "watchHubKora", origins) { sourceView, message, origin, _, _ ->
+            if (origin.scheme != "https" || origin.host != KoraNativeStream.PLAYER_HOST) return@addWebMessageListener
+            val stream = runCatching {
+                val text = message.data?.takeIf { it.length <= 8192 } ?: return@addWebMessageListener
+                val data = org.json.JSONObject(text)
+                KoraNativeStream.observed(data.getString("url"), data.getString("mime"), origin.toString())
+            }.getOrNull() ?: return@addWebMessageListener
+            openNative(sourceView, stream)
+        }
+        WebViewCompat.addDocumentStartJavaScript(view, KORA_MEDIA_OBSERVER, origins)
     }
 
     BackHandler(enabled = canGoBack && fullscreen == null) { back() }
@@ -212,6 +245,8 @@ fun KoraScreen(homeUrl: String = KORA_HOME, pageTitle: String = "كوره", onBa
     }
     DisposableEffect(Unit) {
         onDispose {
+            nativeJob?.cancel()
+            pendingStreams.clear()
             closeFullscreen()
             val remaining = windows.toList()
             windows.clear()
@@ -243,12 +278,14 @@ fun KoraScreen(homeUrl: String = KORA_HOME, pageTitle: String = "كوره", onBa
             AndroidView(modifier = Modifier.weight(1f).fillMaxWidth(), factory = { host ->
                 val site = WebView(host).apply {
                     configure(this)
+                    observePlayer(this)
                     webChromeClient = object : WebChromeClient() {
                         override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message): Boolean {
                             val hostView = view.parent as? ViewGroup ?: return false
                             if (!isUserGesture || windows.size >= 4) return false
                             val popup = WebView(view.context).apply {
                                 configure(this)
+                                observePlayer(this)
                                 webViewClient = view.webViewClient
                                 webChromeClient = view.webChromeClient
                             }
@@ -272,7 +309,13 @@ fun KoraScreen(homeUrl: String = KORA_HOME, pageTitle: String = "كوره", onBa
                     }
                     webViewClient = object : WebViewClient() {
                         override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
-                            if (view == web) { loading = true; error = null; attemptedStreams.clear(); nativeUnavailable = false }
+                            if (view == web) {
+                                loading = true
+                                error = null
+                                if (!nativeStarted) { nativeJob?.cancel(); nativeJob = null; nativeOpening = false }
+                                attemptedStreams.clear()
+                                pendingStreams.clear()
+                            }
                         }
                         override fun onPageFinished(view: WebView, url: String?) {
                             if (view == web) {
@@ -323,3 +366,26 @@ fun KoraScreen(homeUrl: String = KORA_HOME, pageTitle: String = "كوره", onBa
 }
 
 private const val KORA_HOME = "https://majed-koora.live/"
+
+// Observe successful media responses after the website completes its own access flow.
+// Runs only in the HTTPS player origin, including its iframe; other sites/ad frames have no bridge.
+private val KORA_MEDIA_OBSERVER = """
+    (function(){
+      if(window.__watchHubMediaObserver)return;
+      window.__watchHubMediaObserver=true;
+      function report(url,mime,status){
+        if(status<200||status>=300||!url||!mime)return;
+        if(!/^(application\/(vnd\.apple\.mpegurl|x-mpegurl)|audio\/(x-)?mpegurl|video\/(mp4|x-matroska))(;|${'$'})/i.test(mime))return;
+        try{window.watchHubKora.postMessage(JSON.stringify({url:url,mime:mime}));}catch(_){}
+      }
+      var originalFetch=window.fetch;
+      if(originalFetch)window.fetch=function(){return originalFetch.apply(this,arguments).then(function(response){
+        report(response.url,response.headers.get('content-type'),response.status);return response;
+      });};
+      var originalSend=XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.send=function(){
+        this.addEventListener('load',function(){report(this.responseURL,this.getResponseHeader('content-type'),this.status);});
+        return originalSend.apply(this,arguments);
+      };
+    })();
+""".trimIndent()
