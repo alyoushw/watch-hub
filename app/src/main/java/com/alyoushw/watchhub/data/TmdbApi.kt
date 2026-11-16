@@ -25,6 +25,15 @@ data class SearchResponse(
     @SerialName("total_results") val totalResults: Int = 0,
 )
 
+@Serializable
+private data class AlternativeTitle(val title: String = "")
+
+@Serializable
+private data class AlternativeTitles(
+    val results: List<AlternativeTitle> = emptyList(),
+    val titles: List<AlternativeTitle> = emptyList(),
+)
+
 /** Where a list of titles comes from, so it can be fetched page by page ("عرض الكل"). */
 @Serializable
 sealed interface RowSource {
@@ -57,6 +66,8 @@ data class SearchResult(
     val popularity: Double? = null,
     /** The role, when this result comes from an actor's list of works. */
     val character: String? = null,
+    @SerialName("original_title") val originalTitle: String? = null,
+    @SerialName("original_name") val originalName: String? = null,
 ) {
     /** Country code to show for this title: TMDB's origin country, else guessed from the language. */
     val country: String? get() = originCountry.firstOrNull() ?: countryFromLanguage(originalLanguage)
@@ -268,6 +279,36 @@ class TmdbApi(private val settings: SettingsStore) {
             SearchResponse.serializer(),
         )
         return response.copy(results = response.results.filter { it.type != null })
+    }
+
+    /** Animeify/MAL IDs cannot be used here: resolve names against TMDB's own catalogue. */
+    suspend fun animeDetailsMatches(anime: AnimeifyTitle): List<SearchResult> {
+        fun key(value: String): String = java.text.Normalizer.normalize(value, java.text.Normalizer.Form.NFKD)
+            .lowercase(java.util.Locale.ROOT).replace(Regex("[\\p{M}]"), "")
+            .replace(Regex("[^\\p{L}\\p{N}]"), "")
+        fun seriesName(value: String): String = if (anime.type == "MOVIE") value else value.replace(
+            Regex("""(?i)\s+(?:(?:\d+(?:st|nd|rd|th)\s+)?season(?:\s+\d+)?)(?:\s+part\s+\d+)?\s*$"""), "")
+        val names = (listOf(anime.title) + anime.alternativeTitles).filter { it.isNotBlank() }.distinct()
+        val queries = names.flatMap { listOf(it, seriesName(it)) }.distinct().take(6)
+        val expected = queries.map(::key).filter { it.isNotBlank() }.toSet()
+        val type = if (anime.type == "MOVIE") MediaType.MOVIE else MediaType.TV
+        val hits = linkedMapOf<Int, SearchResult>()
+        fun matches(titles: List<String>) = titles.any { key(it) in expected }
+        for (name in queries) {
+            val page = get("search/${type.path}", mapOf("query" to name, "language" to "en-US", "include_adult" to "false"),
+                SearchResponse.serializer())
+            page.results.filter { 16 in it.genreIds && (it.originalLanguage == "ja" || "JP" in it.originCountry) }
+                .forEach { hits[it.id] = it.copy(mediaType = type.path) }
+            val exact = hits.values.filter { matches(listOfNotNull(it.title, it.name, it.originalTitle, it.originalName)) }
+            if (exact.isNotEmpty()) return exact
+        }
+        // TMDB also indexes romanized names as aliases (e.g. Shingeki no Kyojin).
+        val matched = mutableListOf<SearchResult>()
+        for (hit in hits.values.take(6)) {
+            val aliases = get("${type.path}/${hit.id}/alternative_titles", emptyMap(), AlternativeTitles.serializer())
+            if (matches((aliases.results + aliases.titles).map { it.title })) matched += hit
+        }
+        return matched
     }
 
     /** Arabic details plus streaming availability, cast, trailers and recommendations. */
