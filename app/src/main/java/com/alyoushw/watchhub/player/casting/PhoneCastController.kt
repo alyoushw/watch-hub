@@ -68,6 +68,7 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
     private var closed = false
     private var epoch = 0
     private var offset = 0L
+    private var dlnaStart = 0L
 
     private val mediaCallback = object : RemoteMediaClient.Callback() {
         override fun onStatusUpdated() {
@@ -219,26 +220,37 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
         }
     }
 
-    fun select(device: DlnaDevice) {
+    fun select(device: DlnaDevice, forceRelay: Boolean = false, startAt: Long? = null) {
         if (busy || connected) return
         val ticket = ++epoch
-        error = null
+        if (!forceRelay) error = null
         job = scope.launch {
             busy = true
             try {
-                val media = source()
-                wasPlaying = player.playWhenReady
-                val flat = media.mime.contains("mpegurl", true)
-                val url = prepare(media, flat)
+                val media = source().let { if (startAt != null) it.copy(positionMs = startAt) else it }
+                if (!forceRelay) wasPlaying = player.playWhenReady
                 val start = if (media.live) 0 else media.positionMs
                 // A flattened HLS stream already starts at the watch position, so the renderer must not seek.
-                val resumed = dlna.load(device, url, media.title, if (flat) "video/mp2t" else media.mime,
+                suspend fun send(url: String, flat: Boolean) = dlna.load(device, url, media.title, if (flat) "video/mp2t" else media.mime,
                     if (flat) 0L else start, media.durationMs.takeIf { !flat && !media.live } ?: 0L)
+                // Direct first, as with Google Cast: the TV fetches the original link and needs no phone.
+                var viaTv = !forceRelay && !media.mime.contains("mpegurl", true) && directable(media)
+                var flat = false
+                var resumed: Boolean? = null
+                if (viaTv) resumed = try { send(media.url, false) }
+                    catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { viaTv = false; null }
+                if (resumed == null) {
+                    flat = media.mime.contains("mpegurl", true)
+                    resumed = send(prepare(media, flat), flat)
+                }
+                direct = viaTv
+                dlnaStart = start
                 this@PhoneCastController.device = device
                 offset = if (flat) start else 0
-                transferred(media, device.name, "DLNA")
+                transferred(media, device.name, if (viaTv) "DLNA · بث مباشر" else "DLNA · عبر الجوال")
                 if (flat) duration = 0 // No remote seeking inside a flattened stream.
-                if (!resumed) error = "بدأ البث من البداية؛ الجهاز لم يقبل الانتقال إلى موضع المشاهدة السابق." + diag()
+                if (resumed != true) error = "بدأ البث من البداية؛ الجهاز لم يقبل الانتقال إلى موضع المشاهدة السابق." + diag()
             } catch (_: TimeoutCancellationException) { error = "انتهت مهلة تجهيز البث إلى جهاز DLNA." }
             catch (e: CancellationException) { throw e }
             catch (e: Exception) { error = e.message?.takeIf { !it.contains("http", true) } ?: "تعذّر إرسال الفيديو إلى جهاز DLNA."; stopRelay() }
@@ -291,6 +303,12 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
                         if (status.playing) confirmed = true
                         status.positionMs?.let { remotePosition = it + offset }
                         if (!confirmed && android.os.SystemClock.elapsedRealtime() - acceptedAt > 15_000 && status.state in setOf("STOPPED", "NO_MEDIA_PRESENT")) {
+                            if (direct) {
+                                // The TV could not use the original link: retry through the phone.
+                                disconnect(resume = false)
+                                select(target, forceRelay = true, startAt = dlnaStart)
+                                return@launch
+                            }
                             error = "جهاز DLNA لم يبدأ تشغيل الفيديو؛ قد لا يدعم صيغته أو تعذّر وصوله إلى الجوال." + diag(status.state)
                             dialog = true
                             disconnect()
@@ -367,6 +385,7 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
             // Leave the TV playing: it no longer needs the phone.
             ownedSession?.remoteMediaClient?.unregisterCallback(mediaCallback)
             ownedSession = null
+            device = null
             epoch++; job?.cancel(); polling?.cancel()
             deviceName = null
             stopRelay()

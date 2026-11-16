@@ -131,7 +131,12 @@ internal class Dlna(private val context: Context) {
         val info = "http-get:*:$mime:" + if (mime == "video/mp2t") DLNA_FEATURES.replace("OP=01", "OP=00") else DLNA_FEATURES
         val length = if (durationMs > 0) (durationMs / 1000).let { " duration=\"" + String.format(java.util.Locale.US, "%d:%02d:%02d.000", it / 3600, it / 60 % 60, it % 60) + "\"" } else ""
         val metadata = "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"><item id=\"0\" parentID=\"0\" restricted=\"1\"><dc:title>${escape(title)}</dc:title><upnp:class>object.item.videoItem.movie</upnp:class><res protocolInfo=\"${escape(info)}\"$length>${escape(url)}</res></item></DIDL-Lite>"
-        action(device, "SetAVTransportURI", mapOf("CurrentURI" to url, "CurrentURIMetaData" to metadata))
+        // LG and others answer 701 (transition not available) unless the current media is stopped first.
+        try { action(device, "Stop") } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+        val args = mapOf("CurrentURI" to url, "CurrentURIMetaData" to metadata)
+        try { action(device, "SetAVTransportURI", args) }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { kotlinx.coroutines.delay(1000); action(device, "SetAVTransportURI", args) }
         action(device, "Play", mapOf("Speed" to "1"))
         if (positionMs <= 0) return true
         // Most TVs reject Seek while still loading; wait until playback has really started.
