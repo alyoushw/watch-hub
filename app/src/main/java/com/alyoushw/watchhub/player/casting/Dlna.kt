@@ -52,7 +52,9 @@ internal data class DlnaStatus(val playing: Boolean, val positionMs: Long?, val 
 internal class Dlna(private val context: Context) {
     private val clients = java.util.concurrent.ConcurrentHashMap<Network, OkHttpClient>()
     private fun client(lan: CastLan) = clients.getOrPut(lan.network) { OkHttpClient.Builder().socketFactory(lan.network.socketFactory)
-        .dns { lan.network.getAllByName(it).toList() }.followRedirects(false).followSslRedirects(false)
+        .dns(object : okhttp3.Dns {
+            override fun lookup(hostname: String): List<InetAddress> = lan.network.getAllByName(hostname).toList()
+        }).followRedirects(false).followSslRedirects(false)
         .connectTimeout(3, TimeUnit.SECONDS).readTimeout(5, TimeUnit.SECONDS).callTimeout(8, TimeUnit.SECONDS).build() }
 
     suspend fun discover(): List<DlnaDevice> = withContext(Dispatchers.IO) {

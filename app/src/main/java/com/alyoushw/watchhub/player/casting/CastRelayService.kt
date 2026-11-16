@@ -43,7 +43,7 @@ class CastRelayService : Service() {
         try {
             server.start(10_000, true)
             relay = server
-            requireNotNull(getSystemService(NotificationManager::class.java)).notify(4207, notification(source.title))
+            startForeground(4207, notification(source.title))
             server.mediaUrl
         } catch (e: Exception) { server.close(); throw e }
     }
