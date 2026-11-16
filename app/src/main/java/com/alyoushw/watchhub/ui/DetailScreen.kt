@@ -457,6 +457,7 @@ private fun DetailContent(
     val saved = data.watchlist.firstOrNull { it.key == WatchItem.keyOf(info.type, info.id) }
     val subscribedKeys = data.subscriptions.mapNotNull { it.serviceKey }.toSet()
     val onWatch: (StreamingService) -> Unit = { service -> context.watchOn(service, links?.get(service), info.searchTitle) }
+    val isAnime = 16 in info.genreIds && (info.originalLanguage == "ja" || "JP" in info.countries)
 
     LazyColumn(
         contentPadding = PaddingValues(bottom = 32.dp),
@@ -464,36 +465,40 @@ private fun DetailContent(
     ) {
         item {
             Header(info) {
-                XtreamWatchButton(
-                    isSeries = info.type == MediaType.TV,
-                    tmdbId = info.id,
-                    titles = listOf(info.title, info.searchTitle),
-                    year = info.year,
-                    onOpenSeries = onOpenXtreamSeries,
-                )
+                if (!isAnime) {
+                    XtreamWatchButton(
+                        isSeries = info.type == MediaType.TV,
+                        tmdbId = info.id,
+                        titles = listOf(info.title, info.searchTitle),
+                        year = info.year,
+                        onOpenSeries = onOpenXtreamSeries,
+                    )
+                }
             }
         }
 
-        item { WatchButtons(info, links, subscribedKeys, onWatch) }
+        if (!isAnime) {
+            item { WatchButtons(info, links, subscribedKeys, onWatch) }
 
-        item { Column(Modifier.padding(horizontal = 16.dp)) { SourceWatchButton(info.sourceLookup(), onOpenSources, Modifier.fillMaxWidth()) } }
+            item { Column(Modifier.padding(horizontal = 16.dp)) {
+                SourceWatchButton(info.sourceLookup().copy(providerId = "moviz-time"), onOpenSources,
+                    Modifier.fillMaxWidth(), label = "تشغيل Moviz Time")
+            } }
 
-        item { Column(Modifier.padding(horizontal = 16.dp)) {
-            SourceWatchButton(info.sourceLookup().copy(providerId = "moviz-time"), onOpenSources,
-                Modifier.fillMaxWidth(), label = "تشغيل Moviz Time")
-        } }
+            item { Column(Modifier.padding(horizontal = 16.dp)) {
+                SourceWatchButton(info.sourceLookup().copy(providerId = "topcinema"), onOpenSources,
+                    Modifier.fillMaxWidth(), label = "تشغيل TopCinema")
+            } }
 
-        item { Column(Modifier.padding(horizontal = 16.dp)) {
-            SourceWatchButton(info.sourceLookup().copy(providerId = "topcinema"), onOpenSources,
-                Modifier.fillMaxWidth(), label = "تشغيل TopCinema")
-        } }
+            item { Column(Modifier.padding(horizontal = 16.dp)) {
+                SourceWatchButton(info.sourceLookup().copy(providerId = "egybest"), onOpenSources,
+                    Modifier.fillMaxWidth(), label = "تشغيل EgyBest")
+            } }
 
-        item { Column(Modifier.padding(horizontal = 16.dp)) {
-            SourceWatchButton(info.sourceLookup().copy(providerId = "egybest"), onOpenSources,
-                Modifier.fillMaxWidth(), label = "تشغيل EgyBest")
-        } }
+            item { Column(Modifier.padding(horizontal = 16.dp)) { SourceWatchButton(info.sourceLookup(), onOpenSources, Modifier.fillMaxWidth()) } }
+        }
 
-        if (16 in info.genreIds && (info.originalLanguage == "ja" || "JP" in info.countries)) {
+        if (isAnime) {
             item {
                 Column(Modifier.padding(horizontal = 16.dp)) {
                     AnimeifyWatchButton(AnimeLookup(info.title, info.searchTitle, info.type == MediaType.MOVIE,
