@@ -12,6 +12,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
 import java.util.Base64
+import java.time.LocalDate
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.coroutineContext
 
@@ -30,6 +31,7 @@ data class AnimeEpisodeRef(
     val detailId: Int = malId,
 )
 
+@Serializable
 data class AnimeifyTitle(
     val id: String,
     val malId: Int?,
@@ -38,10 +40,13 @@ data class AnimeifyTitle(
     val season: Int,
     val relation: String,
     val poster: String? = null,
+    val status: String = "",
 )
 
 data class AnimeifyEpisode(val number: String, val extra: String = "")
 data class AnimeifyServer(val key: String, val label: String, val value: String)
+data class AnimeifyUpdate(val title: AnimeifyTitle, val episode: AnimeifyEpisode)
+data class AnimeifyPage<T>(val items: List<T>, val nextFrom: Int, val hasMore: Boolean)
 
 /** The owner's Animeify v3.2 API. Only catalogue/episode reads are used; no user account is needed. */
 class AnimeifyApi(
@@ -50,6 +55,33 @@ class AnimeifyApi(
     private val http: OkHttpClient = Net.streams.newBuilder().callTimeout(30, TimeUnit.SECONDS).build(),
 ) {
     private val json = Json { ignoreUnknownKeys = true }
+
+    suspend fun latestEpisodes(from: Int = 0): AnimeifyPage<AnimeifyUpdate> {
+        val rows = post("episodes/load_latest_episodes.php", mapOf(
+            "UserId" to "0", "Language" to "ar", "From" to from.coerceAtLeast(0).toString(),
+        )) as JsonArray
+        val updates = rows.mapNotNull { row ->
+            val value = row as? JsonObject ?: return@mapNotNull null
+            val anime = value["Anime"] as? JsonObject ?: return@mapNotNull null
+            val episode = value["Episode"] as? JsonObject ?: return@mapNotNull null
+            val title = titles(JsonArray(listOf(anime))).singleOrNull() ?: return@mapNotNull null
+            if (title.type in setOf("MOVIE", "CARTOON")) return@mapNotNull null
+            if (episode.text("AnimeID").let { it.isNotBlank() && it != title.id }) return@mapNotNull null
+            val published = parseEpisodes(JsonArray(listOf(episode))).singleOrNull() ?: return@mapNotNull null
+            AnimeifyUpdate(title, published)
+        }.distinctBy { it.title.id to it.episode.number }
+        return AnimeifyPage(updates, from + rows.size, rows.isNotEmpty())
+    }
+
+    suspend fun currentSeason(from: Int = 0): AnimeifyPage<AnimeifyTitle> {
+        val today = LocalDate.now()
+        val season = listOf("Winter", "Spring", "Summer", "Fall")[(today.monthValue - 1) / 3]
+        val rows = post("anime/load_anime_list_v2.php", mapOf(
+            "UserId" to "0", "Language" to "ar", "FilterType" to "PREMIERED",
+            "FilterData" to "$season ${today.year}", "Type" to "SERIES", "From" to from.coerceAtLeast(0).toString(),
+        )) as JsonArray
+        return AnimeifyPage(titles(rows).filter { it.status == "AIRING" }, from + rows.size, rows.isNotEmpty())
+    }
 
     suspend fun search(title: String, movie: Boolean): List<AnimeifyTitle> = titles(post(
         "anime/load_anime_list_v2.php", mapOf(
@@ -158,7 +190,7 @@ class AnimeifyApi(
                     o.text("Season").toIntOrNull()?.coerceAtLeast(1) ?: 1, o.text("RelationId"),
                     o.text("Thumbnail").takeIf { it.isNotBlank() }?.let { name ->
                         "https://animeify.net/animeify/files/thumbnails/".toHttpUrlOrNull()!!.newBuilder().addPathSegment(name).build().toString()
-                    })
+                    }, o.text("Status"))
             }.distinctBy { it.id }
 
         internal fun parseEpisodes(element: JsonElement): List<AnimeifyEpisode> = (element as? JsonArray).orEmpty()

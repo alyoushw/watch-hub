@@ -1,5 +1,19 @@
 # Animeify integration (Android 0.23)
 
+## Anime home updates
+
+Below the anime home recommendations, `آخر الحلقات` reads the source's ordered
+`episodes/load_latest_episodes.php` feed (`UserId=0`, `Language=ar`, `From`). Each row
+contains separate `Anime` and `Episode` objects; the episode's AnimeID must match
+the title's source ID. `أنميات تُعرض الآن` combines AIRING titles from that feed
+with the current calendar season's `anime/load_anime_list_v2.php` results
+(`FilterType=PREMIERED`, e.g. `FilterData=Fall 2026`, `Type=SERIES`). The last episode
+number comes from the actual source episode list, never the catalogue's planned
+Episodes total. Pagination advances by raw response length. The home rows refresh
+at most every five minutes while resumed, with manual retry/refresh and paginated
+full-screen lists. Cards carry the exact source title and episode into the existing
+episode/server picker; legacy navigation payloads retain their defaults.
+
 ## Baseline and scope
 
 Based on `ccr-3b14310b-u6y40j` at `d82d9ae`, which contains the player,
