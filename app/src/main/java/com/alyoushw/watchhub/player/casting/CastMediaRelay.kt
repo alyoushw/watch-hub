@@ -22,6 +22,10 @@ internal class CastMediaRelay(lan: CastLan, private val source: CastSource) : Na
     private data class Resource(val url: HttpUrl, val mime: String?)
     private val secret = Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(24).also { SecureRandom().nextBytes(it) })
     private val resources = java.util.LinkedHashMap<String, Resource>(64, 0.75f, true)
+    private val badGateway = object : Response.IStatus {
+        override fun getRequestStatus() = 502
+        override fun getDescription() = "502 Bad Gateway"
+    }
     private val keys = mutableMapOf<String, String>()
     private var nextId = 0L
     private val file = android.net.Uri.parse(source.url).takeIf { it.scheme == "file" }?.path?.let(::File)
@@ -78,7 +82,7 @@ internal class CastMediaRelay(lan: CastLan, private val source: CastSource) : Na
             }.build()
             val response = http.newCall(request).execute()
             val body = response.body
-            val status = Response.Status.lookup(response.code) ?: Response.Status.BAD_GATEWAY
+            val status = Response.Status.lookup(response.code) ?: badGateway
             if (!response.isSuccessful || body == null) {
                 val range = response.header("Content-Range")
                 response.close()
@@ -95,9 +99,9 @@ internal class CastMediaRelay(lan: CastLan, private val source: CastSource) : Na
             if (hls) {
                 response.use {
                     val input = body.source()
-                    if (input.request(2L * 1024 * 1024 + 1)) return text(Response.Status.BAD_GATEWAY)
+                    if (input.request(2L * 1024 * 1024 + 1)) return text(badGateway)
                     val playlist = input.readUtf8().removePrefix("\uFEFF")
-                    if (!playlist.trimStart().startsWith("#EXTM3U")) return text(Response.Status.BAD_GATEWAY)
+                    if (!playlist.trimStart().startsWith("#EXTM3U")) return text(badGateway)
                     val base = response.request.url
                     val master = playlist.contains("#EXT-X-STREAM-INF:")
                     val rewritten = playlist.lineSequence().joinToString("\n") { line ->
@@ -121,7 +125,7 @@ internal class CastMediaRelay(lan: CastLan, private val source: CastSource) : Na
             for (name in listOf("Content-Range", "Accept-Ranges", "ETag", "Last-Modified")) response.header(name)?.let { result.addHeader(name, it) }
             result.addHeader("transferMode.dlna.org", "Streaming")
             cors(result)
-        } catch (_: Exception) { text(Response.Status.BAD_GATEWAY) }
+        } catch (_: Exception) { text(badGateway) }
     }
 
     private fun serveFile(session: IHTTPSession, file: File): Response {
@@ -162,7 +166,7 @@ internal class CastMediaRelay(lan: CastLan, private val source: CastSource) : Na
         }
     }
 
-    private fun text(status: Response.Status) = cors(newFixedLengthResponse(status, "text/plain", status.description))
+    private fun text(status: Response.IStatus) = cors(newFixedLengthResponse(status, "text/plain", status.description))
     private fun cors(response: Response): Response = response.apply {
         addHeader("Access-Control-Allow-Origin", "*")
         addHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
