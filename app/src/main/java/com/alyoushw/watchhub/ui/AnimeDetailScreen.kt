@@ -173,7 +173,6 @@ private fun AnimeContent(vm: AnimeDetailViewModel, anime: JAnime, onOpen: (Media
     val scope = rememberCoroutineScope()
     val data by container.store.data.collectAsStateWithLifecycle()
     val saved = data.watchlist.firstOrNull { it.key == WatchItem.keyOf(MediaType.ANIME, anime.malId) }
-    val searchTitle = anime.titleEnglish?.ifBlank { null } ?: anime.title
 
     LazyColumn(
         contentPadding = PaddingValues(bottom = 32.dp),
@@ -181,7 +180,6 @@ private fun AnimeContent(vm: AnimeDetailViewModel, anime: JAnime, onOpen: (Media
     ) {
         item { AnimeHeader(anime) }
 
-        item { AnimeWatchButtons(anime, searchTitle) }
         item { Column(Modifier.padding(horizontal = 16.dp)) { AnimeifyWatchButton(anime.animeLookup(), onOpenAnime, Modifier.fillMaxWidth()) } }
 
         item {
