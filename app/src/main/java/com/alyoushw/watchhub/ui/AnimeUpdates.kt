@@ -1,7 +1,8 @@
 package com.alyoushw.watchhub.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -135,7 +136,8 @@ class AnimeUpdatesViewModel(private val api: AnimeifyApi) : ViewModel() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AnimeUpdatesRow(vm: AnimeUpdatesViewModel, currentlyAiring: Boolean, onOpen: (AnimeLookup) -> Unit) {
+fun AnimeUpdatesRow(vm: AnimeUpdatesViewModel, currentlyAiring: Boolean, onOpen: (AnimeLookup) -> Unit,
+    onOpenDetails: (MediaType, Int) -> Unit) {
     val title = if (currentlyAiring) "أنميات تُعرض الآن" else "آخر الحلقات"
     val data = if (currentlyAiring) vm.airing else vm.latest
     val loading = if (currentlyAiring) vm.airingLoading else vm.latestLoading
@@ -143,6 +145,9 @@ fun AnimeUpdatesRow(vm: AnimeUpdatesViewModel, currentlyAiring: Boolean, onOpen:
     val moreLoading = if (currentlyAiring) vm.airingMoreLoading else vm.latestMoreLoading
     val hasMore = if (currentlyAiring) vm.airingHasMore else vm.latestHasMore
     var expanded by remember { mutableStateOf(false) }
+    var selected by remember { mutableStateOf<AnimeifyUpdate?>(null) }
+    var showDetails by remember { mutableStateOf(false) }
+    fun choose(update: AnimeifyUpdate, details: Boolean) { showDetails = details; selected = update }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -160,7 +165,8 @@ fun AnimeUpdatesRow(vm: AnimeUpdatesViewModel, currentlyAiring: Boolean, onOpen:
         if (!loading && error == null && data.isEmpty()) Text("لا توجد حلقات متاحة في النتائج الحالية", Modifier.padding(horizontal = 16.dp))
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             items(data.take(20), key = { "${it.title.id}:${it.episode.number}" }) { update ->
-                AnimeUpdateCard(update, currentlyAiring, Modifier.width(if (isTv()) 176.dp else 148.dp), onOpen)
+                AnimeUpdateCard(update, currentlyAiring, Modifier.width(if (isTv()) 176.dp else 148.dp),
+                    onClick = { choose(update, false) }, onLongClick = { choose(update, true) })
             }
         }
     }
@@ -175,7 +181,8 @@ fun AnimeUpdatesRow(vm: AnimeUpdatesViewModel, currentlyAiring: Boolean, onOpen:
             LazyVerticalGrid(columns = GridCells.Adaptive(148.dp), modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = PaddingValues(16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 items(data, key = { "${it.title.id}:${it.episode.number}" }) { update ->
-                    AnimeUpdateCard(update, currentlyAiring, Modifier.fillMaxWidth()) { lookup -> expanded = false; onOpen(lookup) }
+                    AnimeUpdateCard(update, currentlyAiring, Modifier.fillMaxWidth(),
+                        onClick = { choose(update, false) }, onLongClick = { choose(update, true) })
                 }
                 item(key = "load-more", span = { GridItemSpan(maxLineSpan) }) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -189,15 +196,47 @@ fun AnimeUpdatesRow(vm: AnimeUpdatesViewModel, currentlyAiring: Boolean, onOpen:
             }
         }
     }
+    selected?.let { update ->
+        val anime = update.title
+        fun openSource(play: Boolean) {
+            selected = null
+            expanded = false
+            onOpen(AnimeLookup(anime.title, anime.title, anime.type == "MOVIE", anime.poster,
+                MediaType.ANIME, anime.malId ?: 0, anime.malId, sourceTitle = anime,
+                initialEpisode = if (play) update.episode.number else null))
+        }
+        AlertDialog(onDismissRequest = { selected = null }, title = { Text(anime.title) }, text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (showDetails) {
+                    val malId = anime.malId?.takeIf { it > 0 }
+                    Button(onClick = {
+                        if (malId != null) { selected = null; expanded = false; onOpenDetails(MediaType.ANIME, malId) }
+                    }, enabled = malId != null, modifier = Modifier.fillMaxWidth().focusFrame()) { Text("معلومات الأنمي في Watch Hub") }
+                    if (malId == null) Text("صفحة معلومات هذا الأنمي غير متاحة حالياً", style = MaterialTheme.typography.bodySmall)
+                } else {
+                    Button(onClick = { openSource(true) }, modifier = Modifier.fillMaxWidth().focusFrame()) {
+                        Text("تشغيل الحلقة ${update.episode.number}")
+                    }
+                }
+                OutlinedButton(onClick = { openSource(false) }, modifier = Modifier.fillMaxWidth().focusFrame()) {
+                    Text("صفحة الأنمي في أنمي فاي")
+                }
+            }
+        }, confirmButton = {}, dismissButton = {
+            TextButton(onClick = { selected = null }, modifier = Modifier.focusFrame()) { Text("إغلاق") }
+        })
+    }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun AnimeUpdateCard(update: AnimeifyUpdate, airing: Boolean, modifier: Modifier, onOpen: (AnimeLookup) -> Unit) {
+private fun AnimeUpdateCard(update: AnimeifyUpdate, airing: Boolean, modifier: Modifier,
+    onClick: () -> Unit, onLongClick: () -> Unit) {
     val shape = RoundedCornerShape(12.dp)
     val anime = update.title
     Column(modifier.focusFrame(shape).clip(shape).background(MaterialTheme.colorScheme.surfaceVariant)
-        .clickable { onOpen(AnimeLookup(anime.title, anime.title, anime.type == "MOVIE", anime.poster,
-            MediaType.ANIME, anime.malId ?: 0, anime.malId, sourceTitle = anime, initialEpisode = update.episode.number)) }) {
+        .remoteLongPress(onLongPress = onLongClick, onClick = onClick)
+        .combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
         Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f)) {
             AsyncImage(anime.poster, contentDescription = anime.title, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize())
             Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f)))))

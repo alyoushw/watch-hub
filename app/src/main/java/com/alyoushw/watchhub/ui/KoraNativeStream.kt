@@ -20,18 +20,31 @@ internal data class KoraNativeStream(val url: String, val transport: SourceTrans
             val origin = header("Origin")?.toHttpUrlOrNull()?.host
             val referer = header("Referer")?.toHttpUrlOrNull()?.host
             if (origin != PLAYER_HOST && referer != PLAYER_HOST && url.host != PLAYER_HOST) return null
+            return from(url.toString(), null, request.requestHeaders)
+        }
+
+        /** Called only by the message listener restricted to the HTTPS player origin. */
+        fun observed(url: String, mime: String, referer: String): KoraNativeStream? {
+            if (referer.toHttpUrlOrNull()?.let { it.isHttps && it.host == PLAYER_HOST } != true) return null
+            return from(url, mime, mapOf("Origin" to "https://$PLAYER_HOST", "Referer" to "https://$PLAYER_HOST/"))
+        }
+
+        private fun from(value: String, mimeType: String?, requestHeaders: Map<String, String>): KoraNativeStream? {
+            val url = value.toHttpUrlOrNull()?.takeIf { it.isHttps && it.username.isEmpty() && it.password.isEmpty() } ?: return null
             val path = url.encodedPath.lowercase(java.util.Locale.ROOT)
+            val contentType = mimeType?.substringBefore(';')?.trim()?.lowercase(java.util.Locale.ROOT)
             val (type, mime) = when {
-                path.endsWith(".m3u8") || path.endsWith("/master.txt") -> SourceTransport.HLS to MimeTypes.APPLICATION_M3U8
-                path.endsWith(".mp4") -> SourceTransport.MP4 to MimeTypes.VIDEO_MP4
-                path.endsWith(".mkv") -> SourceTransport.MKV to MimeTypes.VIDEO_MATROSKA
+                path.endsWith(".m3u8") || path.endsWith("/master.txt") || contentType in setOf(
+                    "application/vnd.apple.mpegurl", "application/x-mpegurl", "audio/mpegurl", "audio/x-mpegurl") -> SourceTransport.HLS to MimeTypes.APPLICATION_M3U8
+                path.endsWith(".mp4") || contentType == "video/mp4" -> SourceTransport.MP4 to MimeTypes.VIDEO_MP4
+                path.endsWith(".mkv") || contentType == "video/x-matroska" -> SourceTransport.MKV to MimeTypes.VIDEO_MATROSKA
                 else -> return null
             }
-            val headers = request.requestHeaders.filterKeys { name ->
+            val headers = requestHeaders.filterKeys { name ->
                 name.lowercase(java.util.Locale.ROOT) in setOf("user-agent", "referer", "origin", "cookie", "authorization")
             }
             return KoraNativeStream(url.toString(), type, mime, headers)
         }
-        private const val PLAYER_HOST = "player.majedjs.site"
+        const val PLAYER_HOST = "player.majedjs.site"
     }
 }

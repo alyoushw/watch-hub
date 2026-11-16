@@ -1,4 +1,4 @@
-# Kora website page (private preview)
+# Kora website page
 
 The **كوره** navigation entry opens https://majed-koora.live/ inside Watch Hub.
 It uses the public website and its normal match/watch navigation, not the
@@ -18,7 +18,7 @@ in an unseen WebView. Viewport/overview settings follow browser page sizing.
 First-party storage and third-party player cookies support the site's normal
 session flow. Web navigation stays in the page for HTTP(S); unsupported app-only
 links display a message. User-initiated file downloads open a browser. No native
-JavaScript bridge, local file access, content-provider access or TLS-error
+unrestricted JavaScript bridge, local file access, content-provider access or TLS-error
 bypass is added. Navigation away destroys the WebView; lifecycle pause/resume
 is forwarded. The side navigation rail can scroll on short car/TV screens to
 keep all entries accessible after adding the new page.
@@ -39,7 +39,16 @@ Unsupported sources remain in the website player. No URL decryption, DRM
 handling or app-attestation bypass is introduced. Native handoff requires
 owner testing on a real device; browser inspection alone did not verify it.
 
+The player-origin message listener and document-start observer also recognize
+successful fetch/XHR media responses by Content-Type, including extensionless
+HLS URLs. The bridge is available only to HTTPS player.majedjs.site frames and
+only on WebViews supporting both APIs; request interception remains available
+otherwise. The website completes its own authorization before reporting media.
+Candidates are checked in sequence, so an early failed request does not discard
+later requests. Navigation cancels pending handoffs. Session URLs and cookies
+stay in memory; no access tokens are decoded or access checks changed.
+
 Existing Animeify, torrent, Moviz Time, TopCinema, login, player and APK-update
-behavior remain. The new page is delivered only through the separate private
-preview. No tests or workflows were changed, and no local Gradle/emulator run
+behavior remain. The page is included in the official application.
+No tests or workflows were changed, and no local Gradle/emulator run
 was introduced for this change.

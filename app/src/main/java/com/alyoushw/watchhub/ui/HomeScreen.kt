@@ -525,10 +525,10 @@ fun HomeScreen(
                     item(key = "foryou") { ForYouRow(vm.type, onOpen) }
                     if (vm.type == MediaType.ANIME) {
                         item(key = "animeify-latest") {
-                            AnimeUpdatesRow(animeUpdates, false, onOpenAnime)
+                            AnimeUpdatesRow(animeUpdates, false, onOpenAnime, onOpen)
                         }
                         item(key = "animeify-airing") {
-                            AnimeUpdatesRow(animeUpdates, true, onOpenAnime)
+                            AnimeUpdatesRow(animeUpdates, true, onOpenAnime, onOpen)
                         }
                     }
                     items(vm.sections.filter { !(it.wide && it.id == hero?.id) }, key = { it.id }) { section ->
