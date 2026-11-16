@@ -133,9 +133,9 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
             chooser = MediaRouteChooserDialog(themed).apply {
                 routeSelector = MediaRouteSelector.Builder().addControlCategory(
                     CastMediaControlIntent.categoryForCast(CastMediaControlIntent.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID)).build()
-                setTitle("Google Cast · اختر جهازاً")
                 setOnDismissListener { if (!closed) dialog = true }
                 show()
+                setTitle("Google Cast · اختر جهازاً") // The title view exists only after show().
             }
             dialog = false
         } catch (e: Exception) {
@@ -263,7 +263,8 @@ internal class PhoneCastController(private val activity: ComponentActivity, priv
                         if (status.playing) confirmed = true
                         status.positionMs?.let { remotePosition = it + offset }
                         if (!confirmed && android.os.SystemClock.elapsedRealtime() - acceptedAt > 15_000 && status.state in setOf("STOPPED", "NO_MEDIA_PRESENT")) {
-                            error = "جهاز DLNA لم يبدأ تشغيل الفيديو؛ قد لا يدعم صيغته أو تعذّر وصوله إلى الجوال."
+                            error = "جهاز DLNA لم يبدأ تشغيل الفيديو؛ قد لا يدعم صيغته أو تعذّر وصوله إلى الجوال." +
+                                (relay?.stats()?.let { "\n(${status.state} · طلبات التلفاز: ${it.first} · رد المصدر: ${it.second})" } ?: "")
                             dialog = true
                             disconnect()
                         }

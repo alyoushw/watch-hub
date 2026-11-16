@@ -47,6 +47,7 @@ class CastRelayService : Service() {
             server.mediaUrl
         } catch (e: Exception) { server.close(); throw e }
     }
+    internal fun stats(): Pair<Int, Int>? = relay?.let { it.hits to it.lastStatus }
     private fun notification(title: String) = NotificationCompat.Builder(this, "casting")
         .setSmallIcon(android.R.drawable.ic_media_play).setContentTitle("Watch Hub · البث إلى التلفاز")
         .setContentText(title).setOngoing(true).setSilent(true)

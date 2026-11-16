@@ -41,6 +41,9 @@ internal class CastMediaRelay(lan: CastLan, private val source: CastSource, priv
             }.build())
         }.build()
     private val host = lan.address.hostAddress
+    /** Diagnostics: how many requests the renderer made and the last upstream HTTP status. */
+    @Volatile var hits = 0
+    @Volatile var lastStatus = 0
     val mediaUrl: String get() = if (flatHls) "http://$host:$listeningPort/$secret/stream.ts" else register(root, source.mime)
     init { resources["0"] = Resource(root, source.mime); keys[root.toString()] = "0" }
 
@@ -68,6 +71,7 @@ internal class CastMediaRelay(lan: CastLan, private val source: CastSource, priv
     override fun serve(session: IHTTPSession): Response {
         val parts = session.uri.split('/').filter { it.isNotEmpty() }
         if (parts.size != 2 || parts[0] != secret) return text(Response.Status.NOT_FOUND)
+        hits++
         if (flatHls && parts[1] == "stream.ts") {
             if (session.method !in setOf(Method.GET, Method.HEAD)) return text(Response.Status.METHOD_NOT_ALLOWED)
             val body = if (session.method == Method.HEAD) ByteArrayInputStream(byteArrayOf()) else HlsStream(if (source.live) -1 else source.positionMs)
@@ -91,6 +95,7 @@ internal class CastMediaRelay(lan: CastLan, private val source: CastSource, priv
                     session.headers["range"]?.let { header("Range", it) }
             }.build()
             val response = http.newCall(request).execute()
+            lastStatus = response.code
             val body = response.body
             val status = Response.Status.lookup(response.code) ?: badGateway
             if (!response.isSuccessful || body == null) {
@@ -136,7 +141,7 @@ internal class CastMediaRelay(lan: CastLan, private val source: CastSource, priv
             result.addHeader("transferMode.dlna.org", "Streaming")
             result.addHeader("contentFeatures.dlna.org", DLNA_FEATURES)
             cors(result)
-        } catch (_: Exception) { text(badGateway) }
+        } catch (_: Exception) { if (lastStatus == 0) lastStatus = -1; text(badGateway) }
     }
 
     private fun serveFile(session: IHTTPSession, file: File): Response {
@@ -194,6 +199,7 @@ internal class CastMediaRelay(lan: CastLan, private val source: CastSource, priv
         @Volatile private var closed = false
 
         private fun fetch(url: HttpUrl): String = http.newCall(Request.Builder().url(url).build()).execute().use { r ->
+            lastStatus = r.code
             if (!r.isSuccessful) throw java.io.IOException("HTTP ${r.code}")
             r.body?.string()?.removePrefix("\uFEFF") ?: ""
         }
