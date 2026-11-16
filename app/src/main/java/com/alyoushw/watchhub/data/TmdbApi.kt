@@ -248,6 +248,11 @@ data class Details(
     fun providersFor(region: String): RegionProviders? = watchProviders?.results?.get(region)
 }
 
+@Serializable private data class AlternativeTitleDto(val title: String = "")
+@Serializable private data class AlternativeTitlesDto(
+    val titles: List<AlternativeTitleDto> = emptyList(), val results: List<AlternativeTitleDto> = emptyList(),
+)
+
 /** Minimal client for The Movie Database (TMDB) v3 API. */
 class TmdbApi(private val settings: SettingsStore) {
     private val client = OkHttpClient.Builder()
@@ -290,6 +295,12 @@ class TmdbApi(private val settings: SettingsStore) {
             mapOf("language" to "en-US", "append_to_response" to "reviews,videos"),
             Details.serializer(),
         )
+
+    /** Official aliases for the same ID, including transliterated Arabic filenames. */
+    suspend fun alternativeTitles(type: MediaType, id: Int): List<String> {
+        val response = get("${type.path}/$id/alternative_titles", emptyMap(), AlternativeTitlesDto.serializer())
+        return (response.titles + response.results).map { it.title.trim() }.filter { it.isNotEmpty() }.distinct()
+    }
 
     /**
      * TMDB discover. With [streamableOnly] the results are limited to titles that stream

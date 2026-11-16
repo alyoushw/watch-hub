@@ -234,6 +234,7 @@ fun KoraScreen(homeUrl: String = KORA_HOME, pageTitle: String = "كوره", onBa
                 web?.loadUrl(homeUrl)
             }, modifier = Modifier.focusFrame()) { Text("الرئيسية") }
             TextButton(onClick = { error = null; web?.reload() }, modifier = Modifier.focusFrame()) { Text("تحديث") }
+            if (error != null) TextButton(onClick = { openBrowser(web?.url ?: homeUrl) }, modifier = Modifier.focusFrame()) { Text("فتح بالمتصفح") }
         })
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
@@ -281,7 +282,10 @@ fun KoraScreen(homeUrl: String = KORA_HOME, pageTitle: String = "كوره", onBa
                             }
                         }
                         override fun onReceivedError(view: WebView, request: WebResourceRequest, failure: WebResourceError) {
-                            if (view == web && request.isForMainFrame) { loading = false; error = "تعذر تحميل الصفحة. تحقق من الاتصال ثم اضغط تحديث." }
+                            if (view == web && request.isForMainFrame) {
+                                loading = false
+                                error = "تعذر تحميل الصفحة (${failure.errorCode}): ${failure.description.toString().take(160)}"
+                            }
                         }
                         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                             val scheme = request.url.scheme
@@ -290,6 +294,23 @@ fun KoraScreen(homeUrl: String = KORA_HOME, pageTitle: String = "كوره", onBa
                             return true
                         }
                         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                            if (request.method == "GET" && request.url.scheme == "https" && request.url.host == "akw.cam") {
+                                try {
+                                    val headers = request.requestHeaders.toMutableMap()
+                                    CookieManager.getInstance().getCookie(request.url.toString())?.let { headers["Cookie"] = it }
+                                    val page = com.alyoushw.watchhub.data.AkwamChromium.fetch(context, request.url.toString(), headers)
+                                    if (page.status !in 300..399) {
+                                        page.cookies.forEach { CookieManager.getInstance().setCookie(page.url, it) }
+                                        val type = page.headers.entries.firstOrNull { it.key.equals("Content-Type", true) }?.value
+                                            ?.substringBefore(';') ?: "text/html"
+                                        val responseHeaders = page.headers.filterKeys {
+                                            it.lowercase() !in setOf("content-encoding", "content-length", "transfer-encoding", "set-cookie")
+                                        }
+                                        return WebResourceResponse(type, "UTF-8", page.status, "HTTP ${page.status}", responseHeaders,
+                                            java.io.ByteArrayInputStream(page.body))
+                                    }
+                                } catch (_: Exception) { /* Retain the normal WebView path if Chromium cannot serve this request. */ }
+                            }
                             KoraNativeStream.from(request)?.let { stream -> view.post { openNative(view, stream) } }
                             return null
                         }

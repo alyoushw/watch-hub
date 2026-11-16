@@ -17,8 +17,8 @@ import org.jsoup.nodes.Document
 class MovizTimeSourceProvider : WatchSourceProvider {
     override suspend fun search(query: SourceQuery): List<WatchSource> = withContext(Dispatchers.IO) {
         if (!query.valid) return@withContext emptyList()
-        val titles = listOfNotNull(query.searchTitle, query.originalTitle).filter { it.isNotBlank() }.distinctBy { SourceQuery.titleKey(it) }
-        for (title in titles.take(2)) {
+        val titles = query.websiteTitles()
+        for (title in titles.take(3)) {
             for (page in 1..2) {
                 val url = BASE.toHttpUrl().newBuilder().addQueryParameter("s", title)
                     .apply { if (page > 1) addQueryParameter("paged", page.toString()) }.build()
@@ -44,7 +44,7 @@ class MovizTimeSourceProvider : WatchSourceProvider {
     override suspend fun find(query: SourceQuery, id: String): WatchSource? = withContext(Dispatchers.IO) {
         if (!query.valid) return@withContext null
         val post = Regex("moviz-(\\d{1,10})").matchEntire(id)?.groupValues?.get(1) ?: return@withContext null
-        safelyResolve(read("$BASE?p=$post").doc, query, listOfNotNull(query.originalTitle, query.searchTitle))
+        safelyResolve(read("$BASE?p=$post").doc, query, query.websiteTitles())
     }
 
     private fun safelyResolve(doc: Document, query: SourceQuery, titles: List<String>): WatchSource? = try {
@@ -79,14 +79,16 @@ class MovizTimeSourceProvider : WatchSourceProvider {
         }.mapNotNull {
             Regex("iframe_area\\.location\\.href\\s*=\\s*['\"]([^'\"]+)['\"]").find(it.attr("onclick"))?.groupValues?.get(1)
         } else doc.select("#servers_tabs iframe").map { it.absUrl("data-src").ifBlank { it.absUrl("src") } }
+        val issues = mutableListOf<SourceIssue>()
         val variants = embeds.distinct().take(4).mapIndexedNotNull { index, embed ->
-            try { resolveEmbed(embed, pageUrl, index) }
+            val label = "السيرفر ${index + 1}"
+            try { resolveEmbed(embed, pageUrl, index).also { if (it == null) issues += SourceIssue(label, SourceHealth.UNVERIFIED) } }
             catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { null }
+            catch (e: Exception) { issues += sourceFailure(label, e); null }
         }
-        if (variants.isEmpty()) return null
         return WatchSource("moviz-$post", "moviz-time", "Moviz Time", query, variants,
-            attribution = "Moviz Time · ${query.originalTitle} (${query.year}) · $pageUrl", licenceUrl = pageUrl)
+            attribution = "Moviz Time · ${query.originalTitle} (${query.year}) · $pageUrl", licenceUrl = pageUrl,
+            webLinks = listOf(SourceWebLink("صفحة العمل الأصلية", pageUrl)), issues = issues.distinct())
     }
 
     private fun resolveEmbed(embed: String, pageUrl: String, index: Int): SourceVariant? {
@@ -117,12 +119,12 @@ class MovizTimeSourceProvider : WatchSourceProvider {
             ?: throw SourceException("رابط Moviz Time غير متوافق")
         val request = Request.Builder().url(parsed).header("User-Agent", AGENT).header("Referer", referer).build()
         return SourceHttp.client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw SourceException("تعذر الوصول إلى Moviz Time (${response.code})")
+            if (!response.isSuccessful) throw SourceException("تعذر الوصول إلى Moviz Time (${response.code})", response.code)
             if (response.request.url.host !in setOf(HOST, "vidhls.com")) throw SourceException("تحويل غير متوافق من Moviz Time")
             val body = response.body ?: throw SourceException("صفحة Moviz Time فارغة")
             val input = body.source()
             if (input.request(2 * 1024 * 1024L + 1)) throw SourceException("صفحة Moviz Time أكبر من الحد المسموح")
-            Page(Jsoup.parse(input.readByteArray().toString(Charsets.UTF_8), response.request.url.toString()), Cookie.parseAll(parsed, response.headers))
+            Page(checkedSourcePage(Jsoup.parse(input.readByteArray().toString(Charsets.UTF_8), response.request.url.toString())), Cookie.parseAll(parsed, response.headers))
         }
     }
 

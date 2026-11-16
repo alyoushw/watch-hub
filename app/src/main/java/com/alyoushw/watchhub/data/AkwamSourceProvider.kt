@@ -1,0 +1,321 @@
+package com.alyoushw.watchhub.data
+
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Request
+import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
+import java.util.Base64
+
+/** Download landing pages are resolved to checked video streams; HTML never goes to Media3. */
+class AkwamSourceProvider(private val api: TmdbApi, private val context: android.content.Context) : WatchSourceProvider {
+    private val embeds = TopCinemaSourceProvider()
+    private val probe = StreamProbe(verifyHlsSegments = true)
+
+    override suspend fun search(query: SourceQuery): List<WatchSource> = withContext(Dispatchers.IO) {
+        if (!query.valid) return@withContext emptyList()
+        val titles = aliases(query)
+        val visited = mutableSetOf<String>()
+        val available = sortedMapOf<Int, MutableSet<Int>>()
+        var seriesSeen = false
+        var fallback: WatchSource? = null
+        var failed: Exception? = null
+        fun observe(raw: String) {
+            if (query.type != MediaType.TV || !matches(raw, query, titles, false)) return
+            seriesSeen = true
+            season(raw)?.let { number -> episode(raw)?.takeIf { it > 0 }?.let { available.getOrPut(number) { sortedSetOf() }.add(it) } }
+        }
+        for (title in titles.take(3)) for (term in searchTerms(title, query)) {
+            val url = BASE.toHttpUrl().resolve("search")!!.newBuilder().addQueryParameter("q", term).build()
+            val doc = try { read(url.toString()) }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { failed = e; continue }
+            val links = doc.select("a.br-card-link[href]").filter {
+                sameSite(it.absUrl("href")) && matches(it.selectFirst(".br-card-title")?.text().orEmpty(), query, titles, false)
+            }.distinctBy { it.absUrl("href") }
+            links.forEach { observe(it.selectFirst(".br-card-title")?.text().orEmpty()) }
+            val candidates = if (query.type == MediaType.TV) links.filter {
+                season(it.selectFirst(".br-card-title")?.text().orEmpty()) == query.season
+            }.sortedBy { if (episode(it.selectFirst(".br-card-title")?.text().orEmpty()) == query.episode) 0 else 1 }
+            else links.take(4)
+            for (link in candidates) {
+                if (!visited.add(link.absUrl("href"))) continue
+                try {
+                    var details = read(link.absUrl("href"))
+                    val heading = details.selectFirst("h1")?.text().orEmpty()
+                    observe(heading)
+                    if (query.type == MediaType.TV) {
+                        val selectedSeason = query.season ?: continue
+                        if (!matches(heading, query, titles, false) || season(heading) != selectedSeason) continue
+                        val grid = details.select(".br-episode-grid a[href]").filter { sameSite(it.absUrl("href")) }
+                        grid.mapNotNull { Regex("\\d+").find(arabic(it.text()))?.value?.toIntOrNull() }
+                            .filter { it > 0 }.forEach { available.getOrPut(selectedSeason) { sortedSetOf() }.add(it) }
+                        if (episode(heading) != query.episode) {
+                            val item = grid.firstOrNull {
+                                Regex("\\d+").find(arabic(it.text()))?.value?.toIntOrNull() == query.episode
+                            } ?: continue
+                            if (!visited.add(item.absUrl("href"))) continue
+                            details = read(item.absUrl("href"))
+                        }
+                    }
+                    resolve(details, query, titles)?.let { source ->
+                        if (query.type == MediaType.MOVIE || source.matchVerified && source.variants.isNotEmpty()) return@withContext listOf(source)
+                        val previous = fallback
+                        if (previous == null || !previous.matchVerified && source.matchVerified ||
+                            previous.matchVerified == source.matchVerified && source.webLinks.size > previous.webLinks.size) fallback = source
+                    }
+                } catch (e: CancellationException) { throw e }
+                catch (e: Exception) { failed = e }
+            }
+        }
+        fallback?.let { return@withContext listOf(it) }
+        if (seriesSeen) {
+            val requestedSeason = query.season ?: 1
+            val requestedEpisode = query.episode ?: 1
+            val message = when {
+                available.isEmpty() -> "وجدت نتائج للمسلسل في أكوام، لكن تعذّر قراءة الموسم والحلقة من عناوينها."
+                requestedSeason !in available -> "وجدت نتائج للمسلسل في أكوام. المواسم الظاهرة: ${available.keys.joinToString("، ")}. لم يظهر الموسم $requestedSeason المطلوب في النتائج التي وصلت."
+                requestedEpisode !in available[requestedSeason].orEmpty() -> "الموسم $requestedSeason ظاهر في أكوام، لكن الحلقة $requestedEpisode لم تظهر في النتائج التي وصلت."
+                else -> "وجدت صفحة للموسم ${query.season} والحلقة ${query.episode}، لكن تعذّر التحقق منها${failed?.message?.take(100)?.let { ": $it" }.orEmpty()}."
+            }
+            throw SourceAvailabilityException(SourceAvailability("akwam", available.mapValues { it.value.toList() }, message))
+        }
+        failed?.let { throw SourceException("تعذّر الاتصال بأكوام: ${it.message.orEmpty().take(100)}", (it as? SourceException)?.httpStatus,
+            sourceFailure("البحث", it).health) }
+        emptyList()
+    }
+
+    private fun searchTerms(title: String, query: SourceQuery): List<String> {
+        if (query.type != MediaType.TV) return listOf(title)
+        val ordinal = ORDINALS.getOrNull((query.season ?: 1) - 1) ?: query.season.toString()
+        return buildList {
+            add("$title الموسم $ordinal الحلقة ${query.episode}")
+            if (query.season == 1) {
+                add("$title الموسم الأول الحلقة ${query.episode}")
+                add("$title الحلقة ${query.episode}")
+            }
+            add("$title الموسم $ordinal")
+            add(title)
+        }.distinct()
+    }
+
+    override suspend fun find(query: SourceQuery, id: String): WatchSource? = findPost(query, id, null)
+    override suspend fun findVariant(query: SourceQuery, id: String, variantId: String): WatchSource? = findPost(query, id, variantId)
+    private suspend fun findPost(query: SourceQuery, id: String, variantId: String?): WatchSource? = withContext(Dispatchers.IO) {
+        if (!query.valid || !id.startsWith("akw-")) return@withContext null
+        val slug = runCatching { String(Base64.getUrlDecoder().decode(id.removePrefix("akw-")), Charsets.UTF_8) }.getOrNull()
+            ?.takeIf(::safeSlug) ?: return@withContext null
+        resolve(read(BASE.toHttpUrl().newBuilder().addPathSegment(slug).addPathSegment("").build().toString()), query, aliases(query), variantId)
+    }
+
+    private suspend fun resolve(doc: Document, query: SourceQuery, titles: List<String>, targetId: String? = null): WatchSource? {
+        val title = doc.selectFirst("h1")?.text() ?: return null
+        if (!matches(title, query, titles, true)) return null
+        val page = doc.location().toHttpUrlOrNull()?.takeIf { it.host == HOST && it.isHttps } ?: return null
+        val slug = page.pathSegments.filter { it.isNotEmpty() }.singleOrNull()?.takeIf(::safeSlug) ?: return null
+        val id = "akw-" + Base64.getUrlEncoder().withoutPadding().encodeToString(slug.toByteArray(Charsets.UTF_8))
+        val (verified, requiresHostYear) = if (query.type == MediaType.MOVIE)
+            (query.year.toString() in arabic(title)) to false else confirmSeries(query, titles)
+        if (!verified) return WatchSource(id, "akwam", "أكوام", query, emptyList(), attribution = "Akwam · $title", licenceUrl = page.toString(),
+            webLinks = listOf(SourceWebLink("نتيجة محتملة — افتح التفاصيل للتحقق", page.toString())),
+            issues = listOf(SourceIssue("مطابقة العمل", SourceHealth.UNVERIFIED)), matchVerified = false)
+        val downloadUrl = doc.selectFirst("a[href*=/download/]")?.absUrl("href")?.takeIf(::sameSite) ?: return null
+        val download = try { read(downloadUrl) }
+        catch (e: CancellationException) { throw e }
+        catch (e: Exception) { return WatchSource(id, "akwam", "أكوام", query, emptyList(), attribution = "Akwam · $title", licenceUrl = page.toString(),
+            webLinks = listOf(SourceWebLink("صفحة التحميل الأصلية", downloadUrl, true)), issues = listOf(sourceFailure("صفحة التحميل", e)),
+            matchVerified = !requiresHostYear) }
+        val links = download.select(".br-download-row").mapNotNull { row ->
+            val url = row.selectFirst("a[href]")?.absUrl("href")?.toHttpUrlOrNull()?.takeIf { it.isHttps } ?: return@mapNotNull null
+            SourceWebLink((row.selectFirst("strong")?.text() ?: "تحميل") + " · " + url.host, url.toString(), true)
+        }.distinctBy { it.url }
+        // These aliases identify files only; the website page must still match the requested title/S/E above.
+        val hostTitles = if (titles.any { name -> name.any { it in '\u0600'..'\u06ff' } }) {
+            val aliases = try { api.alternativeTitles(query.type, query.tmdbId) }
+            catch (e: CancellationException) { throw e }
+            catch (_: Exception) { emptyList() }
+            (titles + aliases).distinctBy { SourceQuery.titleKey(arabic(it)) }
+        } else titles
+        val issues = java.util.Collections.synchronizedList(mutableListOf<SourceIssue>())
+        val identityConfirmed = java.util.concurrent.atomic.AtomicBoolean(!requiresHostYear)
+        val limit = Semaphore(3)
+        val variants = coroutineScope {
+            links.withIndex().map { (index, link) -> async {
+                if (targetId != null && !targetId.startsWith("download-$index-")) return@async emptyList<SourceVariant>()
+                limit.withPermit {
+                    try {
+                        val url = link.url.toHttpUrl()
+                        val media = when {
+                            url.encodedPath.endsWith(".mp4", true) && !requiresHostYear -> listOf(SourceVariant("direct", link.label, link.url, SourceTransport.MP4))
+                            url.host in MIXDROP_HOSTS && url.encodedPath.startsWith("/f/") ||
+                                url.host in LULU_HOSTS && url.encodedPath.startsWith("/d/") ||
+                                url.host in MEDIAFIRE_HOSTS && url.encodedPath.startsWith("/file/") ->
+                                resolveDownloadHost(link, downloadUrl, query, hostTitles, index, requiresHostYear) { identityConfirmed.set(true) }
+                            else -> { issues += SourceIssue(link.label, SourceHealth.UNSUPPORTED); emptyList() }
+                        }
+                        if (media.isEmpty() && (url.host in MIXDROP_HOSTS || url.host in LULU_HOSTS || url.host in MEDIAFIRE_HOSTS))
+                            issues += SourceIssue(link.label, SourceHealth.UNVERIFIED)
+                        media.map { it.copy(id = "download-$index-${it.transport.name.lowercase(java.util.Locale.ROOT)}-${it.id.substringAfterLast('-')}",
+                            label = link.label.replaceFirst("تحميل", "سيرفر") + " · " + it.label) }
+                            .filter { targetId == null || it.id == targetId }.filter { variant ->
+                                val check = probe.inspect(variant)
+                                if (!check.playable) issues += check.issue(link.label)
+                                check.playable
+                            }
+                    } catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { issues += sourceFailure(link.label, e); emptyList() }
+                }
+            } }.awaitAll().flatten().distinctBy { it.url }
+        }
+        if (!identityConfirmed.get()) issues += SourceIssue("مطابقة سنة المسلسل", SourceHealth.UNVERIFIED)
+        return WatchSource(id, "akwam", "أكوام", query, variants, attribution = "Akwam · $title", licenceUrl = page.toString(),
+            webLinks = links + listOf(SourceWebLink("صفحة التحميل الأصلية · جميع السيرفرات", downloadUrl, true),
+                    SourceWebLink("صفحة العمل الأصلية", page.toString())), issues = issues.toList().distinct(), matchVerified = identityConfirmed.get())
+    }
+
+    private fun resolveDownloadHost(link: SourceWebLink, referer: String, query: SourceQuery, titles: List<String>, index: Int,
+        requiresHostYear: Boolean, confirmIdentity: () -> Unit): List<SourceVariant> {
+        val owner = link.url.toHttpUrl()
+        val mediaFire = owner.host in MEDIAFIRE_HOSTS
+        val hosts = when { mediaFire -> MEDIAFIRE_HOSTS; owner.host in MIXDROP_HOSTS -> MIXDROP_HOSTS; else -> LULU_HOSTS }
+        val agent = if (mediaFire) MEDIAFIRE_AGENT else AkwamChromium.USER_AGENT
+        val fileId = (if (mediaFire) owner.pathSegments.getOrNull(1) else owner.pathSegments.lastOrNull())
+            ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{4,80}")) } ?: return emptyList()
+        fun fetch(url: String, ref: String): Pair<Document, List<okhttp3.Cookie>> {
+            val response = AkwamChromium.fetch(context, url, mapOf("Referer" to ref, "User-Agent" to agent), hosts)
+            if (response.status !in 200..299) throw SourceException("تعذر فتح الخادم (${response.status})", response.status)
+            val doc = checkedSourcePage(Jsoup.parse(response.body.toString(Charsets.UTF_8), response.url))
+            val cookies = response.cookies.mapNotNull { okhttp3.Cookie.parse(response.url.toHttpUrl(), it) }
+            return doc to cookies
+        }
+        val landing = fetch(link.url, referer)
+        // Match real filename metadata when available; generic "Loading" pages rely on the verified parent and file ID.
+        val name = arabic(if (mediaFire) landing.first.selectFirst(".filename")?.text() ?: landing.first.title() else landing.first.title())
+        val years = Regex("\\b(?:18|19|20|21)\\d{2}\\b").findAll(name).mapNotNull { it.value.toIntOrNull() }.toSet()
+        if (requiresHostYear && years.isEmpty()) throw SourceException("لم يعلن الخادم سنة تميّز هذا المسلسل عن الأعمال المشابهة")
+        val numberedEpisode = Regex("(?i)\\b(?:s(\\d+)[ ._-]*)?e(\\d+)(?![0-9])").find(name)
+        val explicitEpisode = query.type == MediaType.TV && numberedEpisode != null
+        if (mediaFire || years.isNotEmpty() || explicitEpisode) {
+            val named = titles.any { " ${SourceQuery.titleKey(arabic(it))} " in " ${SourceQuery.titleKey(name)} " }
+            val yearMatches = years.isEmpty() && !requiresHostYear || query.year in years ||
+                query.type == MediaType.TV && query.seasonYear != null && query.seasonYear in years
+            val fileSeason = numberedEpisode?.groupValues?.get(1)?.takeIf { it.isNotEmpty() }?.toIntOrNull() ?: 1
+            val fileEpisode = numberedEpisode?.groupValues?.get(2)?.toIntOrNull()
+            val numbered = yearMatches && (query.type == MediaType.MOVIE || fileSeason == query.season && fileEpisode == query.episode)
+            if (!named || !numbered) throw SourceException("بيانات الخادم لا تطابق العمل المطلوب")
+            confirmIdentity()
+        }
+        if (mediaFire) {
+            val type = when {
+                name.endsWith(".mp4", true) -> SourceTransport.MP4
+                name.endsWith(".mkv", true) -> SourceTransport.MKV
+                else -> throw SourceException("ملف MediaFire ليس فيديو مدعوماً", health = SourceHealth.UNSUPPORTED)
+            }
+            val video = AnimeifyApi.mediaFireUrl(landing.first.outerHtml())
+                ?: throw SourceException("لم يعلن MediaFire رابط فيديو مباشراً؛ قد يطلب تحققاً", health = SourceHealth.BLOCKED)
+            val headers = mutableMapOf("User-Agent" to agent, "Referer" to landing.first.location())
+            val cookie = landing.second.filter { it.matches(video.toHttpUrl()) }.joinToString("; ") { "${it.name}=${it.value}" }
+            if (cookie.isNotBlank()) headers["Cookie"] = cookie
+            return listOf(SourceVariant("mediafire-$index-0", "MediaFire · ${type.name}", video, type, headers))
+        }
+        val iframe = landing.first.select("iframe[src]").mapNotNull { it.absUrl("src").toHttpUrlOrNull() }
+            .firstOrNull { it.isHttps && it.host in hosts && it.encodedPath.trim('/') == "e/$fileId" }
+        val player = iframe?.let { fetch(it.toString(), landing.first.location()) } ?: landing
+        val quality = Regex("(?i)\\b(2160|1080|720|480|360)p\\b").findAll(name).lastOrNull()?.value.orEmpty()
+        val label = (if (owner.host in MIXDROP_HOSTS) "MixDrop" else "Lulu") + quality.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
+        return embeds.mediaFromPage(player.first, label, index.toString(), hosts, AkwamChromium.USER_AGENT, player.second)
+    }
+
+    private suspend fun confirmSeries(query: SourceQuery, titles: List<String>): Pair<Boolean, Boolean> {
+        // Unrelated search results must not invalidate the requested TMDB identity and debut year.
+        for (title in titles.take(3)) try {
+            val result = api.searchPage(title)
+            val series = result.results.filter { it.type == MediaType.TV }
+            if (series.any { it.id == query.tmdbId && it.firstAirDate?.take(4)?.toIntOrNull() == query.year })
+                return true to series.any { it.id != query.tmdbId }
+        } catch (e: CancellationException) { throw e } catch (_: Exception) { /* Keep uncertain matches website-only. */ }
+        return false to false
+    }
+
+    private fun matches(raw: String, query: SourceQuery, titles: List<String>, full: Boolean): Boolean {
+        val text = arabic(raw).removePrefix("مشاهده ")
+        val series = query.type == MediaType.TV
+        if (series && !text.startsWith("مسلسل ") || !series && !text.contains("فيلم ")) return false
+        if (series && full && (episode(text) != query.episode || season(text) != query.season)) return false
+        if (!series && query.year.toString() !in text) return false
+        val name = (if (series) text.removePrefix("مسلسل ") else text.substringAfter("فيلم "))
+            .substringBefore("الموسم").substringBefore("الحلقه").substringBefore("مترجم").substringBefore("مدبلج")
+            .substringBefore("اون لاين").trim().removeSuffix(query.year.toString()).trim()
+        val english = Regex("[A-Za-z].*").find(name)?.value
+        val names = listOfNotNull(name, english, english?.let { name.substringBefore(it).trim() }).map { SourceQuery.titleKey(it) }
+        return titles.any { SourceQuery.titleKey(arabic(it)) in names }
+    }
+
+    private fun episode(text: String) = Regex("الحلقه\\s*(\\d+)").find(arabic(text))?.groupValues?.get(1)?.toIntOrNull()
+    private fun season(text: String): Int? {
+        val normalized = arabic(text)
+        val value = SEASON_PATTERN.find(normalized)?.groupValues?.get(1) ?: return if ("الموسم" in normalized) null else 1
+        return value.toIntOrNull() ?: ORDINALS.indexOf(value).takeIf { it >= 0 }?.plus(1)
+    }
+    private fun aliases(query: SourceQuery) = query.websiteTitles()
+    private fun sameSite(url: String) = url.toHttpUrlOrNull()?.let { it.isHttps && it.host == HOST } == true
+    // Decode the URL once; Arabic slugs are valid, while separators and traversal are not.
+    private fun safeSlug(slug: String) = slug.matches(Regex("[\\p{L}\\p{N}\\p{M}_-]{1,110}")) && slug.toByteArray(Charsets.UTF_8).size <= 117
+    private fun read(url: String): Document {
+        if (!sameSite(url)) throw SourceException("رابط أكوام غير متوافق")
+        val chromiumFailure = try {
+            val page = AkwamChromium.fetch(context, url)
+            if (page.status !in 200..299) throw SourceException("تعذر الوصول إلى أكوام (${page.status})", page.status)
+            return checkedSourcePage(Jsoup.parse(page.body.toString(Charsets.UTF_8), page.url))
+        } catch (e: java.io.IOException) { e }
+        var stage = "بدء الطلب"
+        val listener = object : okhttp3.EventListener() {
+            override fun dnsStart(call: okhttp3.Call, domainName: String) { stage = "DNS" }
+            override fun connectStart(call: okhttp3.Call, address: java.net.InetSocketAddress, proxy: java.net.Proxy) {
+                stage = if (address.address is java.net.Inet6Address) "اتصال IPv6" else "اتصال IPv4"
+            }
+            override fun secureConnectStart(call: okhttp3.Call) { stage = "اتصال TLS" }
+            override fun requestHeadersStart(call: okhttp3.Call) { stage = "إرسال الطلب" }
+            override fun requestHeadersEnd(call: okhttp3.Call, request: Request) { stage = "انتظار رد الموقع" }
+            override fun responseBodyStart(call: okhttp3.Call) { stage = "قراءة الصفحة" }
+        }
+        val request = Request.Builder().url(url).header("User-Agent", AGENT).header("Referer", BASE).build()
+        fun fetch(client: okhttp3.OkHttpClient): Document = client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful || !sameSite(response.request.url.toString())) throw SourceException("تعذر الوصول إلى أكوام (${response.code})", response.code)
+            val source = response.body?.source() ?: throw SourceException("رد أكوام فارغ")
+            if (source.request(2 * 1024 * 1024L + 1)) throw SourceException("صفحة أكوام أكبر من الحد المسموح")
+            checkedSourcePage(Jsoup.parse(source.readByteArray().toString(Charsets.UTF_8), response.request.url.toString()))
+        }
+        // Keep the existing client as a fallback on devices where Chromium cannot connect or load.
+        return try { fetch(SourceHttp.client.newBuilder().eventListener(listener).build()) }
+        catch (e: java.io.IOException) {
+            if (Thread.currentThread().isInterrupted) throw e
+            throw SourceException("Chromium: ${chromiumFailure.message.orEmpty().take(35)}؛ $stage: ${e.message.orEmpty().take(25)}",
+                health = SourceHealth.NETWORK_ERROR)
+        }
+    }
+    private fun arabic(text: String) = text.map { when (it) {
+        'أ', 'إ', 'آ' -> 'ا'; 'ة' -> 'ه'; 'ى' -> 'ي'; in '٠'..'٩' -> '0' + (it - '٠'); in '۰'..'۹' -> '0' + (it - '۰'); else -> it
+    } }.joinToString("").trim()
+    companion object {
+        private const val HOST = "akw.cam"
+        private const val BASE = "https://akw.cam/"
+        private const val AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+        private val MIXDROP_HOSTS = setOf("mixdrop.ag", "mixdrop.top", "mixdrop.ps", "mixdrop.co", "mixdrop.to", "mxdrop.click")
+        private val LULU_HOSTS = setOf("lulustream.com", "luluvid.com")
+        private val MEDIAFIRE_HOSTS = setOf("www.mediafire.com", "mediafire.com")
+        private const val MEDIAFIRE_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36"
+        private val ORDINALS = listOf("الاول", "الثاني", "الثالث", "الرابع", "الخامس", "السادس", "السابع", "الثامن", "التاسع", "العاشر",
+            "الحادي عشر", "الثاني عشر", "الثالث عشر", "الرابع عشر", "الخامس عشر", "السادس عشر", "السابع عشر", "الثامن عشر", "التاسع عشر", "العشرون",
+            "الحادي والعشرون", "الثاني والعشرون", "الثالث والعشرون", "الرابع والعشرون", "الخامس والعشرون", "السادس والعشرون", "السابع والعشرون", "الثامن والعشرون", "التاسع والعشرون", "الثلاثون")
+        private val SEASON_PATTERN = Regex("الموسم\\s+(\\d+|${ORDINALS.asReversed().joinToString("|") { Regex.escape(it) }})(?![\\p{L}\\p{N}])")
+    }
+}

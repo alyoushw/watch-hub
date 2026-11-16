@@ -22,16 +22,19 @@ class EgyBestSourceProvider : WatchSourceProvider {
     override suspend fun search(query: SourceQuery): List<WatchSource> = withContext(Dispatchers.IO) {
         if (!query.valid) return@withContext emptyList()
         val titles = aliases(query)
-        val searches = titles.take(2).flatMap { title ->
+        val searches = titles.take(3).flatMap { title ->
             if (query.type == MediaType.TV) listOf("$title الموسم ${ORDINALS.getOrNull((query.season ?: 1) - 1) ?: query.season} الحلقة ${query.episode}", title)
             else listOf(title)
         }.distinct()
         val visited = mutableSetOf<String>()
+        var failed: Exception? = null
         for (search in searches) {
             var next = BASE.toHttpUrl().newBuilder().addQueryParameter("s", search)
                 .addQueryParameter("type", if (query.type == MediaType.TV) "series" else "movies").build().toString()
             for (page in 1..4) {
-                val doc = read(next)
+                val doc = try { read(next) }
+                    catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { failed = e; break }
                 val candidates = doc.select("a.block[href]").filter {
                     it.absUrl("href").toHttpUrlOrNull()?.host == HOST &&
                         titleMatches(it.selectFirst("h3.title")?.text().orEmpty(), query, titles, false)
@@ -40,8 +43,10 @@ class EgyBestSourceProvider : WatchSourceProvider {
                     if (!visited.add(candidate.absUrl("href"))) continue
                     val details = try { read(candidate.absUrl("href")) }
                         catch (e: CancellationException) { throw e }
-                        catch (_: Exception) { continue }
-                    safelyResolve(details, query, titles)?.let { return@withContext listOf(it) }
+                        catch (e: Exception) { failed = e; continue }
+                    try { safelyResolve(details, query, titles)?.let { return@withContext listOf(it) } }
+                    catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { failed = e }
                     if (query.type == MediaType.TV) {
                         val episodes = details.select("a.block[href]").filter {
                             it.absUrl("href").toHttpUrlOrNull()?.host == HOST &&
@@ -52,7 +57,7 @@ class EgyBestSourceProvider : WatchSourceProvider {
                             try {
                                 safelyResolve(read(episode.absUrl("href")), query, titles)?.let { return@withContext listOf(it) }
                             } catch (e: CancellationException) { throw e }
-                            catch (_: Exception) { /* Continue to another matching episode page. */ }
+                            catch (e: Exception) { failed = e }
                         }
                     }
                 }
@@ -60,6 +65,7 @@ class EgyBestSourceProvider : WatchSourceProvider {
                     .map { it.absUrl("href") }.firstOrNull { it.toHttpUrlOrNull()?.host == HOST } ?: break
             }
         }
+        failed?.let { throw it }
         emptyList()
     }
 
@@ -75,10 +81,8 @@ class EgyBestSourceProvider : WatchSourceProvider {
         resolve(read("$BASE?p=$post"), query, aliases(query), variantId)
     }
 
-    private suspend fun safelyResolve(doc: Document, query: SourceQuery, titles: List<String>): WatchSource? = try {
+    private suspend fun safelyResolve(doc: Document, query: SourceQuery, titles: List<String>): WatchSource? =
         resolve(doc, query, titles)
-    } catch (e: CancellationException) { throw e }
-    catch (_: Exception) { null }
 
     private suspend fun resolve(doc: Document, query: SourceQuery, titles: List<String>, targetId: String? = null): WatchSource? {
         val page = doc.location().toHttpUrlOrNull()?.takeIf { it.host == HOST } ?: return null
@@ -94,7 +98,7 @@ class EgyBestSourceProvider : WatchSourceProvider {
         val post = doc.selectFirst("link[rel=shortlink]")?.absUrl("href")?.toHttpUrlOrNull()?.queryParameter("p")
             ?.takeIf { it.matches(Regex("\\d{1,10}")) } ?: return null
         val servers = doc.select("#WatchServers [data-embed-url]").mapNotNull {
-            val url = it.attr("data-embed-url").toHttpUrlOrNull()?.takeIf { parsed -> parsed.isHttps } ?: return@mapNotNull null
+            val url = it.absUrl("data-embed-url").toHttpUrlOrNull()?.takeIf { parsed -> parsed.isHttps } ?: return@mapNotNull null
             SourceWebLink(it.text().ifBlank { url.host }, url.toString())
         }.distinctBy { it.url }
         val downloads = doc.select(".download-section .tr, .downloads .tr").mapNotNull { row ->
@@ -103,6 +107,7 @@ class EgyBestSourceProvider : WatchSourceProvider {
             SourceWebLink(label, url.toString(), download = true)
         }.distinctBy { it.url }
         val limit = Semaphore(4)
+        val issues = java.util.Collections.synchronizedList(mutableListOf<SourceIssue>())
         val variants = coroutineScope {
             servers.withIndex().filter { (index, server) ->
                 server.url.toHttpUrlOrNull()?.host in EMBED_HOSTS &&
@@ -110,20 +115,25 @@ class EgyBestSourceProvider : WatchSourceProvider {
             }.map { (index, server) -> async {
                 limit.withPermit {
                     try {
-                        embeds.resolveEmbed(server.url, page.toString(), server.label, index.toString(), EMBED_HOSTS)
+                        val media = embeds.resolveEmbed(server.url, page.toString(), server.label, index.toString(), EMBED_HOSTS)
+                        if (media.isEmpty()) issues += SourceIssue(server.label, SourceHealth.UNVERIFIED)
+                        media
                             .map { variant -> variant.copy(id = if (targetId?.startsWith("server-") == true) variant.id
                                 else "egy-${serverKey(server.url)}-${variantKey(variant)}") }
                             .filter { targetId == null || it.id == targetId }
-                            .filter { probe.compatible(it) }
+                            .filter { variant ->
+                                val check = probe.inspect(variant)
+                                if (!check.playable) issues += check.issue(server.label)
+                                check.playable
+                            }
                     } catch (e: CancellationException) { throw e }
-                    catch (_: Exception) { emptyList() }
+                    catch (e: Exception) { issues += sourceFailure(server.label, e); emptyList() }
                 }
             } }.awaitAll().flatten().distinctBy { it.url }
         }
-        if (variants.isEmpty() && servers.isEmpty() && downloads.isEmpty()) return null
         return WatchSource("egybest-$post", "egybest", "EgyBest", query, variants,
             attribution = "EgyBest · ${query.originalTitle} (${query.year}) · $page", licenceUrl = page.toString(),
-            webLinks = servers + downloads)
+            webLinks = servers + downloads + SourceWebLink("صفحة العمل الأصلية", page.toString()), issues = issues.toList().distinct())
     }
 
     private fun titleMatches(raw: String, query: SourceQuery, titles: List<String>, requireEpisode: Boolean): Boolean {
@@ -146,8 +156,7 @@ class EgyBestSourceProvider : WatchSourceProvider {
         return titles.any { SourceQuery.titleKey(arabic(it)) == SourceQuery.titleKey(text) }
     }
 
-    private fun aliases(query: SourceQuery) = listOfNotNull(query.searchTitle, query.originalTitle)
-        .filter { it.isNotBlank() }.distinctBy { SourceQuery.titleKey(it) }
+    private fun aliases(query: SourceQuery) = query.websiteTitles()
 
     /** Host order can change on the website; source identity must follow the embed, not its row. */
     private fun serverKey(url: String): String = java.security.MessageDigest.getInstance("SHA-256")
@@ -160,10 +169,10 @@ class EgyBestSourceProvider : WatchSourceProvider {
     private fun read(url: String): Document {
         val parsed = url.toHttpUrlOrNull()?.takeIf { it.isHttps && it.host == HOST } ?: throw SourceException("رابط EgyBest غير متوافق")
         return SourceHttp.client.newCall(Request.Builder().url(parsed).header("User-Agent", AGENT).build()).execute().use { response ->
-            if (!response.isSuccessful || response.request.url.host != HOST) throw SourceException("تعذر الوصول إلى EgyBest (${response.code})")
+            if (!response.isSuccessful || response.request.url.host != HOST) throw SourceException("تعذر الوصول إلى EgyBest (${response.code})", response.code)
             val source = response.body?.source() ?: throw SourceException("صفحة EgyBest فارغة")
             if (source.request(2 * 1024 * 1024L + 1)) throw SourceException("صفحة EgyBest أكبر من الحد المسموح")
-            Jsoup.parse(source.readByteArray().toString(Charsets.UTF_8), response.request.url.toString())
+            checkedSourcePage(Jsoup.parse(source.readByteArray().toString(Charsets.UTF_8), response.request.url.toString()))
         }
     }
 
