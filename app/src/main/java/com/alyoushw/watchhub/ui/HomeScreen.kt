@@ -22,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.alyoushw.watchhub.data.RowSource
 import androidx.compose.runtime.getValue
@@ -46,6 +47,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
@@ -399,6 +402,7 @@ fun HomeScreen(
 ) {
     val container = appContainer()
     val vm: HomeViewModel = viewModel { HomeViewModel(container) }
+    val animeUpdates: AnimeUpdatesViewModel = viewModel { AnimeUpdatesViewModel(container.animeify) }
     val apiKey by container.settings.apiKey.collectAsStateWithLifecycle()
     val region by container.settings.region.collectAsStateWithLifecycle()
 
@@ -412,6 +416,16 @@ fun HomeScreen(
     }
 
     var live by rememberSaveable { mutableStateOf(false) }
+    val updatesScope = rememberCoroutineScope()
+    LifecycleResumeEffect(vm.type, live) {
+        val updatesJob = if (vm.type == MediaType.ANIME && !live) updatesScope.launch {
+            while (isActive) {
+                animeUpdates.refresh()
+                delay(60_000L)
+            }
+        } else null
+        onPauseOrDispose { updatesJob?.cancel() }
+    }
     // Each tab keeps its own: episodes under series, films under films (channels live in «مباشر»).
     val continueKinds = when (vm.type) {
         MediaType.TV -> setOf(WatchEntry.EPISODE, WatchEntry.ANIME)
@@ -422,7 +436,7 @@ fun HomeScreen(
         HeroTabs(
             selected = vm.type,
             onSelect = { live = false; vm.selectType(it) },
-            onRefresh = vm::refresh,
+            onRefresh = { vm.refresh(); if (vm.type == MediaType.ANIME && !live) animeUpdates.refresh(true) },
             live = live,
             onLive = { live = true },
         )
@@ -509,6 +523,14 @@ fun HomeScreen(
                     onOpenAnime = { onOpenAnime(it.animeLookup()) },
                     animeMovies = when (vm.type) { MediaType.TV -> false; MediaType.MOVIE -> true; else -> null }) }
                     item(key = "foryou") { ForYouRow(vm.type, onOpen) }
+                    if (vm.type == MediaType.ANIME) {
+                        item(key = "animeify-latest") {
+                            AnimeUpdatesRow(animeUpdates, false, onOpenAnime)
+                        }
+                        item(key = "animeify-airing") {
+                            AnimeUpdatesRow(animeUpdates, true, onOpenAnime)
+                        }
+                    }
                     items(vm.sections.filter { !(it.wide && it.id == hero?.id) }, key = { it.id }) { section ->
                         TitleRow(
                             title = section.title,

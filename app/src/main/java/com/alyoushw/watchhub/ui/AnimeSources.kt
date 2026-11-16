@@ -23,6 +23,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -43,6 +44,7 @@ data class AnimeLookup(
     val title: String, val searchTitle: String, val movie: Boolean, val poster: String?,
     val detailType: MediaType, val detailId: Int, val malId: Int? = null,
     val overview: String = "", val overviewIsEnglish: Boolean = false, val backdrop: String? = null,
+    val sourceTitle: AnimeifyTitle? = null, val initialEpisode: String? = null,
 )
 
 enum class AnimeEpisodeAction { PLAY, DOWNLOAD, DOWNLOAD_SEASON }
@@ -79,6 +81,11 @@ class AnimeSourcesViewModel(private val container: AppContainer, private val ani
             loading = true
             error = null
             try {
+                anime.sourceTitle?.let {
+                    titles = listOf(it)
+                    loadTitle(it)
+                    return@launch
+                }
                 val hits = mutableListOf<AnimeifyTitle>()
                 for (name in listOf(anime.searchTitle, anime.title).filter { it.isNotBlank() }.distinct()) {
                     hits += container.animeify.search(name, anime.movie)
@@ -189,7 +196,7 @@ fun AnimeifyWatchButton(lookup: AnimeLookup, onOpen: (AnimeLookup) -> Unit, modi
 fun AnimeSourcesScreen(lookup: AnimeLookup, onBack: () -> Unit) {
     val container = appContainer()
     val context = LocalContext.current
-    val vm: AnimeSourcesViewModel = viewModel(key = "animeify-${lookup.detailType.path}-${lookup.detailId}") {
+    val vm: AnimeSourcesViewModel = viewModel(key = "animeify-${lookup.sourceTitle?.id ?: "${lookup.detailType.path}-${lookup.detailId}"}") {
         AnimeSourcesViewModel(container, lookup)
     }
     val history by container.history.entries.collectAsStateWithLifecycle()
@@ -208,6 +215,18 @@ fun AnimeSourcesScreen(lookup: AnimeLookup, onBack: () -> Unit) {
             showDownloads = true
         } else {
             vm.chooseEpisode(ep, action)
+        }
+    }
+
+    var initialHandled by rememberSaveable(lookup.sourceTitle?.id, lookup.initialEpisode) { mutableStateOf(false) }
+    LaunchedEffect(vm.loading, vm.selected?.id, vm.error, lookup.initialEpisode) {
+        val wanted = lookup.initialEpisode
+        if (!initialHandled && !vm.loading && vm.error == null && wanted != null &&
+            vm.selected?.id == lookup.sourceTitle?.id) {
+            initialHandled = true
+            val episode = vm.episodes.firstOrNull { it.number.toDoubleOrNull() == wanted.toDoubleOrNull() }
+            if (episode != null) pickEpisode(episode)
+            else Toast.makeText(context, "الحلقة $wanted لم تعد ظاهرة في المصدر؛ اختر من الحلقات المتاحة", Toast.LENGTH_LONG).show()
         }
     }
 
