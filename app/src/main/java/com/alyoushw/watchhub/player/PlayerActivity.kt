@@ -9,6 +9,8 @@ import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.Composable
+import androidx.compose.foundation.layout.Box
 import androidx.annotation.OptIn
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -25,9 +27,14 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.alyoushw.watchhub.WatchHubApp
+import com.alyoushw.watchhub.player.casting.CastSource
+import com.alyoushw.watchhub.player.casting.PhoneCastController
+import com.alyoushw.watchhub.player.casting.PhoneCastButton
+import com.alyoushw.watchhub.player.casting.PhoneCastPanel
 import com.alyoushw.watchhub.data.WatchEntry
 import com.alyoushw.watchhub.data.XtreamException
 import com.alyoushw.watchhub.data.XtreamKind
+import com.alyoushw.watchhub.data.isTvDevice
 import com.alyoushw.watchhub.ui.WatchHubTheme
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -53,6 +60,7 @@ class PlayerActivity : ComponentActivity() {
     private val marks by lazy { SeriesMarks(this) }
     private val handler = Handler(Looper.getMainLooper())
     private val session = PlayerSession()
+    private var phoneCast: PhoneCastController? = null
 
     private var queue: List<QueueItem> = emptyList()
     private var position = 0
@@ -185,6 +193,7 @@ class PlayerActivity : ComponentActivity() {
             .build()
         player.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
+                if (phoneCast?.relaying == true) return
                 if (session.preparingSource || stoppedSourcePosition != null || isFinishing) return
                 val urls = current?.urls.orEmpty()
                 val at = if (entry?.isLive == true) 0L else player.currentPosition
@@ -223,6 +232,11 @@ class PlayerActivity : ComponentActivity() {
             }
         })
 
+        val mode = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK
+        if (!isTvDevice && mode != android.content.res.Configuration.UI_MODE_TYPE_CAR &&
+            !packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_AUTOMOTIVE)) {
+            phoneCast = PhoneCastController(this, player, ::castSource)
+        }
         playAt(position)
         loadSeriesQueue()
         // Wi-Fi ↔ mobile data: the old connection is dead; reconnect at once on the new network.
@@ -233,6 +247,7 @@ class PlayerActivity : ComponentActivity() {
                 seen = n
                 if (!started) return@collect
                 delay(1_000)
+                phoneCast?.disconnect()
                 retries = 0
                 setMedia(if (entry?.isLive == true) 0L else player.currentPosition)
             }
@@ -244,6 +259,7 @@ class PlayerActivity : ComponentActivity() {
 
         setContent {
             WatchHubTheme(forceDark = true) {
+                Box {
                 PlayerScreen(
                     player = player,
                     session = session,
@@ -262,6 +278,10 @@ class PlayerActivity : ComponentActivity() {
                     onAttachSubtitleFile = ::attachSubtitleFile,
                     onDismissSlow = { session.slowNet = null },
                     onPlayNow = ::playNowAfterPreload,
+                    castButton = phoneCast?.let { controller ->
+                        val button: @Composable () -> Unit = { PhoneCastButton(controller) }
+                        button
+                    },
                     onRestart = {
                         // Same item, same spot, with the other sound decoder.
                         saveProgress(important = true)
@@ -270,8 +290,30 @@ class PlayerActivity : ComponentActivity() {
                         recreate()
                     },
                 )
+                phoneCast?.let { PhoneCastPanel(it) }
+                }
             }
         }
+    }
+
+    private fun castSource(): CastSource {
+        check(!session.preparingSource) { "انتظر اكتمال تجهيز الفيديو ثم اختر جهاز البث." }
+        val config = player.currentMediaItem?.localConfiguration ?: error("شغّل الفيديو أولاً ثم اختر جهاز البث.")
+        check(config.drmConfiguration == null) { "هذا الفيديو المحمي لا يدعم البث باستخدام هذا المستقبِل." }
+        val uri = config.uri
+        check(uri.scheme in listOf("http", "https", "file")) { "صيغة هذا المصدر لا تدعم البث إلى جهاز آخر." }
+        val path = uri.path.orEmpty().lowercase(java.util.Locale.ROOT)
+        val mime = when {
+            player.currentManifest is androidx.media3.exoplayer.hls.HlsManifest || path.endsWith(".m3u8") -> "application/vnd.apple.mpegurl"
+            current?.mimeType != null -> current!!.mimeType!!
+            path.endsWith(".mkv") -> "video/x-matroska"
+            path.endsWith(".webm") -> "video/webm"
+            path.endsWith(".ts") -> "video/mp2t"
+            else -> player.videoFormat?.containerMimeType ?: "video/mp4"
+        }
+        return CastSource(uri.toString(), mime, entry?.title ?: "Watch Hub", entry?.isLive == true,
+            player.currentPosition.coerceAtLeast(0), player.duration.takeIf { it > 0 && it != C.TIME_UNSET } ?: 0L,
+            current?.httpHeaders.orEmpty())
     }
 
     // ---------- moving through the queue ----------
@@ -700,7 +742,8 @@ class PlayerActivity : ComponentActivity() {
         val e = entry ?: return
         if (current?.recordHistory == false || e.isLive || !started) return
         val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: return
-        val saved = e.copy(positionMs = player.currentPosition.coerceAtLeast(0), durationMs = duration)
+        val at = phoneCast?.takeIf { it.connected }?.remotePosition ?: player.currentPosition
+        val saved = e.copy(positionMs = at.coerceAtLeast(0), durationMs = duration)
         if (saved.finished) container.stats.recordFinished(e.key)
         history.save(saved, important)
     }
@@ -709,7 +752,7 @@ class PlayerActivity : ComponentActivity() {
         super.onStart()
         stoppedSourcePosition?.let { position -> stoppedSourcePosition = null; setMedia(position) }
         if (::player.isInitialized) {
-            player.playWhenReady = true
+            player.playWhenReady = phoneCast?.connected != true
             handler.postDelayed(saver, 5_000)
         }
     }
@@ -720,7 +763,7 @@ class PlayerActivity : ComponentActivity() {
         if (::player.isInitialized) {
             saveProgress(important = true)
             player.pause()
-            if (entry?.sourceRef != null) {
+            if (entry?.sourceRef != null && phoneCast?.relaying != true) {
                 stoppedSourcePosition = player.currentPosition
                 resolveJob?.cancel()
                 activeSourceUri?.let(container.playbackEngines::release)
@@ -730,6 +773,7 @@ class PlayerActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        phoneCast?.close()
         resolveJob?.cancel()
         if (::player.isInitialized) player.release()
         activeSourceUri?.let(container.playbackEngines::release)

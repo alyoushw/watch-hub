@@ -13,6 +13,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -161,6 +163,7 @@ fun PlayerScreen(
     onAttachSubtitleFile: (android.net.Uri, String) -> Unit = { _, _ -> },
     onDismissSlow: () -> Unit = {},
     onPlayNow: () -> Unit = {},
+    castButton: (@Composable () -> Unit)? = null,
 ) {
     val title = session.title
     val subtitle = session.subtitle
@@ -718,6 +721,7 @@ fun PlayerScreen(
                         playFocus = playFocus,
                         seekFocus = seekFocus,
                         tv = tv,
+                        castButton = castButton,
                         onBack = onBack,
                         onPlayPause = ::togglePlay,
                         onSeekBy = ::seekBy,
@@ -917,6 +921,7 @@ private fun Controls(
     playFocus: FocusRequester,
     seekFocus: FocusRequester,
     tv: Boolean,
+    castButton: (@Composable () -> Unit)?,
     onBack: () -> Unit,
     onPlayPause: () -> Unit,
     onSeekBy: (Long) -> Unit,
@@ -936,6 +941,7 @@ private fun Controls(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
+            castButton?.invoke()
             ToolButton(Icons.AutoMirrored.Filled.ArrowBack, "رجوع", onBack)
             Column(Modifier.weight(1f).padding(horizontal = 6.dp)) {
                 Text(
@@ -945,16 +951,21 @@ private fun Controls(
                 subtitle?.let { Text(it, color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 filter?.let { Text(it, color = Gold, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
             }
-            if (live) ToolButton(PlayerIcons.Sources, "نفس القناة في حسابات ثانية") { onMenu(Menu.SOURCES) }
-            ToolButton(PlayerIcons.Subtitles, "الترجمة") { onMenu(Menu.SUBTITLES) }
-            ToolButton(PlayerIcons.Quality, "الجودة") { onMenu(Menu.QUALITY) }
-            ToolButton(PlayerIcons.Audio, "الصوت المعلّق") { onMenu(Menu.AUDIO) }
-            ToolButton(PlayerIcons.Aspect, resizeLabel, onResize)
-            if (!live) ToolButton(PlayerIcons.Speed, if (speed == 1f) "السرعة" else "×$speed") { onMenu(Menu.SPEED) }
-            ToolButton(PlayerIcons.Sleep, sleepLeft?.let { "مؤقت النوم: $it" } ?: "مؤقت النوم") { onMenu(Menu.SLEEP) }
-            sleepLeft?.let { Text(it, color = Gold, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
-            ToolButton(PlayerIcons.Info, "معلومات التشغيل") { onMenu(Menu.INFO) }
-            ToolButton(PlayerIcons.Lock, "قفل الشاشة", onLock)
+            val tools: @Composable () -> Unit = {
+                if (live) ToolButton(PlayerIcons.Sources, "نفس القناة في حسابات ثانية") { onMenu(Menu.SOURCES) }
+                ToolButton(PlayerIcons.Subtitles, "الترجمة") { onMenu(Menu.SUBTITLES) }
+                ToolButton(PlayerIcons.Quality, "الجودة") { onMenu(Menu.QUALITY) }
+                ToolButton(PlayerIcons.Audio, "الصوت المعلّق") { onMenu(Menu.AUDIO) }
+                ToolButton(PlayerIcons.Aspect, resizeLabel, onResize)
+                if (!live) ToolButton(PlayerIcons.Speed, if (speed == 1f) "السرعة" else "×$speed") { onMenu(Menu.SPEED) }
+                ToolButton(PlayerIcons.Sleep, sleepLeft?.let { "مؤقت النوم: $it" } ?: "مؤقت النوم") { onMenu(Menu.SLEEP) }
+                sleepLeft?.let { Text(it, color = Gold, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                ToolButton(PlayerIcons.Info, "معلومات التشغيل") { onMenu(Menu.INFO) }
+                ToolButton(PlayerIcons.Lock, "قفل الشاشة", onLock)
+            }
+            if (castButton != null) Row(Modifier.weight(2f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) { tools() }
+            else tools()
         }
 
         // Middle: skip back, play/pause, skip forward.
@@ -1643,6 +1654,7 @@ fun formatTime(ms: Long): String {
 
 /** Material icons the app needs beyond the small core set (paths from Material Icons, Apache 2.0). */
 object PlayerIcons {
+    val Cast = icon("Cast", "M21 3H3c-1.1 0-2 .9-2 2v3h2V5h18v14h-6v2h6c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7zm0-4v2c4.97 0 9 4.03 9 9h2c0-6.08-4.92-11-11-11z")
     private fun icon(name: String, path: String) = ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f)
         .addPath(addPathNodes(path), fill = SolidColor(Color.White))
         .build()
