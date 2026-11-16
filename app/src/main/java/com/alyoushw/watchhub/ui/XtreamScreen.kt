@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -45,6 +46,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -64,9 +66,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -638,11 +643,9 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
     }
 }
 
-/**
- * "مشاهدة" next to the poster on a title page: plays the film (or opens the series) straight
- * from the user's Xtream Codes accounts. With several accounts there is one button for each
- * account that has it ("مشاهدة · <name>").
- */
+private data class XtreamWatchChoice(val account: XtreamAccount, val item: XtreamItem, val category: String?)
+
+/** A title page opens every matching account version for selection before playback. */
 @Composable
 fun XtreamWatchButton(
     isSeries: Boolean,
@@ -657,21 +660,62 @@ fun XtreamWatchButton(
     val usable = accounts.filter { it.isComplete }
     if (usable.isEmpty()) return
 
-    var searching by remember(tmdbId, usable) { mutableStateOf(true) }
-    var matches by remember(tmdbId, usable) { mutableStateOf<List<Pair<XtreamAccount, XtreamItem>>>(emptyList()) }
-    LaunchedEffect(tmdbId, usable) {
+    var searching by remember(isSeries, tmdbId, titles, year, usable) { mutableStateOf(true) }
+    var matches by remember(isSeries, tmdbId, titles, year, usable) { mutableStateOf<List<XtreamWatchChoice>>(emptyList()) }
+    var chooseVersion by remember(isSeries, tmdbId, titles, year, usable) { mutableStateOf(false) }
+    LaunchedEffect(isSeries, tmdbId, titles, year, usable) {
+        val kind = if (isSeries) XtreamKind.SERIES else XtreamKind.MOVIE
         matches = coroutineScope {
             usable.map { acc ->
                 async {
                     try {
-                        container.xtream.findMatch(if (isSeries) XtreamKind.SERIES else XtreamKind.MOVIE, tmdbId, titles, year, acc)?.let { acc to it }
+                        val found = container.xtream.findMatches(kind, tmdbId, titles, year, acc)
+                        val categories = if (found.size > 1) try {
+                            container.xtream.categories(kind, acc).associate { it.id to it.name }
+                        } catch (_: XtreamException) { emptyMap() } else emptyMap()
+                        found.map { XtreamWatchChoice(acc, it, categories[it.categoryId]) }
                     } catch (e: XtreamException) {
-                        null
+                        emptyList()
                     }
                 }
-            }.awaitAll().filterNotNull()
+            }.awaitAll().flatten()
         }
         searching = false
+    }
+
+    fun play(choice: XtreamWatchChoice) {
+        chooseVersion = false
+        val (acc, found) = choice
+        if (found.kind == XtreamKind.SERIES) {
+            container.settings.setActiveXtream(acc.id)
+            onOpenSeries(found.id)
+        } else {
+            PlayerActivity.start(context, container.xtream.playUrls(found, acc), WatchEntry.movie(found, acc, tmdbId))
+        }
+    }
+
+    if (chooseVersion) {
+        val firstFocus = remember { FocusRequester() }
+        LaunchedEffect(Unit) { withFrameNanos { }; runCatching { firstFocus.requestFocus() } }
+        AlertDialog(
+            onDismissRequest = { chooseVersion = false },
+            title = { Text("اختر النسخة (${matches.size})") },
+            text = {
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    itemsIndexed(matches, key = { _, choice -> "${choice.account.id}:${choice.item.id}" }) { index, choice ->
+                        OutlinedButton(onClick = { play(choice) },
+                            modifier = Modifier.fillMaxWidth().then(if (index == 0) Modifier.focusRequester(firstFocus) else Modifier).focusFrame()) {
+                            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(choice.item.name, fontWeight = FontWeight.Bold)
+                                Text(listOfNotNull(choice.account.label, choice.category, choice.item.year).joinToString(" · "),
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { chooseVersion = false }, modifier = Modifier.focusFrame()) { Text("إغلاق") } },
+        )
     }
 
     val colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Color(0xFF1C1206))
@@ -684,26 +728,14 @@ fun XtreamWatchButton(
         matches.isEmpty() -> Button(onClick = {}, enabled = false, colors = colors, modifier = Modifier.height(44.dp)) {
             Text(if (usable.size > 1) "مو موجود في حساباتك" else "مو موجود في حسابك")
         }
-        else -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            matches.forEach { (acc, found) ->
-                Button(
-                    onClick = {
-                        if (found.kind == XtreamKind.SERIES) {
-                            // The series page shows the active account, so switch to the one that has it.
-                            container.settings.setActiveXtream(acc.id)
-                            onOpenSeries(found.id)
-                        } else {
-                            PlayerActivity.start(context, container.xtream.playUrls(found, acc), WatchEntry.movie(found, acc, tmdbId))
-                        }
-                    },
-                    colors = colors,
-                    modifier = Modifier.height(44.dp).focusFrame(),
-                ) {
-                    Icon(Icons.Filled.PlayArrow, contentDescription = null)
-                    Spacer(Modifier.width(6.dp))
-                    Text(if (usable.size > 1) "مشاهدة · ${acc.label}" else "مشاهدة", fontWeight = FontWeight.Bold)
-                }
-            }
+        else -> Button(
+            onClick = { if (matches.size > 1) chooseVersion = true else play(matches.single()) },
+            colors = colors, modifier = Modifier.height(44.dp).focusFrame(),
+        ) {
+            Icon(Icons.Filled.PlayArrow, contentDescription = null)
+            Spacer(Modifier.width(6.dp))
+            Text((if (usable.size > 1) "مشاهدة في حساباتي" else "مشاهدة في حسابي") +
+                if (matches.size > 1) " · ${matches.size} نسخ" else "", fontWeight = FontWeight.Bold)
         }
     }
 }

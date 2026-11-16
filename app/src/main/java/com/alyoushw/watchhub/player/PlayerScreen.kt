@@ -57,10 +57,12 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
@@ -78,6 +80,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
@@ -234,6 +239,7 @@ fun PlayerScreen(
         if (live) return
         val target = (player.currentPosition + ms).coerceIn(0, (player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE))
         player.seekTo(target)
+        position = target
         flash(Indicator(if (ms < 0) PlayerIcons.Replay else PlayerIcons.Forward, (if (ms < 0) "-" else "+") + "${abs(ms) / 1000} ث"))
     }
 
@@ -362,9 +368,20 @@ fun PlayerScreen(
 
     val rootFocus = remember { FocusRequester() }
     val playFocus = remember { FocusRequester() }
-    LaunchedEffect(controls, menu) {
-        // TV: with the controls hidden the remote talks to the player; shown, it lands on play/pause.
-        runCatching { if (controls && menu == null) playFocus.requestFocus() else if (!controls) rootFocus.requestFocus() }
+    val seekFocus = remember { FocusRequester() }
+    val unlockFocus = remember { FocusRequester() }
+    LaunchedEffect(controls, menu, tv, live, locked) {
+        if (!tv || menu != null) return@LaunchedEffect
+        // Wait for the animated controls to attach; menus keep their own focus.
+        withFrameNanos { }
+        runCatching {
+            when {
+                !controls -> rootFocus
+                locked -> unlockFocus
+                live -> playFocus
+                else -> seekFocus
+            }.requestFocus()
+        }
     }
 
     // Brightness starts from the screen's own setting.
@@ -389,6 +406,7 @@ fun PlayerScreen(
                 .fillMaxSize()
                 .background(Color.Black)
                 .focusRequester(rootFocus)
+                .focusProperties { if (tv) canFocus = !controls && menu == null }
                 .focusable()
                 .onPreviewKeyEvent { e ->
                     if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -419,7 +437,10 @@ fun PlayerScreen(
                         // Controls hidden: left/right switch channel (live) or skip 10 s.
                         KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> if (!controls && !locked && menu == null) {
                             val right = e.key.nativeKeyCode == KeyEvent.KEYCODE_DPAD_RIGHT
-                            if (live) switchChannel(right) else seekBy(if (right) 10_000 else -10_000)
+                            if (live) switchChannel(right) else {
+                                if (tv) controls = true
+                                seekBy(if (right) 10_000 else -10_000)
+                            }
                             true
                         } else {
                             false
@@ -666,7 +687,7 @@ fun PlayerScreen(
             AnimatedVisibility(controls, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
                 if (locked) {
                     Box(Modifier.fillMaxSize()) {
-                        RoundButton(PlayerIcons.Lock, "افتح القفل", Modifier.align(Alignment.CenterStart).padding(24.dp)) {
+                        RoundButton(PlayerIcons.Lock, "افتح القفل", Modifier.align(Alignment.CenterStart).padding(24.dp).focusRequester(unlockFocus)) {
                             locked = false
                             flash(Indicator(PlayerIcons.Lock, "انفتح القفل"))
                         }
@@ -690,11 +711,14 @@ fun PlayerScreen(
                         speed = speed,
                         resizeLabel = PictureModes[resize].label,
                         playFocus = playFocus,
+                        seekFocus = seekFocus,
+                        tv = tv,
                         onBack = onBack,
                         onPlayPause = ::togglePlay,
                         onSeekBy = ::seekBy,
                         onSeekTo = {
                             player.seekTo(it)
+                            position = it
                             poke()
                         },
                         onMenu = {
@@ -886,6 +910,8 @@ private fun Controls(
     speed: Float,
     resizeLabel: String,
     playFocus: FocusRequester,
+    seekFocus: FocusRequester,
+    tv: Boolean,
     onBack: () -> Unit,
     onPlayPause: () -> Unit,
     onSeekBy: (Long) -> Unit,
@@ -933,15 +959,17 @@ private fun Controls(
             horizontalArrangement = Arrangement.spacedBy(36.dp),
         ) {
             if (live && hasPrevious) RoundButton(PlayerIcons.Previous, "القناة السابقة", onClick = onPrevious)
-            if (!live) RoundButton(PlayerIcons.Replay, "رجوع 10 ثواني", label = "10") { onSeekBy(-10_000) }
+            if (!live) RoundButton(PlayerIcons.Replay, "رجوع 10 ثواني",
+                Modifier.focusProperties { if (tv) down = seekFocus }, label = "10") { onSeekBy(-10_000) }
             RoundButton(
                 if (playing) PlayerIcons.Pause else Icons.Filled.PlayArrow,
                 if (playing) "إيقاف مؤقت" else "تشغيل",
-                Modifier.focusRequester(playFocus),
+                Modifier.focusRequester(playFocus).focusProperties { if (tv && !live) down = seekFocus },
                 big = true,
                 onClick = onPlayPause,
             )
-            if (!live) RoundButton(PlayerIcons.Forward, "تقديم 10 ثواني", label = "10") { onSeekBy(10_000) }
+            if (!live) RoundButton(PlayerIcons.Forward, "تقديم 10 ثواني",
+                Modifier.focusProperties { if (tv) down = seekFocus }, label = "10") { onSeekBy(10_000) }
             if (live && hasNext) RoundButton(PlayerIcons.Next, "القناة الجاية", onClick = onNext)
         }
 
@@ -966,7 +994,8 @@ private fun Controls(
                     Text("◀ ▶ لتغيير القناة", color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
                 }
             } else {
-                var dragging by remember { mutableStateOf<Float?>(null) }
+                var dragging by remember(title) { mutableStateOf<Float?>(null) }
+                var timelineFocused by remember { mutableStateOf(false) }
                 val fraction = if (duration > 0) position.toFloat() / duration else 0f
                 Slider(
                     value = dragging ?: fraction,
@@ -979,8 +1008,54 @@ private fun Controls(
                         dragging = null
                     },
                     colors = SliderDefaults.colors(thumbColor = Gold, activeTrackColor = Gold, inactiveTrackColor = Color.White.copy(alpha = 0.3f)),
-                    modifier = Modifier.fillMaxWidth().height(28.dp),
+                    modifier = Modifier.fillMaxWidth().height(if (tv) 48.dp else 28.dp)
+                        .focusRequester(seekFocus)
+                        .onFocusChanged {
+                            timelineFocused = it.hasFocus
+                            if (tv && !it.hasFocus) {
+                                dragging?.let { value -> onSeekTo((value * duration).toLong()) }
+                                dragging = null
+                            }
+                        }
+                        .focusProperties { if (tv) up = playFocus }
+                        .border(if (tv && timelineFocused) 2.dp else 0.dp,
+                            if (tv && timelineFocused) Gold else Color.Transparent, RoundedCornerShape(8.dp))
+                        .semantics {
+                            contentDescription = "شريط التقدم"
+                            stateDescription = "${formatTime(dragging?.let { (it * duration).toLong() } ?: position)} من ${formatTime(duration)}"
+                        }
+                        .onPreviewKeyEvent { event ->
+                            if (!tv) return@onPreviewKeyEvent false
+                            when (event.key.nativeKeyCode) {
+                                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                    onInteract()
+                                    if (duration > 0) {
+                                        if (event.type == KeyEventType.KeyDown) {
+                                            val step = when {
+                                                event.nativeKeyEvent.repeatCount < 5 -> 10_000L
+                                                event.nativeKeyEvent.repeatCount < 15 -> 30_000L
+                                                else -> 60_000L
+                                            }
+                                            val from = dragging?.let { (it * duration).toLong() } ?: position
+                                            val delta = if (event.key.nativeKeyCode == KeyEvent.KEYCODE_DPAD_RIGHT) step else -step
+                                            dragging = (from + delta).coerceIn(0L, duration).toFloat() / duration
+                                        } else if (event.type == KeyEventType.KeyUp) {
+                                            if (!event.nativeKeyEvent.isCanceled) dragging?.let { onSeekTo((it * duration).toLong()) }
+                                            dragging = null
+                                        }
+                                    }
+                                    true
+                                }
+                                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                                    if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) onPlayPause()
+                                    true
+                                }
+                                else -> false
+                            }
+                        },
                 )
+                if (tv && timelineFocused) Text("يمين ويسار: 10 ثوانٍ · اضغط مطولاً للتسريع · OK للتشغيل والإيقاف",
+                    color = Gold, fontSize = 12.sp)
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(formatTime(dragging?.let { (it * duration).toLong() } ?: position), color = Color.White, fontSize = 13.sp)
                     badges.forEach { QualityBadge(it) }

@@ -204,17 +204,30 @@ class XtreamApi(private val settings: SettingsStore) {
         titles: List<String>,
         year: String?,
         account: XtreamAccount = active,
-    ): XtreamItem? {
+    ): XtreamItem? = findMatches(kind, tmdbId, titles, year, account).firstOrNull()
+
+    /** Preserve every matching provider entry so the viewer can choose its version/category. */
+    suspend fun findMatches(
+        kind: XtreamKind,
+        tmdbId: Int,
+        titles: List<String>,
+        year: String?,
+        account: XtreamAccount = active,
+    ): List<XtreamItem> {
         val index = matchIndex(kind, account)
-        index.byTmdb[tmdbId.toString()]?.let { return it }
         val wanted = titles.map { normalizeTitle(it) }.filter { it.length >= 2 }.toSet()
-        if (wanted.isEmpty()) return null
-        val hits = wanted.flatMap { index.byName[it].orEmpty() }
-        return hits.firstOrNull { year != null && (it.year == year || it.name.contains(year)) } ?: hits.firstOrNull()
+        val id = tmdbId.toString()
+        val named = wanted.flatMap { index.byName[it].orEmpty() }.filter {
+            (it.tmdb.isNullOrBlank() || it.tmdb == id) && (year == null || it.year == null || it.year == year)
+        }
+        return (index.byTmdb[id].orEmpty() + named).distinctBy { it.id }
+            .sortedWith(compareBy<XtreamItem> { if (it.tmdb == id) 0 else 1 }
+                .thenBy { if (year != null && (it.year == year || it.name.contains(year))) 0 else 1 }
+                .thenBy { it.name.lowercase(Locale.ROOT) }.thenBy { it.id })
     }
 
     /** An account's films or series by TMDB id and by cleaned-up name. */
-    private class MatchIndex(val byTmdb: Map<String, XtreamItem>, val byName: Map<String, List<XtreamItem>>)
+    private class MatchIndex(val byTmdb: Map<String, List<XtreamItem>>, val byName: Map<String, List<XtreamItem>>)
 
     private val matchIndexes = mutableMapOf<String, MatchIndex>()
     private val matchLock = Mutex()
@@ -229,7 +242,7 @@ class XtreamApi(private val settings: SettingsStore) {
         val list = all(kind, account)
         val index = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
             MatchIndex(
-                list.filter { !it.tmdb.isNullOrBlank() }.associateBy { it.tmdb!! },
+                list.filter { !it.tmdb.isNullOrBlank() }.groupBy { it.tmdb!! },
                 list.groupBy { normalizeTitle(it.name) },
             )
         }
@@ -353,7 +366,7 @@ class XtreamApi(private val settings: SettingsStore) {
         // Provider labels in front of the name: "[AR]", "|AR|", "AR:", "AR - ", "AR-AS-S:", "4K-AR|".
         private val tagPrefix = Regex("""^\s*(\[[^\]]*\]|\|[^|]{1,6}\||[A-Z0-9]{1,6}(-[A-Z0-9]{1,6}){1,4}\s*[|:]\s*|[A-Z]{2,3}\s*[|:]\s*|[A-Z]{2,3}\s+-\s+)""")
         private val bracketed = Regex("""[(\[{][^)\]}]*[)\]}]""")
-        private val qualityWords = Regex("""\b(4k|uhd|fhd|hd|sd|hevc|multi[- ]?sub|vip)\b""")
+        private val qualityWords = Regex("""\b(4k|8k|uhd|fhd|hd|sd|(?:360|480|576|720|1080|1440|2160|4320)p|hdr10\+?|hdr|hevc|[xh][ .]?26[45]|multi[- ]?sub|vip)\b""")
         private val yearWord = Regex("""\b(19|20)\d{2}\b""")
         private val nonWord = Regex("""[^\p{L}\p{Nd}]+""")
 
