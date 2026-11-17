@@ -126,18 +126,19 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
             var page = pickLink(js(view, LINKS_SCRIPT), wanted, view.url, note = ::note)
                 ?: run { status = "ما لقينا «$title» في نتائج توك توك."; done = true; return@LaunchedEffect }
             status = "فتحنا صفحة العمل…"
+            frameLinks.clear(); media.clear() // nothing from the search page counts
             load(view, page)
             note("title ${view.url}")
             // A series page lists episodes: go to the episode itself.
             if (series) pickLink(js(view, LINKS_SCRIPT), wanted, view.url, episodeOnly = true, note = ::note)?.let {
-                page = it; load(view, it); note("episode ${view.url}")
+                page = it; frameLinks.clear(); media.clear(); load(view, it); note("episode ${view.url}")
             }
             // A separate "watch" page, when the title page links to one.
             js(view, WATCH_LINK_SCRIPT)?.takeIf { it.startsWith("http") && it != view.url }?.let {
-                status = "فتحنا صفحة المشاهدة…"; load(view, it); note("watch ${view.url}")
+                status = "فتحنا صفحة المشاهدة…"; frameLinks.clear(); media.clear(); load(view, it); note("watch ${view.url}")
             }
             // 2. Servers from every frame (the player's list is inside an iframe).
-            status = "نقرأ سيرفرات المشاهدة والتحميل…"
+            status = "وصلنا: ${view.title ?: view.url} · نقرأ السيرفرات…"
             delay(5000)
             val servers = frameLinks.values.filter { !it.download && !(Uri.parse(it.url).host ?: "").contains("tuktuk", true) }
                 .distinctBy { it.url }.take(12)
@@ -325,8 +326,9 @@ private val FRAME_SCAN = """
     var attrs=['data-src','data-url','data-link','data-embed','data-embed-url','data-server','data-watch','data-iframe','data-frame','data-href','data-video'];
     document.querySelectorAll('['+attrs.join('],[')+']').forEach(function(e){attrs.forEach(function(a){var v=e.getAttribute(a);
       if(v&&/^(https?:)?\/\//.test(v)&&!/\.(jpe?g|png|webp|gif|svg|css|js)(\?|$)/i.test(v))add(v,e.textContent||e.title,'watch');});});
-    document.querySelectorAll('iframe[src]').forEach(function(f){add(f.src,'','watch');});
-    document.querySelectorAll('a[href]').forEach(function(a){var t=(a.textContent||'')+' '+(a.className||'')+' '+((a.parentElement&&a.parentElement.className)||'');
+    function chrome(e){return e.closest&&e.closest('header,nav,footer,aside,.menu,.navbar,.footer,.header,[class*="menu"],[class*="nav"],[id*="menu"]');}
+    document.querySelectorAll('iframe[src]').forEach(function(f){var r=f.getBoundingClientRect();if(r.width>200&&r.height>100)add(f.src,'','watch');});
+    document.querySelectorAll('a[href]').forEach(function(a){if(chrome(a))return;var t=(a.textContent||'')+' '+(a.className||'')+' '+((a.parentElement&&a.parentElement.className)||'');
       if(/\.(mp4|mkv|m3u8)(\?|$)/i.test(a.href))m(a.href);
       if(/تحميل|download/i.test(t))add(a.href,a.textContent,'download');});
     try{if(window.jwplayer){(jwplayer().getPlaylist()||[]).forEach(function(i){(i.sources||[{file:i.file}]).forEach(function(s){if(s.file)m(s.file);});});}}catch(e){}
