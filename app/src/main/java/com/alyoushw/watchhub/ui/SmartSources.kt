@@ -70,10 +70,8 @@ fun SourceWatchScreen(
     if (lookup.providerId == "tuktuk") {
         // TukTuk sits behind Cloudflare: browse it in the app (the viewer passes any check like a
         // normal browser) and hand the video it plays to Watch Hub's player.
-        val search = lookup.query.searchTitle?.takeIf { it.isNotBlank() } ?: lookup.query.originalTitle
         androidx.activity.compose.BackHandler(onBack = onBack)
-        KoraScreen(onBack = onBack, homeUrl = TUKTUK_HOME + "?s=" + Uri.encode(search), pageTitle = "TukTuk · ${lookup.title}",
-            detectVideos = true, siteKeyword = "tuktuk")
+        TukTukFinderScreen(lookup, TUKTUK_HOME, onBack)
         return
     }
     val container = appContainer()
