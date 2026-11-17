@@ -2,6 +2,7 @@
 import * as tmdb from "./tmdb.js";
 import * as foryou from "./foryou.js";
 import * as xt from "./xtream.js";
+import * as fouru from "./fouru.js";
 import { play, fmt } from "./player.js";
 import * as smart from "./smart.js";
 import { fillTranslated } from "./translate.js";
@@ -104,6 +105,7 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", applyThe
 const routes = [
   [/^#?\/?$/, home, "home"],
   [/^#\/live$/, live, "live"],
+  [/^#\/fouru\/(.+)$/, fourUPage, "home"],
   [/^#\/search(?:\?q=(.*))?$/, searchPage, "search"],
   [/^#\/title\/(movie|tv)\/(\d+)$/, titlePage, null],
   [/^#\/person\/(\d+)$/, personPage, null],
@@ -561,6 +563,7 @@ async function titlePage(id, type, tmdbId) {
           ${d.vote_average ? `<div class="rating">★ ${d.vote_average.toFixed(1)} / 10 · ${(d.vote_count || 0).toLocaleString("en")} تقييم</div>` : ""}
           <div class="actions" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px">
             <span id="xwatch"></span>
+            <button id="fouru-watch" class="btn">4U</button>
             <button id="save" class="btn ghost">${saved ? "✓ في قائمتي" : "+ أضفه لقائمتي"}</button>
           </div>
         </div>
@@ -594,6 +597,9 @@ async function titlePage(id, type, tmdbId) {
     }
   });
 
+  $("#fouru-watch").addEventListener("click", () => {
+    location.hash = "#/fouru/" + encodeURIComponent(JSON.stringify({ type, tmdbId: Number(tmdbId), names: [title, enTitle, d.original_title || d.original_name], year, title, overview, image: tmdb.image(d.poster_path, "w500") }));
+  });
   if (xtreamReady()) xtreamWatchButton($("#xwatch"), type, tmdbId, [title, enTitle, d.original_title || d.original_name], year);
 }
 
@@ -733,6 +739,52 @@ async function listPage() {
   render();
 }
 
+// 4U opens its own title/episode page before the user starts playback.
+async function fourUPage(id, encoded) {
+  const lookup = JSON.parse(encoded);
+  const isSeries = lookup.type !== "movie";
+  let choices;
+  try { choices = lookup.sourceId ? [{ name: lookup.title, series_id: lookup.sourceId }] : await fouru.matches(isSeries, lookup.names, lookup.year); }
+  catch (e) { if (!stale(id)) view.innerHTML = message(e.message, '<button class="btn" id="fouru-retry">حاول مرة ثانية</button>'); $("#fouru-retry")?.addEventListener("click", route); return; }
+  if (stale(id)) return;
+  const choose = async (title) => {
+    let episodes = [], plot = lookup.overview || "";
+    if (isSeries) {
+      view.innerHTML = loading();
+      try {
+        const detail = await fouru.series(title.series_id);
+        episodes = (Array.isArray(detail.episodes) ? detail.episodes.flat() : Object.values(detail.episodes || {}).flat())
+          .sort((a, b) => Number(a.season) - Number(b.season) || Number(a.episode_num) - Number(b.episode_num));
+        plot = detail.info?.plot || plot;
+        title = { ...title, ...detail.info, series_id: title.series_id };
+      } catch (e) { if (!stale(id)) { view.innerHTML = message(e.message, '<button class="btn" id="fouru-retry">حاول مرة ثانية</button>'); $("#fouru-retry")?.addEventListener("click", route); } return; }
+    }
+    if (stale(id)) return;
+    let season = Number(episodes[0]?.season || 1);
+    const playRow = (row) => {
+      const entry = fouru.entry(row, title, isSeries, lookup.tmdbId);
+      const queue = isSeries ? episodes.map((ep) => { const e = fouru.entry(ep, title, true, lookup.tmdbId); return { urls: fouru.urls(e.fourURef), entry: e }; }) : null;
+      play(fouru.urls(entry.fourURef), entry, queue, isSeries ? episodes.indexOf(row) : 0);
+    };
+    const render = () => {
+      const seasons = [...new Set(episodes.map((ep) => Number(ep.season || 1)))];
+      const image = title.cover || title.stream_icon || lookup.image;
+      view.innerHTML = `<section class="title-head"><div class="inner"><div class="poster">${image ? `<img src="${esc(xt.img(image))}" alt="">` : ""}</div><div class="meta"><h1>4U · ${esc(title.name || lookup.title)}</h1>${plot ? `<p class="overview">${esc(plot)}</p>` : ""}<button class="btn ghost" id="fouru-back">رجوع</button></div></div></section>
+        ${isSeries ? `<div class="chips scroll">${seasons.map((n) => `<button class="chip ${n === season ? "on" : ""}" data-fouru-season="${n}">الموسم ${n}</button>`).join("")}</div><div class="episodes">${episodes.filter((ep) => Number(ep.season || 1) === season).map((ep) => `<button class="episode" data-fouru-episode="${esc(ep.id)}"><span>▶ الحلقة ${esc(ep.episode_num)} · ${esc(ep.title)}</span></button>`).join("")}</div>${episodes.length ? "" : message("لا توجد حلقات متاحة في 4U حالياً")}` : '<button class="btn" id="fouru-play">▶ تشغيل 4U</button>'}`;
+      $("#fouru-back").addEventListener("click", () => choices.length > 1 ? renderChoices() : window.history.back());
+      $("#fouru-play")?.addEventListener("click", () => playRow(title));
+      view.querySelectorAll("[data-fouru-season]").forEach((b) => b.addEventListener("click", () => { season = Number(b.dataset.fouruSeason); render(); }));
+      view.querySelectorAll("[data-fouru-episode]").forEach((b) => b.addEventListener("click", () => playRow(episodes.find((ep) => String(ep.id) === b.dataset.fouruEpisode))));
+    };
+    render();
+  };
+  const renderChoices = () => {
+    view.innerHTML = `<h1>4U · ${esc(lookup.title)}</h1>${choices.length ? `<div class="episodes">${choices.map((row, i) => `<button class="episode" data-fouru-choice="${i}">${esc(row.name)}</button>`).join("")}</div>` : message("هذا العمل غير موجود في 4U حالياً")}`;
+    view.querySelectorAll("[data-fouru-choice]").forEach((b) => b.addEventListener("click", () => choose(choices[Number(b.dataset.fouruChoice)])));
+  };
+  if (choices.length === 1) await choose(choices[0]); else renderChoices();
+}
+
 // ---------- live channels ----------
 
 const RECENT = "__recent";
@@ -772,11 +824,18 @@ function bindAccountChips() {
 }
 
 async function live(id) {
-  if (!xtreamReady()) {
-    view.innerHTML = message("أضف حساب Xtream Codes من الإعدادات عشان تطلع لك القنوات المباشرة هنا", goSettings);
-    return;
-  }
-  const [cats, channels] = await Promise.all([xt.categories("live"), xt.all("live")]);
+  const useFourU = !xtreamReady() || sessionStorage.getItem("liveSource") === "fouru";
+  const sourceChips = `<div class="chips scroll">${accounts.all().map((a) => `<button class="chip ${!useFourU && accounts.active()?.id === a.id ? "on" : ""}" data-live-account="${esc(a.id)}">${esc(accounts.label(a))}</button>`).join("")}<button class="chip ${useFourU ? "on" : ""}" data-live-fouru>4U</button></div>`;
+  const bindSources = () => {
+    view.querySelector("[data-live-fouru]")?.addEventListener("click", () => { sessionStorage.setItem("liveSource", "fouru"); route(); });
+    view.querySelectorAll("[data-live-account]").forEach((b) => b.addEventListener("click", () => { sessionStorage.removeItem("liveSource"); accounts.setActive(b.dataset.liveAccount); route(); }));
+  };
+  view.innerHTML = sourceChips + loading(); bindSources();
+  let cats, channels;
+  try { [cats, channels] = await Promise.all(useFourU ? [fouru.categories(), fouru.channels()] : [xt.categories("live"), xt.all("live")]); }
+  catch (e) { if (!stale(id)) { view.innerHTML = sourceChips + message(e.message, '<button class="btn" id="fouru-retry">حاول مرة ثانية</button>'); bindSources(); $("#fouru-retry")?.addEventListener("click", route); } return; }
+  const liveUrls = (row) => useFourU ? fouru.urls({ kind: "live", id: row.id, extension: row.ext || "ts" }) : xt.playUrls(row);
+  const liveEntry = (row) => useFourU ? fouru.liveEntry(row) : xt.entryLive(row);
   if (stale(id)) return;
 
   const byId = new Map(channels.map((c) => [c.id, c]));
@@ -792,7 +851,7 @@ async function live(id) {
   let epgSeq = 0;
 
   view.innerHTML = `<div class="live">
-      ${accountChips()}
+      ${sourceChips}
       <label class="pill">${SEARCH_ICON}<input id="chq" type="search" placeholder="البحث في القنوات" autocomplete="off"></label>
       <div class="live-panes">
         <section class="pane preview-pane"><div id="preview" class="preview" style="display:grid;align-content:start;height:100%;overflow-y:auto"></div></section>
@@ -804,14 +863,14 @@ async function live(id) {
       </div>
     </div>`;
 
-  bindAccountChips();
+  bindSources();
   const catsEl = $("#cats");
   const listEl = $("#channels");
   const previewEl = $("#preview");
 
   // "سجل المشاهدة": this account's channels played lately (synced with the account), newest first.
   const watched = () => {
-    const acc = accounts.active()?.id;
+    const acc = useFourU ? "fouru" : accounts.active()?.id;
     return [...new Set(history.list().filter((h) => h.kind === "live" && h.accountId === acc)
       .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).map((h) => h.itemId))].filter((x) => byId.has(x));
   };
@@ -899,7 +958,7 @@ async function live(id) {
       if (mine !== epgSeq) return;
       let guide = [];
       try {
-        guide = await xt.shortEpg(c.id);
+        guide = useFourU ? [] : await xt.shortEpg(c.id);
       } catch { /* no guide */ }
       if (mine === epgSeq) renderPreview(guide);
     }, 300);
@@ -909,8 +968,8 @@ async function live(id) {
     recent.add(c.id);
     renderCats();
     // The list it was opened from: ←/→ in the player go through it.
-    const list = (shown.length ? shown : [c]).map((x, i) => ({ urls: xt.playUrls(x), entry: xt.entryLive(x), number: x.num ?? i + 1 }));
-    play(xt.playUrls(c), xt.entryLive(c), list, Math.max(0, (shown.length ? shown : [c]).indexOf(c)));
+    const list = (shown.length ? shown : [c]).map((x, i) => ({ urls: liveUrls(x), entry: liveEntry(x), number: x.num ?? i + 1 }));
+    play(liveUrls(c), liveEntry(c), list, Math.max(0, (shown.length ? shown : [c]).indexOf(c)));
   }
 
   catsEl.addEventListener("click", (e) => {
@@ -1217,7 +1276,6 @@ async function xseriesPage(id, seriesId) {
 
 /** "تابع المشاهدة" for the open Home tab: episodes under series, films under films. */
 function continueRow(type) {
-  if (!xtreamReady()) return "";
   const kind = type === "movie" ? "movie" : "episode";
   const list = history.continueList().filter((e) => e.kind === kind).slice(0, 20);
   if (!list.length) return "";
@@ -1238,6 +1296,13 @@ function continueRow(type) {
 
 /** Opens a title's own page from the history: the series, the film's TMDB page, or the channels. */
 async function openEntryPage(e) {
+  if (e.fourURef) {
+    if (e.kind === "live") { sessionStorage.setItem("liveSource", "fouru"); location.hash = "#/live"; }
+    else if (e.kind === "episode") location.hash = "#/fouru/" + encodeURIComponent(JSON.stringify({ type: "tv", sourceId: e.seriesId, title: e.title, tmdbId: e.tmdbId }));
+    else if (e.tmdbId) location.hash = `#/title/movie/${e.tmdbId}`;
+    else location.hash = "#/fouru/" + encodeURIComponent(JSON.stringify({ type: "movie", title: e.title, names: [e.title] }));
+    return;
+  }
   if (e.kind === "episode") {
     accounts.setActive(e.accountId);
     location.hash = `#/xseries/${encodeURIComponent(e.seriesId)}`;

@@ -425,6 +425,21 @@ class PlayerActivity : ComponentActivity() {
             }
             return
         }
+        entry?.fourURef?.let { fourU ->
+            resolveJob?.cancel()
+            val key = entry?.key
+            resolveJob = lifecycleScope.launch {
+                try {
+                    val (url, headers) = com.alyoushw.watchhub.data.FourU.resolve(fourU)
+                    if (entry?.key != key) return@launch
+                    queue = queue.toMutableList().also { it[position] = it[position].copy(urls = listOf(url), httpHeaders = headers) }
+                    urlIndex = 0
+                    setResolvedMedia(startAt)
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (e: Exception) { Toast.makeText(this@PlayerActivity, e.message ?: "تعذّر تشغيل 4U", Toast.LENGTH_LONG).show() }
+            }
+            return
+        }
         val ref = entry?.animeRef
         if (ref != null) {
             resolveJob?.cancel()
@@ -791,7 +806,7 @@ class PlayerActivity : ComponentActivity() {
         /** Plays [items] starting at [index]: left/right (channels) or next episode move through them. */
         fun start(context: Context, items: List<QueueItem>, index: Int) {
             val selected = items.getOrNull(index) ?: return
-            if (selected.urls.isEmpty() && selected.entry.animeRef == null && selected.entry.sourceRef == null) return
+            if (selected.urls.isEmpty() && selected.entry.animeRef == null && selected.entry.sourceRef == null && selected.entry.fourURef == null) return
             PlayerQueue.items = items
             PlayerQueue.index = index
             context.startActivity(Intent(context, PlayerActivity::class.java))

@@ -1,5 +1,6 @@
 // The user's Xtream Codes account, reached through the site's proxy (most servers are plain http).
 import { settings, accounts } from "./store.js";
+import { urls as fourUUrls } from "./fouru.js";
 
 export class XtreamError extends Error {}
 
@@ -17,6 +18,7 @@ export function normalizeHost(raw) {
 
 /** Sends a URL through the proxy, unless the user turned the proxy off. */
 export function via(url) {
+  if (new URL(url, location.href).origin === location.origin && new URL(url, location.href).pathname.startsWith("/fouru/")) return new URL(url, location.href).href;
   let base = (settings.proxy || "").trim();
   if (!base) return url;
   // Anything that is not a path or a link (e.g. a password typed in the wrong box) means the built-in proxy.
@@ -266,6 +268,7 @@ export const episodeKey = (acc, ep) => key(acc.id, "episode", ep.id);
 
 /** Links for a history entry, from the account it was watched on. */
 export function urlsFor(e) {
+  if (e.fourURef) return fourUUrls(e.fourURef);
   if (e.kind === "live") return playUrls({ kind: "live", id: e.itemId, accountId: e.accountId });
   if (e.kind === "movie") return playUrls({ kind: "movie", id: e.itemId, ext: e.ext, accountId: e.accountId });
   return episodeUrls({ id: e.itemId, ext: e.ext, accountId: e.accountId });
