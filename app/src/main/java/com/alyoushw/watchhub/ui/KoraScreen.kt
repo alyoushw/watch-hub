@@ -102,7 +102,7 @@ fun KoraScreen(
     var tryJob by remember { mutableStateOf<Job?>(null) }
     /** Hosts the user (or the auto-try) chose to open; top-level pages may go there. */
     val chosenHosts = remember { mutableSetOf<String>() }
-    var openedAt by remember { mutableStateOf(0L) }
+    var openedAt by remember { mutableStateOf(android.os.SystemClock.elapsedRealtime()) }
 
     fun closeFullscreen() {
         val callback = fullscreenCallback

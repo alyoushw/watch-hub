@@ -56,6 +56,7 @@ import androidx.webkit.WebViewFeature
 import com.alyoushw.watchhub.data.MediaType
 import com.alyoushw.watchhub.data.SourceTransport
 import com.alyoushw.watchhub.data.StreamProbe
+import com.alyoushw.watchhub.data.TukTukMirrors
 import com.alyoushw.watchhub.data.WatchEntry
 import com.alyoushw.watchhub.player.PlayerActivity
 import com.alyoushw.watchhub.player.QueueItem
@@ -89,6 +90,8 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
     var retry by remember { mutableIntStateOf(0) }
     val videos = remember { mutableStateListOf<FoundVideo>() }
     val downloads = remember { mutableStateListOf<WebLinkItem>() }
+    /** Mirrors the app could not play itself; they open in the in-app browser. */
+    val others = remember { mutableStateListOf<WebLinkItem>() }
     val log = remember { mutableListOf<String>() }
     var web by remember { mutableStateOf<WebView?>(null) }
 
@@ -124,7 +127,7 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
 
     LaunchedEffect(web, retry) {
         val view = web ?: return@LaunchedEffect
-        videos.clear(); downloads.clear(); done = false; log.clear()
+        videos.clear(); downloads.clear(); others.clear(); done = false; log.clear()
         try {
             // 1. Search and pick the matching film / series page.
             status = "نبحث عن «$title» في توك توك…"
@@ -184,6 +187,35 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
             media.clear()
             val titlePage = view.url ?: page
             titlePageRef = titlePage
+            // Fast path: the server buttons carry the Megamax mirror page, whose server list is read directly.
+            val info = runCatching { org.json.JSONObject(js(view, SERVER_LINKS_SCRIPT) ?: "{}") }.getOrNull()
+            val mirrorPages = buildList {
+                info?.optJSONArray("l")?.let { arr -> for (i in 0 until arr.length()) TukTukMirrors.decodeLink(arr.getString(i))?.let(::add) }
+                info?.optJSONArray("f")?.let { arr -> for (i in 0 until arr.length()) arr.getString(i).takeIf { "/iframe/" in it }?.let(::add) }
+            }.distinct()
+            info?.optJSONArray("dl")?.let { arr ->
+                val list = (0 until arr.length()).map { arr.getJSONObject(it) }
+                    .map { WebLinkItem(it.optString("t").ifBlank { "تحميل" }, TukTukMirrors.decodeGo(it.optString("u")), true) }
+                    .filter { it.url.startsWith("http") }
+                if (list.isNotEmpty()) { downloads.clear(); downloads += list.distinctBy { it.url } }
+            }
+            note("mirror pages ${mirrorPages.joinToString()}")
+            for (mp in mirrorPages.take(3)) {
+                status = "نجيب قائمة السيرفرات…"
+                val r = try { TukTukMirrors.resolve(mp, titlePage) { status = it } }
+                    catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { note("mirrors error $e"); null }
+                note("mirrors $mp -> ${r?.variants?.size} ok, ${r?.others?.size} other")
+                r?.variants?.forEach { v ->
+                    val mime = when (v.transport) {
+                        SourceTransport.HLS -> androidx.media3.common.MimeTypes.APPLICATION_M3U8
+                        SourceTransport.MKV -> androidx.media3.common.MimeTypes.VIDEO_MATROSKA
+                        else -> androidx.media3.common.MimeTypes.VIDEO_MP4
+                    }
+                    if (videos.none { it.stream.url == v.url }) videos += FoundVideo(v.label, KoraNativeStream(v.url, v.transport, mime, v.httpHeaders))
+                }
+                r?.others?.forEach { o -> if (others.none { it.url == o.url }) others += WebLinkItem(o.label, o.url, false) }
+            }
+            if (videos.isEmpty()) {
             pressAll(titlePage, "title")
             // 3. Player pages (iframes) now on the page: open each and press its server list too.
             if (view.url != titlePage) load(view, titlePage, settleMs = 3000)
@@ -199,6 +231,7 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
                 note("player ${view.url} dump " + (js(view, DUMP_SCRIPT) ?: "").take(1500))
                 harvest(Uri.parse(player).host ?: "مشغّل", 4000)
                 pressAll(player, "player")
+            }
             }
             status = if (videos.isEmpty()) "ما لقينا فيديو يشتغل تلقائياً. جرّب «تصفح الموقع» تحت." else "جاهز: ${videos.size} سيرفر يشتغل"
         } catch (e: kotlinx.coroutines.CancellationException) { throw e }
@@ -278,6 +311,12 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
                     PlayerActivity.start(context, listOf(item), 0)
                 }, modifier = Modifier.fillMaxWidth().focusFrame()) {
                     Text("TukTuk · ${v.server} · ${v.stream.transport.name}")
+                }
+            }
+            if (others.isNotEmpty()) item { Text("سيرفرات تفتح في المتصفح (قد تحتاج تضغط تشغيل)", style = MaterialTheme.typography.titleMedium) }
+            items(others, key = { "o-" + it.url }) { o ->
+                OutlinedButton(onClick = { manual = o.url }, modifier = Modifier.fillMaxWidth().focusFrame()) {
+                    Text("▶ ${o.label}", maxLines = 2)
                 }
             }
             if (downloads.isNotEmpty()) item { Text("روابط التحميل", style = MaterialTheme.typography.titleMedium) }
@@ -367,6 +406,13 @@ return els.filter(function(e){return !els.some(function(o){return o!==e&&e.conta
 private const val DUMP_SCRIPT = """(function(){var b=document.body?document.body.innerHTML:'';var i=b.search(/سيرفرات|المشاهدة|servers/i);
 var s=(i>=0?b.substr(Math.max(0,i-200),2500):b.substr(0,1500)).replace(/<svg[\s\S]*?<\/svg>/g,'').replace(/<script[\s\S]*?<\/script>/g,'').replace(/<img[^>]*>/g,'').replace(/\s+/g,' ');
 var f=[].slice.call(document.querySelectorAll('iframe')).map(function(x){return x.src}).join(' | ');return 'iframes: '+f+' || '+s;})()"""
+
+/** The page's server buttons (their encoded data-link), player frames and download links. */
+private const val SERVER_LINKS_SCRIPT = """(function(){
+var l=[].slice.call(document.querySelectorAll('[data-link]')).map(function(e){return e.getAttribute('data-link')||''});
+var f=[].slice.call(document.querySelectorAll('iframe[src]')).map(function(e){return e.src});
+var dl=[].slice.call(document.querySelectorAll('.downloads a[href], a[href*="go.php"]')).map(function(a){return {u:a.href,t:(a.textContent||'').replace(/\s+/g,' ').trim()}});
+return JSON.stringify({l:l,f:f,dl:dl});})()"""
 
 /** A link to the page's separate "watch" page, if it has one. */
 private const val WATCH_LINK_SCRIPT = """(function(){var a=[].slice.call(document.querySelectorAll('a[href]')).find(function(a){
