@@ -66,7 +66,13 @@ import kotlin.coroutines.resume
 @SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun KoraScreen(homeUrl: String = KORA_HOME, pageTitle: String = "كوره", onBack: () -> Unit) {
+fun KoraScreen(
+    homeUrl: String = KORA_HOME, pageTitle: String = "كوره", onBack: () -> Unit,
+    /** Movie sites (TukTuk): collect every video the page plays and offer it to the app's player. */
+    detectVideos: Boolean = false,
+    /** With [detectVideos]: top-level pages must stay on hosts containing this (advert redirects are blocked). */
+    siteKeyword: String? = null,
+) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val scope = rememberCoroutineScope()
@@ -85,6 +91,7 @@ fun KoraScreen(homeUrl: String = KORA_HOME, pageTitle: String = "كوره", onBa
     var nativePaused by remember { mutableStateOf(false) }
     var nativeJob by remember { mutableStateOf<Job?>(null) }
     val nativeEnabled = Uri.parse(homeUrl).host == Uri.parse(KORA_HOME).host
+    val found = remember { androidx.compose.runtime.mutableStateListOf<KoraNativeStream>() }
 
     fun closeFullscreen() {
         val callback = fullscreenCallback
@@ -224,6 +231,39 @@ fun KoraScreen(homeUrl: String = KORA_HOME, pageTitle: String = "كوره", onBa
         WebViewCompat.addDocumentStartJavaScript(view, KORA_MEDIA_OBSERVER, origins)
     }
 
+    /** Plays the best video the page has loaded so far (HLS first) in Watch Hub's own player. */
+    fun playFound() {
+        val view = web ?: return
+        val pick = found.lastOrNull { it.transport == com.alyoushw.watchhub.data.SourceTransport.HLS } ?: found.lastOrNull() ?: return
+        val headers = pick.headers.toMutableMap()
+        if (headers.keys.none { it.equals("User-Agent", true) }) headers["User-Agent"] = view.settings.userAgentString
+        if (headers.keys.none { it.equals("Cookie", true) }) {
+            CookieManager.getInstance().getCookie(pick.url)?.takeIf { it.isNotBlank() }?.let { headers["Cookie"] = it }
+        }
+        val stream = pick.copy(headers = headers.toMap())
+        val title = view.title?.takeIf { it.isNotBlank() && !it.startsWith("http") }?.take(160) ?: pageTitle
+        nativeOpening = true
+        scope.launch {
+            try {
+                if (!probe.compatible(stream.variant())) {
+                    found.remove(pick)
+                    error = "هذا الرابط ما اشتغل (قد يكون إعلاناً أو انتهت صلاحيته). شغّل الفيديو في الموقع ثم جرّب مرة ثانية."
+                    return@launch
+                }
+                error = null
+                val item = QueueItem(listOf(stream.url), WatchEntry(
+                    key = "web-session:${java.util.UUID.randomUUID()}", kind = WatchEntry.MOVIE,
+                    itemId = "web-video", title = title, accountId = "web"),
+                    mimeType = stream.mimeType, httpHeaders = stream.headers, recordHistory = false)
+                closeFullscreen()
+                view.onPause()
+                PlayerActivity.start(context, listOf(item), 0)
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { error = "تعذر فتح المشغّل الداخلي." }
+            finally { nativeOpening = false }
+        }
+    }
+
     BackHandler(enabled = canGoBack && fullscreen == null) { back() }
     DisposableEffect(lifecycle, web) {
         val view = web
@@ -275,6 +315,14 @@ fun KoraScreen(homeUrl: String = KORA_HOME, pageTitle: String = "كوره", onBa
             if (loading || nativeOpening && !nativeStarted) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (nativeOpening && !nativeStarted) Text("جاري فتح مشغّل Watch Hub…", modifier = Modifier.padding(12.dp))
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(12.dp)) }
+            if (detectVideos) {
+                if (found.isEmpty()) Text("افتح الفيلم أو الحلقة واختر سيرفراً وشغّله؛ أول ما يبدأ الفيديو يطلع لك زر التشغيل بمشغّل التطبيق.",
+                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+                else androidx.compose.material3.Button(onClick = ::playFound, enabled = !nativeOpening,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp).focusFrame()) {
+                    Text("▶ شغّل الفيديو بمشغّل Watch Hub")
+                }
+            }
             AndroidView(modifier = Modifier.weight(1f).fillMaxWidth(), factory = { host ->
                 val site = WebView(host).apply {
                     configure(this)
@@ -282,7 +330,8 @@ fun KoraScreen(homeUrl: String = KORA_HOME, pageTitle: String = "كوره", onBa
                     webChromeClient = object : WebChromeClient() {
                         override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message): Boolean {
                             val hostView = view.parent as? ViewGroup ?: return false
-                            if (!isUserGesture || windows.size >= 4) return false
+                            // Movie sites open advert tabs on almost every tap: no new windows there.
+                            if (detectVideos || !isUserGesture || windows.size >= 4) return false
                             val popup = WebView(view.context).apply {
                                 configure(this)
                                 observePlayer(this)
@@ -328,12 +377,25 @@ fun KoraScreen(homeUrl: String = KORA_HOME, pageTitle: String = "كوره", onBa
                         }
                         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                             val scheme = request.url.scheme
+                            if (detectVideos && request.isForMainFrame && (scheme == "http" || scheme == "https") && siteKeyword != null &&
+                                request.url.host?.contains(siteKeyword, ignoreCase = true) != true) {
+                                error = "منعنا تحويلاً لصفحة إعلان."
+                                return true
+                            }
                             if (scheme == "http" || scheme == "https") return false
                             if (view == web && request.isForMainFrame) error = "هذا الرابط يتطلب تطبيقاً خارجياً؛ يمكنك العودة للمباريات."
                             return true
                         }
                         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                             KoraNativeStream.from(request)?.let { stream -> view.post { openNative(view, stream) } }
+                            if (detectVideos) KoraNativeStream.anySite(request)?.let { stream ->
+                                view.post {
+                                    if (found.none { it.url == stream.url }) {
+                                        found += stream
+                                        if (found.size > 12) found.removeAt(0)
+                                    }
+                                }
+                            }
                             return null
                         }
                     }

@@ -507,6 +507,11 @@ private fun DetailContent(
                     Modifier.fillMaxWidth(), label = "تشغيل EgyBest")
             } }
 
+            item { Column(Modifier.padding(horizontal = 16.dp)) {
+                SourceWatchButton(info.sourceLookup().copy(providerId = "tuktuk"), onOpenSources,
+                    Modifier.fillMaxWidth(), label = "تشغيل TukTuk")
+            } }
+
             item { Column(Modifier.padding(horizontal = 16.dp)) { SourceWatchButton(info.sourceLookup(), onOpenSources, Modifier.fillMaxWidth()) } }
         }
 

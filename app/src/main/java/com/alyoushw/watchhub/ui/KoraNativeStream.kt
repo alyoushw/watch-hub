@@ -23,6 +23,19 @@ internal data class KoraNativeStream(val url: String, val transport: SourceTrans
             return from(url.toString(), null, request.requestHeaders)
         }
 
+        /**
+         * Any site's video request (the TukTuk browser): the user picks it with a button, never
+         * auto-played, so a stray advert clip cannot take over. Known advert networks are skipped.
+         */
+        fun anySite(request: WebResourceRequest): KoraNativeStream? {
+            if (request.method != "GET") return null
+            val host = request.url.host?.lowercase(java.util.Locale.ROOT) ?: return null
+            if (AD_HOSTS.any { host.contains(it) }) return null
+            return from(request.url.toString(), null, request.requestHeaders)
+        }
+        private val AD_HOSTS = listOf("doubleclick", "googlesyndication", "googleads", "adservice", "popads", "propeller",
+            "adsterra", "exoclick", "juicyads", "trafficjunky", "adnxs", "imasdk", "vast", "onclick")
+
         /** Called only by the message listener restricted to the HTTPS player origin. */
         fun observed(url: String, mime: String, referer: String): KoraNativeStream? {
             if (referer.toHttpUrlOrNull()?.let { it.isHttps && it.host == PLAYER_HOST } != true) return null

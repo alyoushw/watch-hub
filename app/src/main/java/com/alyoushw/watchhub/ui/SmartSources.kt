@@ -67,6 +67,15 @@ fun SourceWatchScreen(
     sources: WatchSources? = null,
     onPlay: ((WatchSourceRef) -> Unit)? = null,
 ) {
+    if (lookup.providerId == "tuktuk") {
+        // TukTuk sits behind Cloudflare: browse it in the app (the viewer passes any check like a
+        // normal browser) and hand the video it plays to Watch Hub's player.
+        val search = lookup.query.searchTitle?.takeIf { it.isNotBlank() } ?: lookup.query.originalTitle
+        androidx.activity.compose.BackHandler(onBack = onBack)
+        KoraScreen(onBack = onBack, homeUrl = TUKTUK_HOME + "?s=" + Uri.encode(search), pageTitle = "TukTuk · ${lookup.title}",
+            detectVideos = true, siteKeyword = "tuktuk")
+        return
+    }
     val container = appContainer()
     val context = LocalContext.current
     val website = when (lookup.providerId) { "moviz-time" -> "Moviz Time"; "topcinema" -> "TopCinema"; "egybest" -> "EgyBest"; else -> null }
@@ -185,6 +194,8 @@ fun SourceWatchScreen(
             }
         }, confirmButton = { TextButton(onClick = { chooseSource = false }, modifier = Modifier.focusFrame()) { Text("إغلاق") } })
 }
+
+private const val TUKTUK_HOME = "https://tuktukcinemas.com/"
 
 internal fun sourceQualityLabel(label: String): String = when {
     Regex("(?i)(2160|\\b4k\\b|\\buhd\\b)").containsMatchIn(label) -> "4K"
