@@ -19,6 +19,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -92,6 +96,9 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
     val frameLinks = remember { linkedMapOf<String, WebLinkItem>() }
     val media = remember { java.util.concurrent.ConcurrentHashMap<String, KoraNativeStream>() }
     var pageDone by remember { mutableStateOf<CompletableDeferred<Unit>?>(null) }
+    /** While pressing buttons, top-level pages must stay on this host (advert redirects are blocked). */
+    var lockHost by remember { mutableStateOf<String?>(null) }
+    var titlePageRef by remember { mutableStateOf<String?>(null) }
 
     manual?.let { url ->
         BackHandler { manual = null }
@@ -99,10 +106,11 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
         return
     }
 
-    suspend fun load(view: WebView, url: String, settleMs: Long = 2500): Boolean {
+    suspend fun load(view: WebView, url: String, settleMs: Long = 2500, referer: String? = null): Boolean {
         val wait = CompletableDeferred<Unit>()
         pageDone = wait
-        view.loadUrl(url)
+        // Embedded players often check that they were opened from the site's page.
+        if (referer != null) view.loadUrl(url, mapOf("Referer" to referer)) else view.loadUrl(url)
         val ok = withTimeoutOrNull(30_000) { wait.await() } != null
         delay(settleMs)
         return ok
@@ -120,6 +128,7 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
         try {
             // 1. Search and pick the matching film / series page.
             status = "نبحث عن «$title» في توك توك…"
+            lockHost = null
             load(view, searchUrl)
             note("search ${view.url}")
             val wanted = SearchKey(title, query.year, if (series) query.season else null, if (series) query.episode else null)
@@ -137,33 +146,59 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
             js(view, WATCH_LINK_SCRIPT)?.takeIf { it.startsWith("http") && it != view.url }?.let {
                 status = "فتحنا صفحة المشاهدة…"; frameLinks.clear(); media.clear(); load(view, it); note("watch ${view.url}")
             }
-            // 2. Servers from every frame (the player's list is inside an iframe).
-            status = "وصلنا: ${view.title ?: view.url} · نقرأ السيرفرات…"
-            delay(5000)
-            val servers = frameLinks.values.filter { !it.download && !(Uri.parse(it.url).host ?: "").contains("tuktuk", true) }
-                .distinctBy { it.url }.take(12)
+            // 2. The page only loads its player after a press: press the watch buttons ourselves.
+            status = "وصلنا: ${view.title ?: view.url}"
+            lockHost = Uri.parse(view.url).host
+            delay(3000)
+            note("dump " + (js(view, DUMP_SCRIPT) ?: "").take(2500))
             downloads += frameLinks.values.filter { it.download }.distinctBy { it.url }.take(12)
-            note("servers ${servers.size}: " + servers.joinToString { it.label + " " + it.url })
-            // Videos the page itself already set up.
-            media.values.toList().forEach { s -> if (videos.none { it.stream.url == s.url } && probe.compatible(s.variant())) videos += FoundVideo("TukTuk", s) }
-            // 3. Open each server and keep the videos that play.
-            for ((i, server) in servers.withIndex()) {
-                status = "نجرّب السيرفر ${i + 1} من ${servers.size}: ${server.label}"
-                media.clear()
-                load(view, server.url, settleMs = 1500)
-                var waited = 0
-                while (waited < 9000 && media.isEmpty()) { delay(1500); waited += 1500 }
-                val candidates = media.values.toList().sortedBy { if (it.transport == SourceTransport.HLS) 0 else 1 }.take(3)
-                note("server ${server.label} -> ${candidates.size} media")
+
+            suspend fun harvest(label: String, waitMs: Long) {
+                var waited = 0L
+                while (waited < waitMs) { delay(1000); waited += 1000; if (media.isNotEmpty() && waited >= 3000) break }
+                val candidates = media.values.sortedBy { if (it.transport == SourceTransport.HLS) 0 else 1 }.take(3)
+                note("  $label -> ${candidates.size} media ${candidates.joinToString { it.url.take(80) }}")
                 for (c in candidates) {
+                    media.remove(c.url)
                     val withSession = c.copy(headers = c.headers + listOfNotNull(
                         CookieManager.getInstance().getCookie(c.url)?.takeIf { it.isNotBlank() }?.let { "Cookie" to it },
                         ("User-Agent" to view.settings.userAgentString).takeIf { c.headers.keys.none { k -> k.equals("User-Agent", true) } }))
                     if (videos.none { it.stream.url == withSession.url } && probe.compatible(withSession.variant())) {
-                        videos += FoundVideo(server.label.ifBlank { Uri.parse(server.url).host ?: "سيرفر" }, withSession)
+                        videos += FoundVideo(label.ifBlank { Uri.parse(c.url).host ?: "سيرفر" }, withSession)
                         break
                     }
                 }
+            }
+            /** Presses every server button on the open page in turn and keeps what plays. */
+            suspend fun pressAll(pageUrl: String, depth: String) {
+                val count = js(view, "(function(){$CANDIDATES;return String(cands().length);})()")?.toIntOrNull() ?: 0
+                note("$depth buttons $count: " + (js(view, "(function(){$CANDIDATES;return cands().map(function(e){return (e.textContent||'').trim().slice(0,25)}).join(' | ');})()") ?: ""))
+                for (i in 0 until minOf(count, 10)) {
+                    if (view.url != pageUrl) { load(view, pageUrl, settleMs = 2000, referer = if (depth == "player") titlePageRef else null) }
+                    val label = js(view, "(function(){$CANDIDATES;var e=cands()[$i];if(!e)return '';var t=(e.textContent||'').trim().slice(0,40);try{e.scrollIntoView();e.click();}catch(x){}return t;})()").orEmpty()
+                    if (label.isBlank()) continue
+                    status = "نضغط «$label» (${i + 1} من $count)…"
+                    harvest(label, 8000)
+                }
+            }
+            media.clear()
+            val titlePage = view.url ?: page
+            titlePageRef = titlePage
+            pressAll(titlePage, "title")
+            // 3. Player pages (iframes) now on the page: open each and press its server list too.
+            if (view.url != titlePage) load(view, titlePage, settleMs = 3000)
+            val players = (frameLinks.values.filter { !it.download }.map { it.url } +
+                (js(view, "(function(){return [].slice.call(document.querySelectorAll('iframe')).map(function(f){return f.src}).filter(function(u){return /^https?:/.test(u)}).join('\\n');})()") ?: "").split("\n"))
+                .filter { it.startsWith("http") && it != titlePage && !it.contains("about:") }.distinct().take(5)
+            note("players ${players.size}: ${players.joinToString()}")
+            for ((i, player) in players.withIndex()) {
+                status = "نفتح المشغّل ${i + 1} من ${players.size}…"
+                lockHost = Uri.parse(player).host
+                media.clear()
+                load(view, player, settleMs = 2500, referer = titlePage)
+                note("player ${view.url} dump " + (js(view, DUMP_SCRIPT) ?: "").take(1500))
+                harvest(Uri.parse(player).host ?: "مشغّل", 4000)
+                pressAll(player, "player")
             }
             status = if (videos.isEmpty()) "ما لقينا فيديو يشتغل تلقائياً. جرّب «تصفح الموقع» تحت." else "جاهز: ${videos.size} سيرفر يشتغل"
         } catch (e: kotlinx.coroutines.CancellationException) { throw e }
@@ -184,9 +219,9 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
                     Text(status, color = Gold)
                     if (!done) LinearProgressIndicator(Modifier.fillMaxWidth())
                     // The hidden browser that does the work (it must be attached to run).
-                    AndroidView(modifier = Modifier.size(1.dp), factory = { host ->
+                    androidx.compose.foundation.layout.Box(Modifier.size(1.dp)) {
+                    AndroidView(modifier = Modifier.wrapContentSize(Alignment.TopStart, unbounded = true).requiredSize(400.dp, 760.dp).alpha(0f), factory = { host ->
                         WebView(host).apply {
-                            layoutParams = ViewGroup.LayoutParams(1, 1)
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
                             settings.mediaPlaybackRequiresUserGesture = true
@@ -217,7 +252,10 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
                                 override fun onPageFinished(view: WebView, url: String?) { pageDone?.complete(Unit) }
                                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                                     val scheme = request.url.scheme
-                                    return scheme != "http" && scheme != "https" // no app links / intents
+                                    if (scheme != "http" && scheme != "https") return true // no app links / intents
+                                    val host = request.url.host.orEmpty()
+                                    val locked = lockHost
+                                    return request.isForMainFrame && locked != null && host != locked && !host.contains("tuktuk", true)
                                 }
                                 override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                                     KoraNativeStream.anySite(request)?.let { media.putIfAbsent(it.url, it) }
@@ -227,6 +265,7 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
                             web = this
                         }
                     })
+                    }
                 }
             }
             if (videos.isNotEmpty()) item { Text("سيرفرات المشاهدة الشغالة", style = MaterialTheme.typography.titleMedium) }
@@ -304,6 +343,30 @@ private fun pickLink(json: String?, wanted: SearchKey, pageUrl: String?, episode
 private const val LINKS_SCRIPT = """(function(){var o=[];document.querySelectorAll('a[href]').forEach(function(a){
 var t=(a.textContent||'')+' '+(a.title||'');var i=a.querySelector('img');if(i)t+=' '+(i.alt||'')+' '+(i.title||'');
 o.push({u:a.href,t:t.replace(/\s+/g,' ').trim().slice(0,200)});});return JSON.stringify(o.slice(0,400));})()"""
+
+/**
+ * Clickable server entries: inside the block titled like "سيرفرات المشاهدة" when there is one,
+ * else anywhere on the page (player pages); menus, downloads and social buttons are left out.
+ */
+private const val CANDIDATES = """function cands(){
+var heads=[].slice.call(document.querySelectorAll('h1,h2,h3,h4,h5,h6,div,span,p,strong')).filter(function(e){var t=(e.textContent||'').trim();
+return e.children.length<3&&t.length<40&&/سيرفرات المشاهده|سيرفرات المشاهدة|المشاهدة|watch servers|servers/i.test(t);});
+var root=null;for(var h=0;h<heads.length&&!root;h++){var p=heads[h].parentElement;for(var k=0;k<4&&p;k++){
+if(p.querySelectorAll('button,a,li,[onclick],[data-id],[data-server],[data-url],[data-link],[role=button]').length>0){root=p;break;}p=p.parentElement;}}
+if(!root)root=document.body;if(!root)return [];
+var els=[].slice.call(root.querySelectorAll('button,li,a,[onclick],[data-id],[data-server],[data-url],[data-link],[role=button]')).filter(function(e){
+var t=(e.textContent||'').replace(/\s+/g,' ').trim();if(!t||t.length>60)return false;
+if(/تحميل|download|تليجرام|telegram|عودة|back|skip|تخطي|facebook|twitter|الرئيسية|home|بحث|search|حمل/i.test(t))return false;
+if(e.closest('header,nav,footer,[class*=menu],[class*=nav]'))return false;
+var r=e.getBoundingClientRect();if(r.width<20||r.height<10)return false;
+if(e.tagName==='A'){var href=e.getAttribute('href')||'';if(href&&!/^(#|javascript)/i.test(href)){try{if(new URL(e.href).host!==location.host)return false;}catch(x){return false;}}}
+return true;});
+return els.filter(function(e){return !els.some(function(o){return o!==e&&e.contains(o);});}).slice(0,15);}"""
+
+/** A short picture of the server area and frames, for the report (no scripts or images). */
+private const val DUMP_SCRIPT = """(function(){var b=document.body?document.body.innerHTML:'';var i=b.search(/سيرفرات|المشاهدة|servers/i);
+var s=(i>=0?b.substr(Math.max(0,i-200),2500):b.substr(0,1500)).replace(/<svg[\s\S]*?<\/svg>/g,'').replace(/<script[\s\S]*?<\/script>/g,'').replace(/<img[^>]*>/g,'').replace(/\s+/g,' ');
+var f=[].slice.call(document.querySelectorAll('iframe')).map(function(x){return x.src}).join(' | ');return 'iframes: '+f+' || '+s;})()"""
 
 /** A link to the page's separate "watch" page, if it has one. */
 private const val WATCH_LINK_SCRIPT = """(function(){var a=[].slice.call(document.querySelectorAll('a[href]')).find(function(a){
