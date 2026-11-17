@@ -76,7 +76,11 @@ async function call(action, params = {}, override) {
     if (text.includes("proxy key")) throw new XtreamError("مفتاح البروكسي غلط، راجعه في الإعدادات");
     throw new XtreamError("اسم المستخدم أو كلمة المرور غلط");
   }
-  if (res.status === 403) throw new XtreamError("البروكسي ما يسمح بهذا الهوست (PROXY_HOSTS)");
+  if (res.status === 403) {
+    const body = await res.text();
+    if (body.trim() === "host not allowed") throw new XtreamError("البروكسي ما يسمح بهذا الهوست (PROXY_HOSTS)؛ يلزم إضافته في إعدادات الاستضافة");
+    throw new XtreamError("سيرفر الاشتراك رفض اتصال الموقع (403)؛ قد يكون الهوست تغيّر أو الاتصال من الاستضافة محظوراً");
+  }
   if (res.status === 502) throw new XtreamError("البروكسي ما قدر يوصل للسيرفر، تأكد من الهوست");
   if (!res.ok) throw new XtreamError(`السيرفر رد بخطأ (${res.status})`);
   try {

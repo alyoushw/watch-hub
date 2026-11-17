@@ -11,8 +11,12 @@ import { handleSources, type MediaSession } from "./sources.ts";
 import { serveDir } from "jsr:@std/http@1.0.10/file-server";
 
 const PROXY_KEY = Deno.env.get("PROXY_KEY") ?? "";
-const PROXY_HOSTS = (Deno.env.get("PROXY_HOSTS") ?? "")
-  .split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
+const PROXY_HOSTS = [Deno.env.get("PROXY_HOSTS"), Deno.env.get("PROXY_EXTRA_HOSTS")].filter(Boolean).join(",")
+  .split(",").map((h) => {
+    const value = h.trim().toLowerCase();
+    if (!value) return "";
+    try { return new URL(value.includes("://") ? value : `http://${value}`).host; } catch { return value; }
+  }).filter(Boolean);
 const PUBLIC_DIR = new URL("./public", import.meta.url).pathname;
 
 const CORS: Record<string, string> = {
@@ -48,6 +52,7 @@ async function proxy(req: Request, self: URL, session?: MediaSession): Promise<R
   if (target.protocol !== "http:" && target.protocol !== "https:") return fail(400, "only http(s)");
   if (PROXY_HOSTS.length && !PROXY_HOSTS.includes(target.host.toLowerCase()) &&
     !PROXY_HOSTS.includes(target.hostname.toLowerCase())) {
+    console.warn("WATCHHUB_PROXY_DENIED_HOST", target.host);
     return fail(403, "host not allowed");
   }
 
@@ -80,6 +85,7 @@ async function proxy(req: Request, self: URL, session?: MediaSession): Promise<R
     return fail(502, `could not reach server: ${e instanceof Error ? e.message : e}`);
   }
 
+  if (upstream.status === 403) console.warn("WATCHHUB_PROXY_UPSTREAM_403", target.host);
   const out = new Headers(CORS);
   for (const h of PASS_HEADERS) {
     const v = upstream.headers.get(h);

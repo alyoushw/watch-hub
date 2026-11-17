@@ -1,7 +1,7 @@
 // Keeps Watch Hub's own files on the device, so the app opens at once even while the free
 // server is still waking up (instead of the host's loading page). Files are refreshed in the
 // background on every visit; a reply that is not ours (e.g. the host's wake-up page) is ignored.
-const CACHE = "watchhub-v18";
+const CACHE = "watchhub-v19";
 const SHELL = ["./", "index.html", "styles.css", "js/app.js", "js/store.js", "js/tmdb.js", "js/xtream.js", "js/player.js", "js/cloud.js", "js/smart.js", "js/translate.js", "js/foryou.js", "js/fouru.js", "js/features.js", "js/sources.js", "js/downloads.js",
   "manifest.webmanifest", "icon.svg", "icon-180.png", "icon-512.png"];
 
@@ -38,14 +38,18 @@ self.addEventListener("fetch", (e) => {
   e.respondWith((async () => {
     const cache = await caches.open(CACHE);
     const cached = await cache.match(key, { ignoreSearch: req.mode === "navigate" });
+    // Load the current module before starting it; old modules and a new HTML shell must not mix.
+    const executable = url.pathname.endsWith(".js") || req.mode === "navigate";
     const update = fetch(req).then(async (res) => {
       if (await genuine(req, res)) await cache.put(key, res.clone());
+      else if (cached) return cached;
       return res;
     }).catch(() => null);
-    if (cached) {
+    if (cached && !executable) {
       e.waitUntil(update);
       return cached;
     }
+    if (cached) return (await update) || cached;
     return (await update) || new Response("offline", { status: 503 });
   })());
 });
