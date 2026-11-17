@@ -140,7 +140,7 @@ export const xtreamReady = () => accounts.all().length > 0;
 data.removedWatch ??= {};
 
 /** What other devices should see change: adding, removing, the status. */
-const visibleChange = (old, item) => !old || old.status !== item.status;
+const visibleChange = (old, item) => !old || old.status !== item.status || JSON.stringify(old.progress || null) !== JSON.stringify(item.progress || null);
 
 export const watchlist = {
   all: () => data.watchlist,
@@ -347,8 +347,8 @@ export const history = {
     const series = new Set();
     const ids = new Set(accounts.all().map((a) => a.id));
     return history.list().filter((e) => {
-      if (!ids.has(e.accountId)) return false;
-      if (e.kind === "episode" && e.seriesId) {
+      if (!ids.has(e.accountId) && !e.animeRef && !e.sourceRef && !e.fourURef) return false;
+      if (["episode", "anime_episode"].includes(e.kind) && e.seriesId) {
         const k = `${e.accountId}:${e.seriesId}`;
         if (series.has(k)) return false;
         series.add(k);

@@ -2,6 +2,10 @@
 import * as tmdb from "./tmdb.js";
 import * as foryou from "./foryou.js";
 import * as xt from "./xtream.js";
+import * as fouru from "./fouru.js";
+import * as features from "./features.js";
+import * as sourceApi from "./sources.js";
+import { restoreDownloads, addDownload } from "./downloads.js";
 import { play, fmt } from "./player.js";
 import * as smart from "./smart.js";
 import { fillTranslated } from "./translate.js";
@@ -41,7 +45,7 @@ function card(r, rank) {
   const type = r.media_type || (r.title ? "movie" : "tv");
   const poster = tmdb.image(r.poster_path);
   const rating = r.vote_average ? `<span class="badge">★ ${r.vote_average.toFixed(1)}</span>` : "";
-  return `<a class="card" href="#/title/${type}/${r.id}">
+  return `<a class="card" href="${type === "anime" ? `#/anime/${r.id}` : `#/title/${type}/${r.id}`}">
     <div class="poster">${poster ? `<img loading="lazy" src="${poster}" alt="">` : ""}${rating}${rank ? `<span class="rank">${rank}</span>` : ""}</div>
     <div class="name">${esc(titleOf(r))}</div>
   </a>`;
@@ -104,6 +108,14 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", applyThe
 const routes = [
   [/^#?\/?$/, home, "home"],
   [/^#\/live$/, live, "live"],
+  [/^#\/fouru\/(.+)$/, fourUPage, "home"],
+  [/^#\/anime$/, features.animeHome, "anime"],
+  [/^#\/anime\/(\d+)$/, features.animeDetail, "anime"],
+  [/^#\/anime-watch\/(.+)$/, features.animeWatchPage, "anime"],
+  [/^#\/watch-source\/(.+)$/, features.watchSourcePage, "home"],
+  [/^#\/subscriptions$/, features.subscriptionsPage, "subscriptions"],
+  [/^#\/downloads$/, features.downloadsPage, "downloads"],
+  [/^#\/(kora|youtube)$/, features.websitePage, "kora"],
   [/^#\/search(?:\?q=(.*))?$/, searchPage, "search"],
   [/^#\/title\/(movie|tv)\/(\d+)$/, titlePage, null],
   [/^#\/person\/(\d+)$/, personPage, null],
@@ -134,6 +146,7 @@ async function route() {
   location.hash = "#/";
 }
 const stale = (id) => id !== renderId;
+features.configure({ active: (id) => !stale(id), refresh: route, notify: toast });
 
 window.addEventListener("hashchange", route);
 
@@ -145,9 +158,10 @@ async function home(id) {
       <button data-go="live">مباشر</button>
       <button data-type="tv" class="${type === "tv" ? "on" : ""}">مسلسلات</button>
       <button data-type="movie" class="${type === "movie" ? "on" : ""}">أفلام</button>
+      <button data-anime-home>أنمي</button>
     </div>`;
 
-  if (!settings.tmdbKey) {
+  if (!tmdb.ready()) {
     view.innerHTML = tabs + continueRow(type) + message("خطوة وحدة قبل نبدأ: حط مفتاح TMDB المجاني في الإعدادات عشان نعرض لك أفضل الأعمال في كل منصة.", goSettings);
     bindTypeTabs();
     bindContinue();
@@ -207,6 +221,7 @@ async function home(id) {
 function bindTypeTabs() {
   view.querySelectorAll(".typetabs button").forEach((b) =>
     b.addEventListener("click", () => {
+      if (b.hasAttribute("data-anime-home")) return (location.hash = "#/anime");
       if (b.dataset.go) return (location.hash = "#/live");
       sessionStorage.setItem("homeType", b.dataset.type);
       route();
@@ -403,7 +418,7 @@ async function searchPage(id, q = "") {
   async function plain(text) {
     const mine = ++seq;
     understoodEl.innerHTML = "";
-    if (!settings.tmdbKey) {
+    if (!tmdb.ready()) {
       results.innerHTML = message("أضف مفتاح TMDB من الإعدادات أول", goSettings);
       return;
     }
@@ -421,7 +436,7 @@ async function searchPage(id, q = "") {
     window.history.replaceState(null, "", `#/search?q=${encodeURIComponent(text)}`);
     if (!text.trim()) return idle();
     const qq = smart.parse(text);
-    if (!settings.tmdbKey && qq.kind !== "plain") {
+    if (!tmdb.ready() && qq.kind !== "plain") {
       results.innerHTML = message("الفلاتر والترشيحات تحتاج مفتاح TMDB من الإعدادات", goSettings);
       return;
     }
@@ -477,7 +492,7 @@ async function searchPage(id, q = "") {
       on("#f-clear", () => (f = smart.emptyFilter(f.type)));
       box.querySelector("#f-close").addEventListener("click", () => (box.hidden = true));
       box.querySelector("#f-apply").addEventListener("click", () => {
-        if (!settings.tmdbKey) return toast("أضف مفتاح TMDB من الإعدادات أول");
+        if (!tmdb.ready()) return toast("أضف مفتاح TMDB من الإعدادات أول");
         applyFilter(f);
       });
       box.querySelector("#f-save").addEventListener("click", () => {
@@ -561,6 +576,7 @@ async function titlePage(id, type, tmdbId) {
           ${d.vote_average ? `<div class="rating">★ ${d.vote_average.toFixed(1)} / 10 · ${(d.vote_count || 0).toLocaleString("en")} تقييم</div>` : ""}
           <div class="actions" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px">
             <span id="xwatch"></span>
+
             <button id="save" class="btn ghost">${saved ? "✓ في قائمتي" : "+ أضفه لقائمتي"}</button>
           </div>
         </div>
@@ -570,15 +586,20 @@ async function titlePage(id, type, tmdbId) {
       ${services.map((s) => `<a class="btn service" style="background:${s.color}" target="_blank" rel="noopener" href="${s.search}${encodeURIComponent(enTitle)}">▶ شاهد على ${esc(s.label)}</a>`).join("")}
       ${services.length ? "" : `<span class="muted">ما لقينا هذا العمل على منصات منطقتك (${esc(settings.region)}).</span>`}
     </div>
+    <div class="source-actions" id="source-actions"></div>
     ${d.tagline || (en && en.tagline) ? `<p class="muted" style="font-style:italic;margin:14px 0 0" id="tagline"></p>` : ""}
     ${overview ? `<h2 class="section-title">القصة</h2><p class="overview" id="overview"></p>` : ""}
     ${trailers.length ? `<h2 class="section-title">الإعلانات</h2><div class="trailers">${trailers.map((v) =>
       `<iframe loading="lazy" src="https://www.youtube-nocookie.com/embed/${esc(v.key)}" allow="encrypted-media; fullscreen; picture-in-picture" allowfullscreen title="${esc(v.name)}"></iframe>`).join("")}</div>` : ""}
+    <div id="title-extra"></div>
     ${cast.length ? `<h2 class="section-title">الممثلين</h2><div class="cast">${cast.map((c) => `<a href="#/person/${c.id}" class="person">
         <div class="face">${c.profile_path ? `<img loading="lazy" src="${tmdb.image(c.profile_path, "w185")}" alt="">` : ""}</div>
         <div>${esc(c.name)}</div><div class="muted">${esc(c.character || "")}</div></a>`).join("")}</div>` : ""}
     ${rowSection("إذا عجبك، بيعجبك", recs)}
     <p class="muted" style="font-size:12px;margin-top:30px">البيانات من TMDB، وبيانات التوفر من JustWatch.</p>`;
+
+  features.attachTitleSources(d, en, type);
+  features.attachTitleExtras(d, en, type);
 
   // English-only story or tagline: shown in Arabic (with a link to the original).
   if (overview) fillTranslated($("#overview"), overview);
@@ -594,6 +615,9 @@ async function titlePage(id, type, tmdbId) {
     }
   });
 
+  $("#fouru-watch").addEventListener("click", () => {
+    location.hash = "#/fouru/" + encodeURIComponent(JSON.stringify({ type, tmdbId: Number(tmdbId), names: [title, enTitle, d.original_title || d.original_name], year, title, overview, image: tmdb.image(d.poster_path, "w500") }));
+  });
   if (xtreamReady()) xtreamWatchButton($("#xwatch"), type, tmdbId, [title, enTitle, d.original_title || d.original_name], year);
 }
 
@@ -706,8 +730,7 @@ const STATUSES = { want: "أبي أشوفه", watching: "أتابعه", done: "�
 async function listPage() {
   let filter = sessionStorage.getItem("listFilter") || "all";
   const render = () => {
-    // Anime (MyAnimeList ids, from the Android app) has no page on the web yet.
-    const items = watchlist.all().filter((w) => w.type !== "anime" && (filter === "all" || w.status === filter));
+    const items = watchlist.all().filter((w) => (filter === "all" || w.status === filter));
     view.innerHTML = `<h2 class="section-title">قائمتي</h2>
       <div class="chips">${[["all", "الكل"], ...Object.entries(STATUSES)].map(([k, v]) =>
         `<button class="chip ${filter === k ? "on" : ""}" data-f="${k}">${v}</button>`).join("")}</div>
@@ -731,6 +754,54 @@ async function listPage() {
     }));
   };
   render();
+}
+
+// 4U opens its own title/episode page before the user starts playback.
+async function fourUPage(id, encoded) {
+  const lookup = JSON.parse(encoded);
+  const isSeries = lookup.type !== "movie";
+  let choices;
+  try { choices = lookup.sourceId ? [{ name: lookup.title, series_id: lookup.sourceId }] : await fouru.matches(isSeries, lookup.names, lookup.year); }
+  catch (e) { if (!stale(id)) view.innerHTML = message(e.message, '<button class="btn" id="fouru-retry">حاول مرة ثانية</button>'); $("#fouru-retry")?.addEventListener("click", route); return; }
+  if (stale(id)) return;
+  const choose = async (title) => {
+    let episodes = [], plot = lookup.overview || "";
+    if (isSeries) {
+      view.innerHTML = loading();
+      try {
+        const detail = await fouru.series(title.series_id);
+        episodes = (Array.isArray(detail.episodes) ? detail.episodes.flat() : Object.values(detail.episodes || {}).flat())
+          .sort((a, b) => Number(a.season) - Number(b.season) || Number(a.episode_num) - Number(b.episode_num));
+        plot = detail.info?.plot || plot;
+        title = { ...title, ...detail.info, series_id: title.series_id };
+      } catch (e) { if (!stale(id)) { view.innerHTML = message(e.message, '<button class="btn" id="fouru-retry">حاول مرة ثانية</button>'); $("#fouru-retry")?.addEventListener("click", route); } return; }
+    }
+    if (stale(id)) return;
+    let season = Number(episodes[0]?.season || 1);
+    const playRow = (row) => {
+      const entry = fouru.entry(row, title, isSeries, lookup.tmdbId, lookup.detailType || lookup.type, lookup.detailId || lookup.tmdbId);
+      const queue = isSeries ? episodes.map((ep) => { const e = fouru.entry(ep, title, true, lookup.tmdbId, lookup.detailType || lookup.type, lookup.detailId || lookup.tmdbId); return { urls: fouru.urls(e.fourURef), entry: e }; }) : null;
+      play(fouru.urls(entry.fourURef), entry, queue, isSeries ? episodes.indexOf(row) : 0);
+    };
+    const render = () => {
+      const seasons = [...new Set(episodes.map((ep) => Number(ep.season || 1)))];
+      const image = title.cover || title.stream_icon || lookup.image;
+      view.innerHTML = `<section class="title-head"><div class="inner"><div class="poster">${image ? `<img src="${esc(xt.img(image))}" alt="">` : ""}</div><div class="meta"><h1>4U · ${esc(title.name || lookup.title)}</h1>${plot ? `<p class="overview">${esc(plot)}</p>` : ""}<button class="btn ghost" id="fouru-back">رجوع</button></div></div></section>
+        ${isSeries ? `<div class="chips scroll">${seasons.map((n) => `<button class="chip ${n === season ? "on" : ""}" data-fouru-season="${n}">الموسم ${n}</button>`).join("")}</div><div class="episodes">${episodes.filter((ep) => Number(ep.season || 1) === season).map((ep) => `<button class="episode" data-fouru-episode="${esc(ep.id)}"><span>▶ الحلقة ${esc(ep.episode_num)} · ${esc(ep.title)}</span></button>`).join("")}</div><button class="btn ghost" id="fouru-download-season">↓ تنزيل الموسم</button>${episodes.length ? "" : message("لا توجد حلقات متاحة في 4U حالياً")}` : '<button class="btn" id="fouru-play">▶ تشغيل 4U</button><button class="btn ghost" id="fouru-download">↓ تنزيل</button>'}`;
+      $("#fouru-back").addEventListener("click", () => choices.length > 1 ? renderChoices() : window.history.back());
+      $("#fouru-play")?.addEventListener("click", () => playRow(title));
+      $("#fouru-download")?.addEventListener("click", async () => { try { await addDownload(fouru.entry(title, title, false, lookup.tmdbId)); toast("أُضيف إلى التنزيلات"); } catch (e) { toast(e.message); } });
+      $("#fouru-download-season")?.addEventListener("click", async () => { try { for (const ep of episodes.filter((ep) => Number(ep.season || 1) === season)) await addDownload(fouru.entry(ep, title, true, lookup.tmdbId)); toast("أُضيف إلى التنزيلات"); } catch (e) { toast(e.message); } });
+      view.querySelectorAll("[data-fouru-season]").forEach((b) => b.addEventListener("click", () => { season = Number(b.dataset.fouruSeason); render(); }));
+      view.querySelectorAll("[data-fouru-episode]").forEach((b) => b.addEventListener("click", () => playRow(episodes.find((ep) => String(ep.id) === b.dataset.fouruEpisode))));
+    };
+    render();
+  };
+  const renderChoices = () => {
+    view.innerHTML = `<h1>4U · ${esc(lookup.title)}</h1>${choices.length ? `<div class="episodes">${choices.map((row, i) => `<button class="episode" data-fouru-choice="${i}">${esc(row.name)}</button>`).join("")}</div>` : message("هذا العمل غير موجود في 4U حالياً")}`;
+    view.querySelectorAll("[data-fouru-choice]").forEach((b) => b.addEventListener("click", () => choose(choices[Number(b.dataset.fouruChoice)])));
+  };
+  if (choices.length === 1) await choose(choices[0]); else renderChoices();
 }
 
 // ---------- live channels ----------
@@ -772,11 +843,18 @@ function bindAccountChips() {
 }
 
 async function live(id) {
-  if (!xtreamReady()) {
-    view.innerHTML = message("أضف حساب Xtream Codes من الإعدادات عشان تطلع لك القنوات المباشرة هنا", goSettings);
-    return;
-  }
-  const [cats, channels] = await Promise.all([xt.categories("live"), xt.all("live")]);
+  const useFourU = !xtreamReady() || sessionStorage.getItem("liveSource") === "fouru";
+  const sourceChips = `<div class="chips scroll">${accounts.all().map((a) => `<button class="chip ${!useFourU && accounts.active()?.id === a.id ? "on" : ""}" data-live-account="${esc(a.id)}">${esc(accounts.label(a))}</button>`).join("")}<button class="chip ${useFourU ? "on" : ""}" data-live-fouru>4U</button></div>`;
+  const bindSources = () => {
+    view.querySelector("[data-live-fouru]")?.addEventListener("click", () => { sessionStorage.setItem("liveSource", "fouru"); route(); });
+    view.querySelectorAll("[data-live-account]").forEach((b) => b.addEventListener("click", () => { sessionStorage.removeItem("liveSource"); accounts.setActive(b.dataset.liveAccount); route(); }));
+  };
+  view.innerHTML = sourceChips + loading(); bindSources();
+  let cats, channels;
+  try { [cats, channels] = await Promise.all(useFourU ? [fouru.categories(), fouru.channels()] : [xt.categories("live"), xt.all("live")]); }
+  catch (e) { if (!stale(id)) { view.innerHTML = sourceChips + message(e.message, '<button class="btn" id="fouru-retry">حاول مرة ثانية</button>'); bindSources(); $("#fouru-retry")?.addEventListener("click", route); } return; }
+  const liveUrls = (row) => useFourU ? fouru.urls({ kind: "live", id: row.id, extension: row.ext || "ts" }) : xt.playUrls(row);
+  const liveEntry = (row) => useFourU ? fouru.liveEntry(row) : xt.entryLive(row);
   if (stale(id)) return;
 
   const byId = new Map(channels.map((c) => [c.id, c]));
@@ -792,7 +870,7 @@ async function live(id) {
   let epgSeq = 0;
 
   view.innerHTML = `<div class="live">
-      ${accountChips()}
+      ${sourceChips}
       <label class="pill">${SEARCH_ICON}<input id="chq" type="search" placeholder="البحث في القنوات" autocomplete="off"></label>
       <div class="live-panes">
         <section class="pane preview-pane"><div id="preview" class="preview" style="display:grid;align-content:start;height:100%;overflow-y:auto"></div></section>
@@ -804,14 +882,14 @@ async function live(id) {
       </div>
     </div>`;
 
-  bindAccountChips();
+  bindSources();
   const catsEl = $("#cats");
   const listEl = $("#channels");
   const previewEl = $("#preview");
 
   // "سجل المشاهدة": this account's channels played lately (synced with the account), newest first.
   const watched = () => {
-    const acc = accounts.active()?.id;
+    const acc = useFourU ? "fouru" : accounts.active()?.id;
     return [...new Set(history.list().filter((h) => h.kind === "live" && h.accountId === acc)
       .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).map((h) => h.itemId))].filter((x) => byId.has(x));
   };
@@ -899,7 +977,7 @@ async function live(id) {
       if (mine !== epgSeq) return;
       let guide = [];
       try {
-        guide = await xt.shortEpg(c.id);
+        guide = useFourU ? [] : await xt.shortEpg(c.id);
       } catch { /* no guide */ }
       if (mine === epgSeq) renderPreview(guide);
     }, 300);
@@ -909,8 +987,8 @@ async function live(id) {
     recent.add(c.id);
     renderCats();
     // The list it was opened from: ←/→ in the player go through it.
-    const list = (shown.length ? shown : [c]).map((x, i) => ({ urls: xt.playUrls(x), entry: xt.entryLive(x), number: x.num ?? i + 1 }));
-    play(xt.playUrls(c), xt.entryLive(c), list, Math.max(0, (shown.length ? shown : [c]).indexOf(c)));
+    const list = (shown.length ? shown : [c]).map((x, i) => ({ urls: liveUrls(x), entry: liveEntry(x), number: x.num ?? i + 1 }));
+    play(liveUrls(c), liveEntry(c), list, Math.max(0, (shown.length ? shown : [c]).indexOf(c)));
   }
 
   catsEl.addEventListener("click", (e) => {
@@ -1217,9 +1295,8 @@ async function xseriesPage(id, seriesId) {
 
 /** "تابع المشاهدة" for the open Home tab: episodes under series, films under films. */
 function continueRow(type) {
-  if (!xtreamReady()) return "";
   const kind = type === "movie" ? "movie" : "episode";
-  const list = history.continueList().filter((e) => e.kind === kind).slice(0, 20);
+  const list = history.continueList().filter((e) => e.animeRef ? (sourceApi.reference(e.animeRef)?.type === "MOVIE" ? "movie" : "episode") === kind : e.kind === kind).slice(0, 20);
   if (!list.length) return "";
   const many = accounts.all().length > 1;
   return `<section id="continue"><h2 class="section-title">تابع المشاهدة</h2>
@@ -1238,6 +1315,16 @@ function continueRow(type) {
 
 /** Opens a title's own page from the history: the series, the film's TMDB page, or the channels. */
 async function openEntryPage(e) {
+  const animeRef = sourceApi.reference(e.animeRef), sourceRef = sourceApi.reference(e.sourceRef);
+  if (animeRef) { location.hash = features.routeFor("anime-watch", { title: e.title, searchTitle: e.title, image: e.image, type: animeRef.type === "MOVIE" ? "movie" : "tv", malId: animeRef.malId, detailType: animeRef.detailType, detailId: animeRef.detailId, sourceTitle: { id: animeRef.animeId, malId: animeRef.malId, title: e.title, type: animeRef.type, season: animeRef.season, poster: e.image } }); return; }
+  if (sourceRef) { location.hash = `#/title/${sourceRef.query.type === "TV" ? "tv" : "movie"}/${sourceRef.query.tmdbId}`; return; }
+  if (e.fourURef) {
+    if (e.kind === "live") { sessionStorage.setItem("liveSource", "fouru"); location.hash = "#/live"; }
+    else if (e.kind === "episode") location.hash = "#/fouru/" + encodeURIComponent(JSON.stringify({ type: "tv", sourceId: e.seriesId, title: e.title, tmdbId: e.tmdbId }));
+    else if (e.tmdbId) location.hash = `#/title/movie/${e.tmdbId}`;
+    else location.hash = "#/fouru/" + encodeURIComponent(JSON.stringify({ type: "movie", title: e.title, names: [e.title] }));
+    return;
+  }
   if (e.kind === "episode") {
     accounts.setActive(e.accountId);
     location.hash = `#/xseries/${encodeURIComponent(e.seriesId)}`;
@@ -1260,6 +1347,9 @@ async function openEntryPage(e) {
 
 /** The title's page on the platform side (TMDB): its known id, else found by its name. */
 async function openPlatformPage(e) {
+  const anime = sourceApi.reference(e.animeRef), fouru = sourceApi.reference(e.fourURef);
+  if (anime?.detailType === "anime" && anime.detailId) { location.hash = `#/anime/${anime.detailId}`; return; }
+  if (fouru?.detailType === "anime" && fouru.detailId) { location.hash = `#/anime/${fouru.detailId}`; return; }
   const type = e.kind === "episode" ? "tv" : "movie";
   if (type === "movie" && e.tmdbId) {
     location.hash = `#/title/movie/${e.tmdbId}`;
@@ -1299,6 +1389,8 @@ async function shareTitle(title, type, id) {
 }
 
 async function shareEntry(e) {
+  const anime = sourceApi.reference(e.animeRef);
+  if (anime?.detailType === "anime" && anime.detailId) { const url = `${location.origin}/#/anime/${anime.detailId}`; if (navigator.share) try { await navigator.share({ title: e.title, text: e.title, url }); return; } catch {} try { await navigator.clipboard.writeText(url); toast("نسخنا رابط الأنمي"); } catch { prompt("انسخ الرابط", url); } return; }
   const type = e.kind === "episode" ? "tv" : "movie";
   let id = type === "movie" ? e.tmdbId : null;
   let title = e.title;
@@ -1356,7 +1448,7 @@ async function shareEntry(e) {
 /** Long press / right click / ⋯ on a card: open its page, or remove it from the row. */
 function entryMenu(e, card) {
   document.querySelector(".sheet-wrap")?.remove();
-  const label = e.kind === "episode" ? "حلقات المسلسل في الحساب" : e.kind === "movie" ? "معلومات الفيلم (المنصة)" : "افتح القنوات المباشرة";
+  const label = e.animeRef ? "المواسم والحلقات · أنمي فاي" : e.sourceRef || e.fourURef ? "الحلقات ومعلومات العمل" : e.kind === "episode" ? "حلقات المسلسل في الحساب" : e.kind === "movie" ? "معلومات الفيلم (المنصة)" : "افتح القنوات المباشرة";
   const wrap = document.createElement("div");
   wrap.className = "sheet-wrap";
   wrap.innerHTML = `<div class="sheet" role="dialog" aria-modal="true">
@@ -1420,8 +1512,9 @@ function bindContinue() {
     const card = ev.target.closest("[data-k]");
     const e = card && entryOf(card);
     if (!e) return;
-    if (e.kind === "episode" && isFinished(e) && e.seriesId) openEntryPage(e);
-    else play(xt.urlsFor(e), e);
+    if (["episode", "anime_episode"].includes(e.kind) && isFinished(e) && e.seriesId) openEntryPage(e);
+    else if (sourceApi.reference(e.sourceRef)?.providerId === "tpb") openEntryPage(e);
+    else play(e.animeRef || e.sourceRef ? [] : xt.urlsFor(e), e);
   });
   root.addEventListener("contextmenu", (ev) => {
     const card = ev.target.closest("[data-k]");
@@ -1717,6 +1810,13 @@ async function settingsPage() {
     </section>
 
     <section class="card-box">
+      <h3>مصادر المشاهدة</h3>
+      <p class="muted">المصادر جاهزة من صفحة العمل. يمكنك إضافة رابط كتالوج خاص بك، واستخدام روابط تورنت عبر تطبيق تورنت على جهازك.</p>
+      <label>رابط كتالوج إضافي<input class="input" id="source-catalogue" type="url" dir="ltr" value="${esc(settings.sourceCatalogue || "")}" placeholder="https://example.com/catalogue.json"></label>
+      <button class="btn ghost" id="save-source-catalogue">احفظ</button>
+    </section>
+
+    <section class="card-box">
       <h3>البروكسي</h3>
       <p class="muted" style="margin:0;line-height:1.8">المتصفح ما يقدر يوصل لسيرفرات Xtream مباشرة، فنمرّر الطلبات عن طريق البروكسي اللي مع الموقع.
         خلّه <code dir="ltr">/proxy</code> إذا الموقع شغال على سيرفر Watch Hub، أو حط رابط بروكسي ثاني.</p>
@@ -1733,6 +1833,8 @@ async function settingsPage() {
       <p class="muted" style="margin:0;font-size:12px">This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
     </section>
   </div>`;
+
+  $("#save-source-catalogue").onclick = () => { settings.sourceCatalogue = $("#source-catalogue").value.trim(); toast("تم الحفظ"); };
 
   $("#tmdb-save").addEventListener("click", async () => {
     settings.tmdbKey = $("#tmdb").value.trim();
@@ -1773,18 +1875,21 @@ async function settingsPage() {
     toast(e.target.checked ? "التشغيل بيفتح في VLC" : "التشغيل بيكون هنا في المتصفح");
   });
 
-  $("#p-save").addEventListener("click", () => {
+  $("#p-save").addEventListener("click", async () => {
     const px = $("#px").value.trim();
     // Only a path ("/proxy") or a full link belongs here; anything else falls back to the built-in proxy.
     settings.proxy = !px || px.startsWith("/") || /^https?:\/\//i.test(px) ? px : "/proxy";
     $("#px").value = settings.proxy;
     settings.proxyKey = $("#pk").value;
     xt.clearCache();
+    await tmdb.configure();
     toast("تم الحفظ");
   });
 }
 
-restoreHistory().finally(() => {
+restoreHistory().finally(async () => {
+  await tmdb.configure();
+  restoreDownloads();
   route();
   cloud.start();
 });

@@ -226,11 +226,11 @@ async function startSyncing() {
 
 // ---- history
 
-const HISTORY_FIELDS = ["key", "kind", "itemId", "title", "subtitle", "image", "ext", "seriesId", "positionMs", "durationMs", "updatedAt", "accountId", "tmdbId", "animeRef", "sourceRef"];
+const HISTORY_FIELDS = ["key", "kind", "itemId", "title", "subtitle", "image", "ext", "seriesId", "positionMs", "durationMs", "updatedAt", "accountId", "tmdbId", "animeRef", "sourceRef", "fourURef"];
 
 function historyDoc(e) {
   const out = { deleted: false, device: "المتصفح" };
-  for (const f of HISTORY_FIELDS) out[f] = e[f] ?? null;
+  for (const f of HISTORY_FIELDS) out[f] = ["animeRef", "sourceRef", "fourURef"].includes(f) && e[f] && typeof e[f] !== "string" ? JSON.stringify(e[f]) : e[f] ?? null;
   return out;
 }
 
@@ -238,7 +238,10 @@ function applyHistoryDoc(d) {
   if (!d || !d.key || !d.updatedAt) return false;
   if (d.deleted) return history.applyRemote(d.key, null, d.updatedAt);
   const e = {};
-  for (const f of HISTORY_FIELDS) if (d[f] !== null && d[f] !== undefined) e[f] = d[f];
+  for (const f of HISTORY_FIELDS) if (d[f] !== null && d[f] !== undefined) {
+    e[f] = d[f];
+    if (["animeRef", "sourceRef", "fourURef"].includes(f) && typeof e[f] === "string") try { e[f] = JSON.parse(e[f]); } catch { e[f] = null; }
+  }
   return history.applyRemote(d.key, e, d.updatedAt);
 }
 
@@ -316,17 +319,21 @@ export async function refreshEntry(key, timeoutMs = 2000) {
 // ---- watchlist (web items: key, type, id, title, poster, year, status, added)
 
 function watchDoc(w) {
-  return {
+  const value = {
     key: w.key, type: w.type, id: Number(w.id), title: w.title || "", poster: w.poster || null,
+    progressSeason: w.progress?.season ?? null, progressEpisode: w.progress?.episode ?? null,
     status: w.status || "want", addedAt: w.added || w.addedAt || Date.now(), updatedAt: w.updatedAt || Date.now(), deleted: false,
   };
+  if (w.android) try { value.android = JSON.stringify({ ...JSON.parse(w.android), title: w.title, status: { want: "PLANNED", watching: "WATCHING", done: "DONE" }[w.status || "want"], progress: w.progress || null, updatedAt: value.updatedAt }); } catch { /* Keep the shared fields when an older payload is invalid. */ }
+  return value;
 }
 
 function applyWatchDoc(d) {
   if (!d || !d.key || !d.updatedAt) return false;
   if (d.deleted) return watchlist.applyRemote(d.key, null, d.updatedAt);
   return watchlist.applyRemote(d.key, {
-    key: d.key, type: d.type, id: d.id, title: d.title, poster: d.poster, status: d.status || "want", added: d.addedAt,
+    key: d.key, type: d.type, id: d.id, title: d.title, poster: d.poster, android: d.android, status: d.status || "want", added: d.addedAt,
+    progress: d.progressSeason != null && d.progressEpisode != null ? { season: Number(d.progressSeason), episode: Number(d.progressEpisode) } : undefined,
   }, d.updatedAt);
 }
 

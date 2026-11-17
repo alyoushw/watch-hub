@@ -7,6 +7,7 @@
 // Optional environment variables:
 //   PROXY_KEY    a password the page must send (set it in the app's settings too)
 //   PROXY_HOSTS  comma-separated hosts the proxy may reach, e.g. "example.com:8080"
+import { handleSources, type MediaSession } from "./sources.ts";
 import { serveDir } from "jsr:@std/http@1.0.10/file-server";
 
 const PROXY_KEY = Deno.env.get("PROXY_KEY") ?? "";
@@ -17,7 +18,7 @@ const PUBLIC_DIR = new URL("./public", import.meta.url).pathname;
 const CORS: Record<string, string> = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, HEAD, POST, OPTIONS",
-  "access-control-allow-headers": "range, content-type",
+  "access-control-allow-headers": "range, if-range, content-type",
   "access-control-expose-headers": "content-length, content-range, accept-ranges, content-type",
 };
 const VIDEO_TYPES: Record<string, string> = {
@@ -34,7 +35,7 @@ function fail(status: number, message: string): Response {
   return new Response(message, { status, headers: { ...CORS, "content-type": "text/plain; charset=utf-8" } });
 }
 
-async function proxy(req: Request, self: URL): Promise<Response> {
+async function proxy(req: Request, self: URL, session?: MediaSession): Promise<Response> {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   if (PROXY_KEY && self.searchParams.get("key") !== PROXY_KEY) return fail(401, "wrong proxy key");
 
@@ -50,13 +51,31 @@ async function proxy(req: Request, self: URL): Promise<Response> {
     return fail(403, "host not allowed");
   }
 
-  const headers = new Headers({ "user-agent": "Mozilla/5.0 (WatchHub web)" });
+  const headers = new Headers({ "user-agent": self.searchParams.get("user_agent") || "Mozilla/5.0 (WatchHub web)" });
+  const referrer = self.searchParams.get("referrer");
+  if (referrer) headers.set("referer", referrer);
   const range = req.headers.get("range");
   if (range) headers.set("range", range);
+  const ifRange = req.headers.get("if-range");
+  if (ifRange) headers.set("if-range", ifRange);
 
   let upstream: Response;
   try {
-    upstream = await fetch(target, { headers, redirect: "follow", signal: req.signal });
+    if (session) {
+      let address = target;
+      for (let redirects = 0; ; redirects++) {
+        const providerHeaders = new Headers(headers);
+        if (session.headers["User-Agent"]) providerHeaders.set("user-agent", session.headers["User-Agent"]);
+        if (address.host === session.host) for (const [name, value] of Object.entries(session.headers)) providerHeaders.set(name, value);
+        upstream = await fetch(address, { headers: providerHeaders, redirect: "manual", signal: req.signal });
+        const location = upstream.headers.get("location");
+        if (![301,302,303,307,308].includes(upstream.status) || !location) break;
+        await upstream.body?.cancel();
+        if (redirects >= 5) return fail(502, "too many redirects");
+        address = new URL(location, address);
+        if (!/^https?:$/.test(address.protocol) || PROXY_HOSTS.length && !PROXY_HOSTS.includes(address.host.toLowerCase()) && !PROXY_HOSTS.includes(address.hostname.toLowerCase())) return fail(403, "host not allowed");
+      }
+    } else upstream = await fetch(target, { headers, redirect: "follow", signal: req.signal });
   } catch (e) {
     return fail(502, `could not reach server: ${e instanceof Error ? e.message : e}`);
   }
@@ -75,22 +94,161 @@ async function proxy(req: Request, self: URL): Promise<Response> {
     const named = VIDEO_TYPES[ext];
     if (named) out.set("content-type", named);
   }
-  if (/mpegurl/i.test(type) || /\.m3u8?(\?|$)/i.test(new URL(finalUrl).pathname)) {
-    const text = await upstream.text();
+  if (/mpegurl/i.test(type) || /\.m3u8?(\?|$)/i.test(new URL(finalUrl).pathname) || session && /\.txt$/i.test(new URL(finalUrl).pathname)) {
+    if (!upstream.ok) return new Response(upstream.body, { status: upstream.status, headers: out });
+    const reader = upstream.body?.getReader(); if (!reader) return fail(502, "empty playlist");
+    const decoder = new TextDecoder(); let text = "", size = 0;
+    try { while (true) { const { value, done } = await reader.read(); if (done) break; size += value.length; if (size > 2 * 1024 * 1024) return fail(502, "playlist too large"); text += decoder.decode(value, { stream: true }); } text += decoder.decode(); }
+    finally { await reader.cancel().catch(() => {}); }
+    if (!text.trimStart().startsWith("#EXTM3U")) return fail(502, "invalid playlist");
     out.delete("content-length");
     out.set("content-type", "application/vnd.apple.mpegurl");
     out.set("cache-control", "no-store");
-    return new Response(rewritePlaylist(text, finalUrl, self), { status: upstream.status, headers: out });
+    return new Response(rewritePlaylist(text, finalUrl, self, session), { status: upstream.status, headers: out });
   }
   return new Response(upstream.body, { status: upstream.status, headers: out });
 }
 
+// 4U TV 1.1.0 uses a public Xtream catalogue and public Supabase live-channel reads.
+const FOURU_BASE = "https://ctm.alostoura.live";
+const FOURU_MEDIA = `${FOURU_BASE}/media-4u-9d7f2c`;
+const FOURU_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzkzNzkzMjEyLCJleHAiOjE5NTE0NzMyMTJ9.iqm9WGbraabiykSNLiOnk6LS9kLusprYI0Lox568jXw";
+type FourUChannel = { id: string; categoryId: string; name: string; url: string; headers: Record<string, string> };
+let fourULive: { at: number; rows: FourUChannel[] } | null = null;
+let fourULoad: Promise<FourUChannel[]> | null = null;
+async function fourURead(path: string) {
+  const res = await fetch(FOURU_BASE + path, { headers: { apikey: FOURU_ANON, authorization: `Bearer ${FOURU_ANON}` }, signal: AbortSignal.timeout(60000) });
+  if (!res.ok) throw new Error(`تعذّر الاتصال بـ4U (${res.status})`);
+  return await res.json();
+}
+function fourUChannels(): Promise<FourUChannel[]> {
+  if (fourULive && Date.now() - fourULive.at < 300000) return Promise.resolve(fourULive.rows);
+  if (fourULoad) return fourULoad;
+  fourULoad = (async () => {
+    const rows: FourUChannel[] = [];
+    for (let offset = 0; offset <= 100000; offset += 1000) {
+      const page = await fourURead(`/rest/v1/h9ch_26wd?select=id,category_id,name,stream_url,user_agent,referrer&order=id.asc&limit=1000&offset=${offset}`);
+      if (!Array.isArray(page)) throw new Error("تعذّر قراءة قنوات 4U");
+      for (const row of page) {
+        if (!/^https?:\/\//i.test(row.stream_url || "")) continue;
+        rows.push({ id: String(row.id), categoryId: String(row.category_id), name: String(row.name), url: row.stream_url,
+          headers: { ...(row.user_agent ? { user_agent: row.user_agent } : {}), ...(row.referrer ? { referrer: row.referrer } : {}) } });
+      }
+      if (page.length < 1000) { fourULive = { at: Date.now(), rows }; return rows; }
+    }
+    throw new Error("قائمة قنوات 4U أكبر من الحد المسموح");
+  })().finally(() => { fourULoad = null; });
+  return fourULoad;
+}
+function fourUNormalize(raw: string) {
+  let t = raw || "";
+  // Provider labels in front of the name: "[AR]", "|AR|", "AR:", "AR - ", "AR-AS-S:", "4K-AR|".
+  const tag = /^\s*(\[[^\]]*\]|\|[^|]{1,6}\||[A-Z0-9]{1,6}(-[A-Z0-9]{1,6}){1,4}\s*[|:]\s*|[A-Z]{2,3}\s*[|:]\s*|[A-Z]{2,3}\s+-\s+)/;
+  t = t.replace(tag, "").replace(tag, "");
+  return t.toLowerCase()
+    .replace(/[([{][^)\]}]*[)\]}]/g, " ")
+    .replace(/\b(4k|uhd|fhd|hd|sd|hevc|multi[- ]?sub|vip)\b/g, " ")
+    .replace(/\b(19|20)\d{2}\b/g, " ")
+    .replace(/[أإآ]/g, "ا").replace(/ة/g, "ه").replace(/ى/g, "ي")
+    .replace(/[^\p{L}\p{Nd}]+/gu, " ")
+    .trim().replace(/\s+/g, " ");
+}
+const fourUMatches = new Map<string, { at: number; row: Record<string, unknown> }>();
+async function fourUMatch(req: Request, url: URL): Promise<Response> {
+  const series = url.searchParams.get("series") === "true", year = Number(url.searchParams.get("year")) || 0;
+  const supplied = JSON.parse(url.searchParams.get("names") || "[]");
+  if (!Array.isArray(supplied) || supplied.length > 8 || supplied.some((x) => typeof x !== "string" || x.length > 300)) return fail(400, "bad title");
+  const names = new Set(supplied.map(fourUNormalize).filter((x) => x.length >= 2));
+  if (!names.size) return Response.json([], { headers: CORS });
+  const cacheKey = JSON.stringify([series, year, [...names].sort()]), cached = fourUMatches.get(cacheKey);
+  if (cached && Date.now() - cached.at < 300000) return Response.json([cached.row], { headers: CORS });
+  const upstream = new URL(`${FOURU_MEDIA}/player_api.php`); upstream.searchParams.set("action", series ? "get_series" : "get_vod_streams"); upstream.searchParams.set("username", "4u"); upstream.searchParams.set("password", "4u");
+  const response = await fetch(upstream, { signal: AbortSignal.any([req.signal, AbortSignal.timeout(45000)]) });
+  if (!response.ok || !response.body) return fail(502, "تعذّر جلب محتوى 4U");
+  const reader = response.body.getReader(), decoder = new TextDecoder();
+  let opened = false, depth = 0, quoted = false, escaped = false, item = "", bytes = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read(); if (done) break;
+      bytes += value.length; if (bytes > 32 * 1024 * 1024) throw new Error("catalogue too large");
+      const chunk = decoder.decode(value, { stream: true });
+      for (const c of chunk) {
+        if (!opened) { if (/\s|\uFEFF/.test(c)) continue; if (c !== "[") throw new Error("bad catalogue"); opened = true; continue; }
+        if (depth === 0) { if (/\s|,/.test(c)) continue; if (c === "]") return Response.json([], { headers: CORS }); if (c !== "{") throw new Error("bad row"); depth = 1; item = "{"; continue; }
+        item += c; if (item.length > 2 * 1024 * 1024) throw new Error("row too large");
+        if (quoted) { if (escaped) escaped = false; else if (c === "\\") escaped = true; else if (c === '"') quoted = false; }
+        else if (c === '"') quoted = true;
+        else if (c === "{") depth++;
+        else if (c === "}" && --depth === 0) {
+          const row = JSON.parse(item), release = /(?:19|20)\d{2}/.exec(row.releaseDate || row.name || "")?.[0];
+          if (names.has(fourUNormalize(row.name)) && (!year || !release || Number(release) === year)) {
+            if (fourUMatches.size > 128) fourUMatches.clear(); fourUMatches.set(cacheKey, { at: Date.now(), row });
+            return Response.json([row], { headers: { ...CORS, "cache-control": "no-store" } });
+          }
+          item = "";
+        }
+      }
+    }
+    throw new Error("incomplete catalogue");
+  } finally { await reader.cancel().catch(() => {}); }
+}
+
+async function fourU(req: Request, url: URL): Promise<Response> {
+  if (PROXY_KEY && url.searchParams.get("key") !== PROXY_KEY) return fail(401, "wrong proxy key");
+  try {
+    const operation = url.pathname.slice("/fouru/".length);
+    if (operation === "match") return await fourUMatch(req, url);
+    if (operation === "catalog") {
+      const action = url.searchParams.get("action") || "";
+      if (!["get_vod_streams", "get_series", "get_series_info"].includes(action)) return fail(400, "unsupported action");
+      const target = new URL(`${FOURU_MEDIA}/player_api.php`);
+      target.searchParams.set("action", action);
+      target.searchParams.set("username", "4u"); target.searchParams.set("password", "4u");
+      if (action === "get_series_info") {
+        const id = url.searchParams.get("series_id") || "";
+        if (!/^\d+$/.test(id)) return fail(400, "bad id");
+        target.searchParams.set("series_id", id);
+      }
+      const response = await fetch(target, { signal: AbortSignal.timeout(90000) });
+      return new Response(response.body, { status: response.status, headers: { ...CORS, "content-type": "application/json", "cache-control": "no-store" } });
+    }
+    if (operation === "categories") {
+      const rows = await fourURead("/rest/v1/c5tg_84zr?select=id,name&order=id.asc&limit=1000");
+      return Response.json(rows, { headers: CORS });
+    }
+    if (operation === "live") {
+      const rows = await fourUChannels();
+      return Response.json(rows.map(({ id, categoryId, name }, i) => ({ id, categoryId, name, ext: new URL(rows[i].url).pathname.split(".").pop()?.toLowerCase() === "m3u8" ? "m3u8" : "ts", num: i + 1, kind: "live", accountId: "fouru" })), { headers: { ...CORS, "cache-control": "no-store" } });
+    }
+    if (/^stream(?:\.[a-zA-Z0-9]+)?$/.test(operation)) {
+      const id = url.searchParams.get("id") || "";
+      const kind = url.searchParams.get("kind") || "";
+      const ext = url.searchParams.get("ext") || "mp4";
+      if (!/^\d+$/.test(id) || !["live", "movie", "series"].includes(kind) || !/^[a-zA-Z0-9]+$/.test(ext)) return fail(400, "bad stream");
+      let target: string;
+      const forward = new URL("/proxy", url);
+      if (kind === "live") {
+        const channel = (await fourUChannels()).find((c) => c.id === id);
+        if (!channel) return fail(404, "القناة لم تعد متاحة في 4U");
+        target = channel.url;
+        for (const [k, v] of Object.entries(channel.headers)) forward.searchParams.set(k, v);
+      } else target = `${FOURU_MEDIA}/${kind}/4u/4u/${id}.${ext}`;
+      forward.searchParams.set("url", target);
+      if (PROXY_KEY) forward.searchParams.set("key", PROXY_KEY);
+      return proxy(req, forward);
+    }
+    return fail(404, "not found");
+  } catch { return fail(502, "تعذّر الاتصال بـ4U، حاول مرة ثانية"); }
+}
+
 /** Points every URL in an HLS playlist (segments, keys, sub-playlists) back at this proxy. */
-function rewritePlaylist(text: string, base: string, self: URL): string {
+function rewritePlaylist(text: string, base: string, self: URL, session?: MediaSession): string {
   const wrap = (u: string) => {
     const abs = new URL(u, base).href;
     const key = PROXY_KEY ? `&key=${encodeURIComponent(PROXY_KEY)}` : "";
-    return `${self.origin}/proxy?url=${encodeURIComponent(abs)}${key}`;
+    if (session) return `${self.origin}/sources/media/${session.token}/segment?url=${encodeURIComponent(abs)}${key}`;
+    const provider = ["user_agent", "referrer"].map((k) => self.searchParams.has(k) ? `&${k}=${encodeURIComponent(self.searchParams.get(k)!)}` : "").join("");
+    return `${self.origin}/proxy?url=${encodeURIComponent(abs)}${key}${provider}`;
   };
   return text.split("\n").map((line) => {
     const l = line.trim();
@@ -346,6 +504,8 @@ function assetLinks(): Response {
 
 Deno.serve({ port }, (req) => {
   const url = new URL(req.url);
+  if (url.pathname.startsWith("/sources/")) return handleSources(req, url, proxy);
+  if (url.pathname.startsWith("/fouru/")) return fourU(req, url);
   if (url.pathname === "/proxy") return proxy(req, url);
   if (req.method === "OPTIONS" && url.pathname.startsWith("/auth/")) return new Response(null, { status: 204, headers: CORS });
   if (url.pathname === "/config.json") return config();

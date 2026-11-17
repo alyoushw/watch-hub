@@ -1,5 +1,9 @@
 // The Movie Database: titles, details and where each one streams (via JustWatch).
 import { settings } from "./store.js";
+import { endpoint as sourceEndpoint, read as sourceRead } from "./sources.js";
+let configured = false;
+export const ready = () => !!settings.tmdbKey || configured;
+export async function configure() { try { configured = !!(await sourceRead("config")).tmdbConfigured; } catch { configured = false; } }
 
 const BASE = "https://api.themoviedb.org/3";
 
@@ -26,11 +30,11 @@ const cache = new Map();
 
 export async function get(path, params = {}) {
   const key = (settings.tmdbKey || "").trim();
-  if (!key) throw new ApiError("أضف مفتاح TMDB من الإعدادات أول");
+  if (!key && !configured) throw new ApiError("خدمة بيانات المحتوى تحتاج تهيئة من إعدادات الموقع");
   const bearer = key.startsWith("eyJ");
-  const url = new URL(`${BASE}/${path}`);
+  const url = key ? new URL(`${BASE}/${path}`) : new URL(sourceEndpoint("tmdb", { path }));
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  if (!bearer) url.searchParams.set("api_key", key);
+  if (key && !bearer) url.searchParams.set("api_key", key);
 
   const cacheKey = url.href;
   if (cache.has(cacheKey)) return cache.get(cacheKey);
@@ -87,11 +91,11 @@ export const details = (type, id) =>
   get(`${type}/${id}`, {
     language: "ar",
     // Series: the cast of all seasons too ("credits" only has the latest one).
-    append_to_response: "watch/providers,credits,videos,recommendations" + (type === "tv" ? ",aggregate_credits" : ""),
+    append_to_response: "watch/providers,credits,videos,recommendations,external_ids" + (type === "tv" ? ",aggregate_credits" : ""),
     include_video_language: "ar,en",
   });
 
-export const englishDetails = (type, id) => get(`${type}/${id}`, { language: "en-US" }).catch(() => null);
+export const englishDetails = (type, id) => get(`${type}/${id}`, { language: "en-US", append_to_response: "reviews,videos" }).catch(() => null);
 
 /** Provider ids for the user's region, so Shahid and STC tv rows work without hard-coded ids. */
 export async function regionServiceIds(type) {

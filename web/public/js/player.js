@@ -4,6 +4,8 @@
 //
 // Safari plays HLS itself; other browsers use hls.js, and MPEG-TS live streams use mpegts.js.
 import { via } from "./xtream.js";
+import { offlineUrl, addDownload } from "./downloads.js";
+import { resolveEntry } from "./sources.js";
 import { settings, history, isFinished, historySaved } from "./store.js";
 import * as cloud from "./cloud.js";
 
@@ -226,8 +228,13 @@ function saveProgress(important = false) {
  * Plays [urls] (tried in order); [entry] names it and keeps its place in the watch history.
  * [list] (items of { urls, entry, number? }) and [index]: the channels or episodes around it.
  */
-export function play(urls, entry, list = null, index = 0) {
-  if (isIOS() && settings.vlcOnIos !== false) {
+export async function play(urls, entry, list = null, index = 0) {
+  const downloaded = await offlineUrl(entry.key);
+  if (downloaded) { urls = [downloaded]; list = null; }
+  if (!downloaded && isIOS() && settings.vlcOnIos !== false && (entry.animeRef || entry.sourceRef || entry.fourURef)) {
+    try { urls = await resolveEntry(entry); } catch (e) { openOverlay(entry, entry.kind === "live"); ui.spin.hidden = true; errorEl.hidden = false; errorEl.textContent = e.message; return; }
+  }
+  if (!downloaded && isIOS() && settings.vlcOnIos !== false) {
     history.save(entry, true);
     return openInVlc(urls, entry);
   }
@@ -385,7 +392,7 @@ setInterval(() => {
   const e = current.entry;
   const d = video.duration;
   const t = video.currentTime;
-  if (current.live || e.kind !== "episode" || !current.started || !isFinite(d) || d <= 0) {
+  if (current.live || !["episode", "anime_episode"].includes(e.kind) || !current.started || !isFinite(d) || d <= 0) {
     ui.skip.hidden = true;
     ui.upnext.hidden = true;
     return;
@@ -423,6 +430,7 @@ ui.prev.addEventListener("click", () => step(-1));
 ui.next.addEventListener("click", () => step(1));
 
 async function playHere(urls, entry) {
+  if (current?.entry.key !== entry.key) clearExternalCaptions();
   const live = entry.kind === "live";
   const mine = ++session;
   current = { urls, entry, live, started: false };
@@ -435,6 +443,12 @@ async function playHere(urls, entry) {
   history.save(entry, true);
   const startAt = !live && saved && !isFinished(saved) && saved.positionMs > 10000 ? saved.positionMs / 1000 : 0;
   ui.spin.hidden = false;
+  const downloaded = await offlineUrl(entry.key);
+  if (downloaded) urls = [downloaded];
+  else if (entry.animeRef || entry.sourceRef || entry.fourURef) {
+    try { urls = await resolveEntry(entry); if (mine !== session) return; current.urls = urls; }
+    catch (e) { if (mine !== session) return; ui.spin.hidden = true; errorEl.hidden = false; errorEl.textContent = e.message; return; }
+  }
   for (const url of urls) {
     try {
       await tryOne(url, startAt);
@@ -610,7 +624,7 @@ video.addEventListener("pause", () => {
 video.addEventListener("ended", () => {
   saveProgress(true);
   // A series goes on to the next episode; anything else closes.
-  if (current?.entry.kind === "episode" && qIndex < queue.length - 1) step(1);
+  if (["episode", "anime_episode"].includes(current?.entry.kind) && qIndex < queue.length - 1) step(1);
   else close();
 });
 
@@ -731,6 +745,46 @@ video.addEventListener("volumechange", () => {
   ui.mute.textContent = video.muted || video.volume === 0 ? "🔇" : "🔊";
 });
 
+// External SRT/WebVTT stays in this browser session and is rendered by the existing video element.
+let captionDelay = Number(localStorage.getItem("pl.captionDelay") || 0);
+let captionColor = localStorage.getItem("pl.captionColor") || "white";
+let cueTimes = new WeakMap();
+const captionUrls = new Set();
+function shiftCaptions() {
+  for (const track of video.textTracks) for (const cue of track.cues || []) {
+    if (!cueTimes.has(cue)) cueTimes.set(cue, [cue.startTime, cue.endTime]);
+    const [start, end] = cueTimes.get(cue); cue.startTime = Math.max(0, start + captionDelay); cue.endTime = Math.max(cue.startTime + .01, end + captionDelay);
+  }
+}
+function clearExternalCaptions() {
+  video.querySelectorAll("track[data-user-subtitle]").forEach((t) => t.remove());
+  for (const url of captionUrls) URL.revokeObjectURL(url); captionUrls.clear(); cueTimes = new WeakMap();
+}
+async function attachCaptions(text, label) {
+  text = text.replace(/^\uFEFF/, "");
+  if (!text.startsWith("WEBVTT")) text = "WEBVTT\n\n" + text.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2");
+  const url = URL.createObjectURL(new Blob([text], { type: "text/vtt" })); captionUrls.add(url);
+  const element = document.createElement("track"); element.kind = "subtitles"; element.label = label; element.srclang = "ar"; element.src = url; element.dataset.userSubtitle = "true";
+  element.onload = () => { for (const track of video.textTracks) track.mode = track === element.track ? "showing" : "disabled"; shiftCaptions(); flash("أُضيفت الترجمة"); };
+  element.onerror = () => { element.remove(); URL.revokeObjectURL(url); captionUrls.delete(url); flash("تعذّر قراءة ملف الترجمة"); };
+  video.appendChild(element); element.track.mode = "showing";
+}
+function pickCaptionFile() {
+  const input = document.createElement("input"); input.type = "file"; input.accept = ".srt,.vtt,text/vtt";
+  input.onchange = async () => { const file = input.files?.[0]; if (!file) return; if (file.size > 5 * 1024 * 1024) return flash("ملف الترجمة أكبر من الحد المسموح"); try { await attachCaptions(await file.text(), file.name); } catch { flash("تعذّر قراءة ملف الترجمة"); } }; input.click();
+}
+async function pickCaptionUrl() {
+  const value = prompt("رابط ملف SRT أو WebVTT"); if (!value) return;
+  try { const url = new URL(value); if (!["http:", "https:"].includes(url.protocol)) throw new Error();
+    const response = await fetch(via(url.href)); if (!response.ok) throw new Error();
+    const reader = response.body.getReader(), decoder = new TextDecoder(); let text = "", size = 0;
+    try { while (true) { const { value, done } = await reader.read(); if (done) break; size += value.byteLength; if (size > 5 * 1024 * 1024) throw new Error(); text += decoder.decode(value, { stream: true }); } text += decoder.decode(); }
+    finally { await reader.cancel().catch(() => {}); }
+    await attachCaptions(text, "ترجمة خارجية");
+  } catch { flash("تعذّر تحميل الترجمة من هذا الرابط"); }
+}
+box.style.setProperty("--caption-color", captionColor);
+
 // ---------- menus: subtitles, audio, speed ----------
 
 function openMenu(title, items, emptyText) {
@@ -772,6 +826,10 @@ $("pl-subs").addEventListener("click", () => {
   const tracks = [...video.textTracks].filter((t) => t.kind === "subtitles" || t.kind === "captions");
   const any = tracks.some((t) => t.mode === "showing");
   openMenu("الترجمة", [
+    ["أضف ملف SRT / WebVTT", false, pickCaptionFile],
+    ["أضف رابط ترجمة", false, pickCaptionUrl],
+    [`تأخير الترجمة: ${captionDelay} ثانية`, false, () => { captionDelay = Math.round((captionDelay + .5) * 10) / 10; if (captionDelay > 5) captionDelay = 0; localStorage.setItem("pl.captionDelay", String(captionDelay)); shiftCaptions(); flash(`تأخير الترجمة: ${captionDelay} ثانية`); }],
+    ...[["white", "أبيض"], ["yellow", "أصفر"], ["#a5ff9c", "أخضر"]].map(([color, label]) => [`لون الترجمة: ${label}`, captionColor === color, () => { captionColor = color; localStorage.setItem("pl.captionColor", color); box.style.setProperty("--caption-color", color); }]),
     ["بدون ترجمة", !any, () => {
       tracks.forEach((t) => (t.mode = "disabled"));
       if (engine?.hls) engine.hls.subtitleTrack = -1;
@@ -946,3 +1004,5 @@ window.addEventListener("pagehide", () => saveProgress(true));
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") saveProgress(true);
 });
+
+$("pl-download")?.addEventListener("click", async () => { if (!current) return; try { await addDownload(current.entry, current.urls); flash("أُضيف إلى التنزيلات"); } catch (e) { flash(e.message); } });
