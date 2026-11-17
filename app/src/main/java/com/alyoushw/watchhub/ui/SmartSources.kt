@@ -67,16 +67,23 @@ fun SourceWatchScreen(
     sources: WatchSources? = null,
     onPlay: ((WatchSourceRef) -> Unit)? = null,
 ) {
-    if (lookup.providerId == "tuktuk") {
-        // TukTuk sits behind Cloudflare: browse it in the app (the viewer passes any check like a
-        // normal browser) and hand the video it plays to Watch Hub's player.
+    val tuktuk = lookup.providerId == "tuktuk"
+    if (tuktuk && lookup.query.type != MediaType.TV) {
+        // TukTuk sits behind Cloudflare: a hidden in-app browser finds the film's servers.
         androidx.activity.compose.BackHandler(onBack = onBack)
         TukTukFinderScreen(lookup, TUKTUK_HOME, onBack)
         return
     }
+    // A TukTuk series shows its seasons and episodes first; the chosen episode is then looked up.
+    var tukEpisode by remember { mutableStateOf<com.alyoushw.watchhub.data.SourceQuery?>(null) }
+    tukEpisode?.let { q ->
+        androidx.activity.compose.BackHandler { tukEpisode = null }
+        TukTukFinderScreen(lookup.copy(query = q), TUKTUK_HOME) { tukEpisode = null }
+        return
+    }
     val container = appContainer()
     val context = LocalContext.current
-    val website = when (lookup.providerId) { "moviz-time" -> "Moviz Time"; "topcinema" -> "TopCinema"; "egybest" -> "EgyBest"; else -> null }
+    val website = when (lookup.providerId) { "moviz-time" -> "Moviz Time"; "topcinema" -> "TopCinema"; "egybest" -> "EgyBest"; "tuktuk" -> "TukTuk"; else -> null }
     val repository = sources ?: when (lookup.providerId) {
         "moviz-time" -> container.movizTimeSources
         "topcinema" -> container.topCinemaSources
@@ -93,12 +100,12 @@ fun SourceWatchScreen(
     val series = lookup.query.type == MediaType.TV
     val query = lookup.query.copy(season = season.takeIf { series }, episode = number.takeIf { series },
         seasonYear = lookup.seasons.firstOrNull { it.number == season }?.year.takeIf { series })
-    var loading by remember(query, catalogue, indexed, retry) { mutableStateOf(query.valid) }
+    var loading by remember(query, catalogue, indexed, retry) { mutableStateOf(query.valid && !tuktuk) }
     var result by remember(query, catalogue, indexed, retry) { mutableStateOf<SourceSearch?>(null) }
     var openedLink by remember(query) { mutableStateOf<SourceWebLink?>(null) }
     LaunchedEffect(query, catalogue, indexed, retry) {
         result = null
-        if (!query.valid) return@LaunchedEffect
+        if (!query.valid || tuktuk) return@LaunchedEffect
         loading = true
         try { result = repository.search(query) }
         finally { loading = false }
@@ -151,8 +158,8 @@ fun SourceWatchScreen(
                 EpisodePlaybackRow(label = if (series) "الحلقة $episode" else "الفيلم",
                     title = if (series) "${lookup.title} S${season.toString().padStart(2, '0')} E${episode.toString().padStart(2, '0')}" else lookup.title,
                     image = null, watched = watched, current = watched != null && !watched.finished,
-                    onLongClick = { number = episode; chooseSource = true },
-                    onClick = { number = episode; chooseSource = true })
+                    onLongClick = { number = episode; if (tuktuk) tukEpisode = episodeQuery else chooseSource = true },
+                    onClick = { number = episode; if (tuktuk) tukEpisode = episodeQuery else chooseSource = true })
             }
         }
     }

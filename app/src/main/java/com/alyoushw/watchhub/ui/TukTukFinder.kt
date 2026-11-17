@@ -151,15 +151,16 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
             val hasServers = "!!document.querySelector('[data-link]')||document.readyState==='complete'"
             // Films live at /<title-slug>-<year>/: open it straight away and skip the search page.
             val slug = title.lowercase().replace(Regex("[^a-z0-9\\s-]"), "").trim().replace(Regex("[\\s-]+"), "-")
-            var page = home + "$slug-${query.year}/"
-            val direct = !series && slug.length >= 2 && load(view, page, ready = hasServers, timeoutMs = 12_000) &&
+            var page = if (series) home + "series-$slug-s%02d-e%02d/".format(query.season ?: 1, query.episode ?: 1)
+                else home + "$slug-${query.year}/"
+            val direct = slug.length >= 2 && load(view, page, ready = hasServers, timeoutMs = 12_000) &&
                 js(view, "String(!!document.querySelector('[data-link]'))") == "true"
             note("direct $page -> $direct")
             if (!direct) {
                 load(view, searchUrl, ready = "document.querySelectorAll('a[href]').length>30||document.readyState==='complete'")
                 note("search ${view.url}")
                 page = pickLink(js(view, LINKS_SCRIPT), wanted, view.url, note = ::note)
-                    ?: run { status = "ما لقينا «$title» في نتائج توك توك."; done = true; return@LaunchedEffect }
+                    ?: run { status = "«$title» مو موجود في توك توك."; done = true; return@LaunchedEffect }
                 status = "فتحنا صفحة العمل…"
                 frameLinks.clear(); media.clear() // nothing from the search page counts
                 load(view, page, ready = hasServers)
@@ -179,34 +180,6 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
             note("dump " + (js(view, DUMP_SCRIPT) ?: "").take(2500))
             downloads += frameLinks.values.filter { it.download }.distinctBy { it.url }.take(12)
 
-            suspend fun harvest(label: String, waitMs: Long) {
-                var waited = 0L
-                while (waited < waitMs) { delay(1000); waited += 1000; if (media.isNotEmpty() && waited >= 3000) break }
-                val candidates = media.values.sortedBy { if (it.transport == SourceTransport.HLS) 0 else 1 }.take(3)
-                note("  $label -> ${candidates.size} media ${candidates.joinToString { it.url.take(80) }}")
-                for (c in candidates) {
-                    media.remove(c.url)
-                    val withSession = c.copy(headers = c.headers + listOfNotNull(
-                        CookieManager.getInstance().getCookie(c.url)?.takeIf { it.isNotBlank() }?.let { "Cookie" to it },
-                        ("User-Agent" to view.settings.userAgentString).takeIf { c.headers.keys.none { k -> k.equals("User-Agent", true) } }))
-                    if (videos.none { it.stream.url == withSession.url } && probe.compatible(withSession.variant())) {
-                        videos += FoundVideo(label.ifBlank { Uri.parse(c.url).host ?: "سيرفر" }, withSession)
-                        break
-                    }
-                }
-            }
-            /** Presses every server button on the open page in turn and keeps what plays. */
-            suspend fun pressAll(pageUrl: String, depth: String) {
-                val count = js(view, "(function(){$CANDIDATES;return String(cands().length);})()")?.toIntOrNull() ?: 0
-                note("$depth buttons $count: " + (js(view, "(function(){$CANDIDATES;return cands().map(function(e){return (e.textContent||'').trim().slice(0,25)}).join(' | ');})()") ?: ""))
-                for (i in 0 until minOf(count, 10)) {
-                    if (view.url != pageUrl) { load(view, pageUrl, settleMs = 2000, referer = if (depth == "player") titlePageRef else null) }
-                    val label = js(view, "(function(){$CANDIDATES;var e=cands()[$i];if(!e)return '';var t=(e.textContent||'').trim().slice(0,40);try{e.scrollIntoView();e.click();}catch(x){}return t;})()").orEmpty()
-                    if (label.isBlank()) continue
-                    status = "نضغط «$label» (${i + 1} من $count)…"
-                    harvest(label, 8000)
-                }
-            }
             media.clear()
             val titlePage = view.url ?: page
             titlePageRef = titlePage
@@ -243,23 +216,9 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
                 }
                 r?.others?.forEach { o -> if (others.none { it.url == o.url }) others += WebLinkItem(o.label, o.url, false) }
             }
-            if (videos.isEmpty()) {
-            pressAll(titlePage, "title")
-            // 3. Player pages (iframes) now on the page: open each and press its server list too.
-            if (view.url != titlePage) load(view, titlePage, settleMs = 3000)
-            val players = (frameLinks.values.filter { !it.download }.map { it.url } +
-                (js(view, "(function(){return [].slice.call(document.querySelectorAll('iframe')).map(function(f){return f.src}).filter(function(u){return /^https?:/.test(u)}).join('\\n');})()") ?: "").split("\n"))
-                .filter { it.startsWith("http") && it != titlePage && !it.contains("about:") }.distinct().take(5)
-            note("players ${players.size}: ${players.joinToString()}")
-            for ((i, player) in players.withIndex()) {
-                status = "نفتح المشغّل ${i + 1} من ${players.size}…"
-                lockHost = Uri.parse(player).host
-                media.clear()
-                load(view, player, settleMs = 2500, referer = titlePage)
-                note("player ${view.url} dump " + (js(view, DUMP_SCRIPT) ?: "").take(1500))
-                harvest(Uri.parse(player).host ?: "مشغّل", 4000)
-                pressAll(player, "player")
-            }
+            if (mirrorPages.isEmpty()) {
+                status = "ما لقينا سيرفرات لهذا العمل في توك توك."
+                return@LaunchedEffect
             }
             status = if (videos.isEmpty()) "ما لقينا فيديو يشتغل تلقائياً. جرّب «تصفح الموقع» تحت." else "جاهز: ${videos.size} سيرفر يشتغل"
         } catch (e: kotlinx.coroutines.CancellationException) { throw e }
@@ -408,16 +367,20 @@ private fun pickLink(json: String?, wanted: SearchKey, pageUrl: String?, episode
         val o = arr.getJSONObject(i)
         val url = o.optString("u")
         val text = norm(o.optString("t") + " " + Uri.decode(url))
-        if (Uri.parse(url).host != host || url == pageUrl) continue
+        val parsed = Uri.parse(url)
+        if (parsed.host != host || url.substringBefore('#') == pageUrl?.substringBefore('#')) continue
+        if (parsed.getQueryParameter("s") != null || parsed.path.isNullOrBlank() || parsed.path == "/") continue
         if (Regex("/(category|genre|tag|page|author|actor|cast)/").containsMatchIn(url)) continue
         if (titleKey.isNotEmpty() && !key(text).contains(titleKey)) continue
         var score = 10
         if (wanted.year.toString() in text) score += 5
         if (wanted.episode != null) {
-            val ep = Regex("(?:الحلقه|episode|ep)\\s*-?\\s*(\\d+)").find(text)?.groupValues?.get(1)?.toIntOrNull()
+            val sxe = Regex("-s(\\d+)-e(\\d+)").find(url.lowercase())
+            val ep = sxe?.groupValues?.get(2)?.toIntOrNull()
+                ?: Regex("(?:الحلقه|episode|ep)\\s*-?\\s*(\\d+)").find(text)?.groupValues?.get(1)?.toIntOrNull()
             if (ep != null && ep != wanted.episode) continue
             if (ep == wanted.episode) score += 20
-            val season = Regex("(?:الموسم|season)\\s*-?\\s*([^\\s-]+)").find(text)?.groupValues?.get(1)?.let { s ->
+            val season = sxe?.groupValues?.get(1)?.toIntOrNull() ?: Regex("(?:الموسم|season)\\s*-?\\s*([^\\s-]+)").find(text)?.groupValues?.get(1)?.let { s ->
                 s.toIntOrNull() ?: ORDINALS_AR.indexOf(s).takeIf { it >= 0 }?.plus(1)
             }
             if (season != null && season != wanted.season) continue
