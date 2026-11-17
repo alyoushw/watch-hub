@@ -67,6 +67,7 @@ fun SourceWatchScreen(
     sources: WatchSources? = null,
     onPlay: ((WatchSourceRef) -> Unit)? = null,
 ) {
+    if (lookup.providerId == "4u") { FourUScreen(lookup, onBack); return }
     val tuktuk = lookup.providerId == "tuktuk"
     if (tuktuk && lookup.query.type != MediaType.TV) {
         // TukTuk sits behind Cloudflare: a hidden in-app browser finds the film's servers.
@@ -76,11 +77,6 @@ fun SourceWatchScreen(
     }
     // A TukTuk series shows its seasons and episodes first; the chosen episode is then looked up.
     var tukEpisode by remember { mutableStateOf<com.alyoushw.watchhub.data.SourceQuery?>(null) }
-    tukEpisode?.let { q ->
-        androidx.activity.compose.BackHandler { tukEpisode = null }
-        TukTukFinderScreen(lookup.copy(query = q), TUKTUK_HOME) { tukEpisode = null }
-        return
-    }
     val container = appContainer()
     val context = LocalContext.current
     val website = when (lookup.providerId) { "moviz-time" -> "Moviz Time"; "topcinema" -> "TopCinema"; "egybest" -> "EgyBest"; "tuktuk" -> "TukTuk"; else -> null }
@@ -98,14 +94,32 @@ fun SourceWatchScreen(
     var chooseSource by rememberSaveable { mutableStateOf(false) }
     var retry by remember { mutableIntStateOf(0) }
     val series = lookup.query.type == MediaType.TV
+    val canChooseParts = series && website != null && sources == null
+    var parts by remember(lookup.query.tmdbId) { mutableStateOf<EpisodeParts?>(null) }
+    var useParts by rememberSaveable(lookup.query.tmdbId, lookup.providerId) { mutableStateOf(true) }
+    var orderLoading by remember(lookup.query.tmdbId) { mutableStateOf(canChooseParts) }
+    var orderError by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(lookup.query.tmdbId, canChooseParts, retry) {
+        if (!canChooseParts) return@LaunchedEffect
+        orderLoading = true
+        orderError = null
+        try {
+            parts = container.api.episodeParts(lookup.query.tmdbId, lookup.seasons.map { SeasonInfo(it.number, it.episodes) })
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { orderError = "تعذّر التحقق من ترقيم الأجزاء؛ يُعرض ترقيم المواسم المعتاد. أعد البحث للمحاولة." }
+        finally { orderLoading = false }
+    }
+    val partOrder = useParts && parts != null && !orderLoading && orderError == null
+    val availableSeasons = if (partOrder) parts!!.parts.map { SourceSeason(it.number, it.episodes, it.year) } else lookup.seasons
+    val seasonLabel = if (partOrder) "الجزء" else "الموسم"
     val query = lookup.query.copy(season = season.takeIf { series }, episode = number.takeIf { series },
-        seasonYear = lookup.seasons.firstOrNull { it.number == season }?.year.takeIf { series })
+        seasonYear = availableSeasons.firstOrNull { it.number == season }?.year.takeIf { series })
     var loading by remember(query, catalogue, indexed, retry) { mutableStateOf(query.valid && !tuktuk) }
     var result by remember(query, catalogue, indexed, retry) { mutableStateOf<SourceSearch?>(null) }
     var openedLink by remember(query) { mutableStateOf<SourceWebLink?>(null) }
-    LaunchedEffect(query, catalogue, indexed, retry) {
+    LaunchedEffect(query, catalogue, indexed, retry, orderLoading, partOrder) {
         result = null
-        if (!query.valid || tuktuk) return@LaunchedEffect
+        if (!query.valid || tuktuk || orderLoading) { loading = false; return@LaunchedEffect }
         loading = true
         try { result = repository.search(query) }
         finally { loading = false }
@@ -113,6 +127,11 @@ fun SourceWatchScreen(
     openedLink?.let { link ->
         androidx.activity.compose.BackHandler { openedLink = null }
         KoraScreen(onBack = { openedLink = null }, homeUrl = link.url, pageTitle = link.label)
+        return
+    }
+    tukEpisode?.let { q ->
+        androidx.activity.compose.BackHandler { tukEpisode = null }
+        TukTukFinderScreen(lookup.copy(query = q), TUKTUK_HOME) { tukEpisode = null }
         return
     }
     Scaffold(contentWindowInsets = WindowInsets(0), topBar = {
@@ -130,7 +149,7 @@ fun SourceWatchScreen(
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         if (lookup.overview.isNotBlank()) TranslatedText(lookup.overview, isEnglish = lookup.overviewIsEnglish,
                             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text((if (series) "الموسم $season" else "فيلم") + (website?.let { " · $it" } ?: " · تورنت"), color = Gold, style = MaterialTheme.typography.labelMedium)
+                        Text((if (series) "$seasonLabel $season" else "فيلم") + (website?.let { " · $it" } ?: " · تورنت"), color = Gold, style = MaterialTheme.typography.labelMedium)
                         Text(if (lookup.providerId == "egybest") "تظهر روابط المشاهدة والتحميل كما يعلنها الموقع. الروابط المتوافقة تُشغّل بالمشغّل الرئيسي، والبقية تفتح بمشغّل الموقع داخل التطبيق."
                             else if (website != null) "اختر الفيلم أو الحلقة لعرض سيرفرات $website المتوافقة. تُجلب روابط التشغيل من الموقع عند كل مشاهدة."
                             else "يبدأ التشغيل بعد تجهيز الأجزاء الأولى ويستمر التنزيل أثناء المشاهدة. سرعة البداية تعتمد على الأقران والاتصال.",
@@ -138,18 +157,36 @@ fun SourceWatchScreen(
                     }
                 }
             }
-            if (series && lookup.seasons.isNotEmpty()) item(key = "seasons") {
+            if (orderLoading) item(key = "episode-order-loading") {
+                Text("جاري التحقق من ترقيم المواسم والأجزاء…", color = Gold)
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+            }
+            orderError?.let { message -> item(key = "episode-order-error") { Text(message, style = MaterialTheme.typography.bodySmall) } }
+            if (parts != null && !orderLoading && orderError == null) item(key = "episode-order") {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("ترقيم الحلقات", style = MaterialTheme.typography.titleSmall)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        item { FilterChip(selected = partOrder, onClick = { useParts = true; season = 1; number = 1; chooseSource = false },
+                            label = { Text("الأجزاء · ${parts!!.parts.size}") }, modifier = Modifier.focusFrame()) }
+                        item { FilterChip(selected = !partOrder, onClick = { useParts = false; season = 1; number = 1; chooseSource = false },
+                            label = { Text("المواسم · ${lookup.seasons.size}") }, modifier = Modifier.focusFrame()) }
+                    }
+                    Text("قد يجمع الموسم أكثر من جزء. اختر الترقيم الموافق لمصدر المشاهدة. بيانات الترتيبين من TMDB.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            if (series && !orderLoading && availableSeasons.isNotEmpty()) item(key = "seasons") {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(lookup.seasons, key = { it.number }) { item ->
-                        FilterChip(selected = season == item.number, onClick = { season = item.number; chooseSource = false },
-                            label = { Text("الموسم ${item.number}") }, modifier = Modifier.focusFrame())
+                    items(availableSeasons, key = { it.number }) { item ->
+                        FilterChip(selected = season == item.number, onClick = { season = item.number; number = 1; chooseSource = false },
+                            label = { Text("$seasonLabel ${item.number}") }, modifier = Modifier.focusFrame())
                     }
                 }
             }
             if (loading) item(key = "loading") { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             if (!query.valid) item { Text("بيانات مطابقة العمل غير مكتملة.") }
-            val count = if (series) lookup.seasons.firstOrNull { it.number == season }?.episodes ?: 1 else 1
-            if (count == 0) item { Text("لم تتوفر حلقات هذا الموسم بعد.") }
+            val count = if (orderLoading) 0 else if (series) availableSeasons.firstOrNull { it.number == season }?.episodes ?: 1 else 1
+            if (count == 0 && !orderLoading) item { Text("لم تتوفر حلقات هذا $seasonLabel بعد.") }
             items(count.coerceIn(0, 2000), key = { "episode-$season-$it" }) { index ->
                 val episode = index + 1
                 val episodeQuery = query.copy(episode = episode.takeIf { series })

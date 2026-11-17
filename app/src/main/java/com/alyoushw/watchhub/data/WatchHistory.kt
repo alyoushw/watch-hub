@@ -35,6 +35,7 @@ data class WatchEntry(
     /** Animeify's stable source reference; never a temporary CDN URL. */
     val animeRef: AnimeEpisodeRef? = null,
     val sourceRef: WatchSourceRef? = null,
+    val fourURef: FourURef? = null,
 ) {
     val isLive: Boolean get() = kind == LIVE
     val isEpisode: Boolean get() = kind == EPISODE || kind == ANIME
@@ -54,7 +55,8 @@ data class WatchEntry(
         fun keyOf(account: XtreamAccount, kind: String, id: String) = "${account.id}:$kind:$id"
 
         fun live(item: XtreamItem, account: XtreamAccount) =
-            WatchEntry(keyOf(account, LIVE, item.id), LIVE, item.id, item.name, image = item.image, accountId = account.id)
+            WatchEntry(keyOf(account, LIVE, item.id), LIVE, item.id, item.name, image = item.image, accountId = account.id,
+                fourURef = if (account.id == FourU.account.id) FourURef("live", item.id) else null)
 
         fun movie(item: XtreamItem, account: XtreamAccount, tmdbId: Int? = null) = WatchEntry(
             keyOf(account, MOVIE, item.id), MOVIE, item.id, item.name, image = item.image, ext = item.extension,

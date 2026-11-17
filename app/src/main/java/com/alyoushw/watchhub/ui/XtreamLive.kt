@@ -138,7 +138,7 @@ data class LiveHit(val channel: XtreamItem, val account: XtreamAccount) {
 }
 
 /** All live channels of the account, grouped by category, with a now/next guide for the chosen one. */
-class LiveViewModel(private val api: XtreamApi) : ViewModel() {
+class LiveViewModel(private val api: XtreamApi, private val account: XtreamAccount? = null) : ViewModel() {
     var categories by mutableStateOf<List<XtreamCategory>>(emptyList())
         private set
     var channels by mutableStateOf<List<XtreamItem>>(emptyList())
@@ -222,8 +222,8 @@ class LiveViewModel(private val api: XtreamApi) : ViewModel() {
             loading = true
             error = null
             try {
-                categories = api.categories(XtreamKind.LIVE).distinctBy { it.id }
-                val all = api.all(XtreamKind.LIVE)
+                categories = (if (account != null) api.categories(XtreamKind.LIVE, account) else api.categories(XtreamKind.LIVE)).distinctBy { it.id }
+                val all = if (account != null) api.all(XtreamKind.LIVE, account) else api.all(XtreamKind.LIVE)
                 channels = all
                 counts = all.groupingBy { it.categoryId.orEmpty() }.eachCount()
             } catch (e: XtreamException) {
@@ -256,12 +256,14 @@ class LiveViewModel(private val api: XtreamApi) : ViewModel() {
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun LiveChannels(showAccounts: Boolean = true) {
+fun LiveChannels(showAccounts: Boolean = true, accountOverride: XtreamAccount? = null) {
     val container = appContainer()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val account by container.settings.xtream.collectAsStateWithLifecycle()
-    val accounts by container.settings.xtreamAccounts.collectAsStateWithLifecycle()
+    val savedAccount by container.settings.xtream.collectAsStateWithLifecycle()
+    val savedAccounts by container.settings.xtreamAccounts.collectAsStateWithLifecycle()
+    val account = accountOverride ?: savedAccount
+    val accounts = if (accountOverride != null) listOf(accountOverride) else savedAccounts
     val favorites by container.settings.xtreamFavorites.collectAsStateWithLifecycle()
     val folders by container.settings.xtreamFolders.collectAsStateWithLifecycle()
     val historyEntries by container.history.entries.collectAsStateWithLifecycle()
@@ -274,7 +276,7 @@ fun LiveChannels(showAccounts: Boolean = true) {
     var liveShare by remember { mutableStateOf<Pair<String, String>?>(null) }
     liveShare?.let { (t, u) -> StreamShareDialog(t, u) { liveShare = null } }
     var showGuide by remember { mutableStateOf(false) }
-    val vm: LiveViewModel = viewModel(key = "live:${account.host}:${account.username}") { LiveViewModel(container.xtream) }
+    val vm: LiveViewModel = viewModel(key = "live:${account.host}:${account.username}") { LiveViewModel(container.xtream, account) }
     var query by remember { mutableStateOf("") }
     /** The channel playing in the small picture, if any. */
     var previewing by remember { mutableStateOf<LiveHit?>(null) }
@@ -660,8 +662,8 @@ private fun CategoryChips(categories: List<XtreamCategory>, favorites: Int, rece
 private fun LivePicture(hit: LiveHit?, idle: LiveHit?, onOpen: () -> Unit, modifier: Modifier, rounded: Boolean = true) {
     val context = LocalContext.current
     val container = appContainer()
+    val http = remember { androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(com.alyoushw.watchhub.data.Net.streams) }
     val player = remember {
-        val http = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(com.alyoushw.watchhub.data.Net.streams)
         ExoPlayer.Builder(context, com.alyoushw.watchhub.data.playerRenderers(context))
             .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(context, http)))
             .build()
@@ -676,6 +678,7 @@ private fun LivePicture(hit: LiveHit?, idle: LiveHit?, onOpen: () -> Unit, modif
     var errors by remember { mutableIntStateOf(0) }
 
     fun start(url: String) {
+        http.setDefaultRequestProperties(if (hit?.account?.id == com.alyoushw.watchhub.data.FourU.account.id) com.alyoushw.watchhub.data.FourU.channelHeaders(hit.channel.id) else emptyMap())
         player.setMediaItem(MediaItem.fromUri(url))
         player.prepare()
         player.playWhenReady = true

@@ -85,6 +85,7 @@ data class XtreamItem(
     /** TMDB id when the provider has it, used to match a title page to the account. */
     val tmdb: String? = null,
     val year: String? = null,
+    val directUrl: String? = null,
 )
 
 /** One programme from the channel guide. */
@@ -159,6 +160,7 @@ class XtreamApi(private val settings: SettingsStore) {
                     categoryId = o.text("category_id"),
                     num = o.text("num")?.toIntOrNull(),
                     tmdb = (o.text("tmdb") ?: o.text("tmdb_id"))?.takeIf { it != "0" },
+                    directUrl = o.text("direct_source"),
                     year = o.text("year")?.take(4)
                         ?: (o.text("releaseDate") ?: o.text("release_date"))?.take(4)?.takeIf { it.length == 4 },
                 )
@@ -280,7 +282,7 @@ class XtreamApi(private val settings: SettingsStore) {
     }
 
     /** Links to try in order for a channel or a film (live: HLS first, then MPEG-TS). */
-    fun playUrls(item: XtreamItem, account: XtreamAccount = active): List<String> = when (item.kind) {
+    fun playUrls(item: XtreamItem, account: XtreamAccount = active): List<String> = if (account.id == FourU.account.id) listOfNotNull(item.directUrl) else when (item.kind) {
         XtreamKind.LIVE -> listOf(streamUrl(account, "live", "${item.id}.m3u8"), streamUrl(account, "live", "${item.id}.ts"))
         XtreamKind.MOVIE -> listOf(streamUrl(account, "movie", "${item.id}.${item.extension ?: "mp4"}"))
         XtreamKind.SERIES -> emptyList()
@@ -315,6 +317,7 @@ class XtreamApi(private val settings: SettingsStore) {
 
     private suspend fun call(account: XtreamAccount, action: String?, params: Map<String, String> = emptyMap()): JsonElement =
         withContext(Dispatchers.IO) {
+            if (account.id == FourU.account.id) return@withContext FourU.liveApi(action, params)
             if (!account.isComplete) throw XtreamException("أضف حساب Xtream Codes من الإعدادات أول")
             val url = baseUrl(account).newBuilder()
                 .addPathSegment("player_api.php")

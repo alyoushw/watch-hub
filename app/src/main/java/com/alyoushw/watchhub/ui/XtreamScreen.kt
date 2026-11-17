@@ -192,16 +192,7 @@ fun XtreamScreen(onOpenSeries: (String) -> Unit, onOpenSettings: () -> Unit) {
 /** Live channels only, for the "مباشر" tab on the Home screen. */
 @Composable
 fun XtreamLiveChannels(onOpenSettings: () -> Unit) {
-    val account by appContainer().settings.xtream.collectAsStateWithLifecycle()
-    if (account.isComplete) {
-        LiveChannels()
-    } else {
-        MessageBox(
-            title = "أضف حساب Xtream Codes من الإعدادات عشان تطلع لك القنوات المباشرة هنا",
-            actionLabel = "افتح الإعدادات",
-            onAction = onOpenSettings,
-        )
-    }
+    FourULiveChannels()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -868,7 +859,7 @@ fun ContinueWatchingRow(
         container.history.continueList().filter { e ->
             e.kind in kinds && if (e.animeRef != null) {
                 animeMovies == null || (e.animeRef.type == "MOVIE") == animeMovies
-            } else if (e.sourceRef != null) true else e.accountId in ids
+            } else if (e.sourceRef != null || e.fourURef != null) true else e.accountId in ids
         }.take(20)
     }
     if (list.isEmpty()) return
@@ -879,6 +870,9 @@ fun ContinueWatchingRow(
     }
 
     fun openSeries(e: WatchEntry) {
+        e.fourURef?.let { ref ->
+            if (ref.detailId != null) { onOpenTitle(MediaType.fromPath(ref.detailType.orEmpty()) ?: MediaType.TV, ref.detailId); return }
+        }
         e.sourceRef?.let { onOpenTitle(it.query.type, it.query.tmdbId); return }
         if (e.animeRef != null) { openAnime(e); return }
         e.accountId?.let { container.settings.setActiveXtream(it) }
@@ -887,6 +881,9 @@ fun ContinueWatchingRow(
 
     /** The title's page on the platform side (TMDB): its known id, else found by its name. */
     fun openPlatformPage(e: WatchEntry) {
+        e.fourURef?.let { ref ->
+            if (ref.detailId != null) { onOpenTitle(MediaType.fromPath(ref.detailType.orEmpty()) ?: MediaType.TV, ref.detailId); return }
+        }
         e.sourceRef?.let { onOpenTitle(it.query.type, it.query.tmdbId); return }
         e.animeRef?.let { onOpenTitle(MediaType.fromPath(it.detailType) ?: MediaType.ANIME, it.detailId); return }
         val type = if (e.kind == WatchEntry.EPISODE) MediaType.TV else MediaType.MOVIE
@@ -908,7 +905,7 @@ fun ContinueWatchingRow(
 
     // Long press: open the title's own page, or drop it from the row.
     menuFor?.let { e ->
-        val openLabel = if (e.sourceRef != null) "الحلقات ومعلومات العمل" else when (e.kind) {
+        val openLabel = if (e.fourURef != null && e.kind != WatchEntry.LIVE) "معلومات العمل · 4U" else if (e.sourceRef != null) "الحلقات ومعلومات العمل" else when (e.kind) {
             WatchEntry.ANIME -> "المواسم والحلقات · أنمي فاي"
             WatchEntry.EPISODE -> "حلقات المسلسل في الحساب"
             WatchEntry.MOVIE -> "معلومات الفيلم (المنصة)"
@@ -943,7 +940,7 @@ fun ContinueWatchingRow(
                             },
                         ) { Text("معلومات المسلسل (المنصة)") }
                     }
-                    if (e.sourceRef == null) {
+                    if (e.sourceRef == null && e.fourURef == null) {
                         OutlinedButton(
                             modifier = Modifier.fillMaxWidth().focusFrame(),
                             onClick = {
@@ -989,7 +986,7 @@ fun ContinueWatchingRow(
             items(list, key = { it.key }) { e ->
                 val shape = RoundedCornerShape(12.dp)
                 val resume = {
-                    if (e.sourceRef != null) {
+                    if (e.sourceRef != null || e.fourURef != null) {
                         if (e.finished) openPlatformPage(e)
                         else PlayerActivity.start(context, listOf(com.alyoushw.watchhub.player.QueueItem(emptyList(), e)), 0)
                     } else if (e.animeRef != null) {

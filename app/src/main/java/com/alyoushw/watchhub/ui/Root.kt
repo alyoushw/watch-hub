@@ -215,6 +215,7 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
                 val id = entry.arguments?.getInt("id") ?: 0
                 if (type == MediaType.ANIME) {
                     AnimeDetailScreen(
+                        onOpenSources = { lookup -> nav.navigate(lookup.route()) },
                         onOpenAnime = { lookup -> nav.navigate(lookup.route()) },
                         id = id,
                         onBack = { nav.popBackStack() },

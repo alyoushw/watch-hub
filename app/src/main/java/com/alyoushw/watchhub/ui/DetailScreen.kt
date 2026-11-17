@@ -489,6 +489,10 @@ private fun DetailContent(
             }
         }
 
+        item { Column(Modifier.padding(horizontal = 16.dp)) {
+            SourceWatchButton(info.sourceLookup().copy(providerId = "4u"), onOpenSources, Modifier.fillMaxWidth(), label = "4U")
+        } }
+
         if (!isAnime) {
             item { WatchButtons(info, links, subscribedKeys, onWatch) }
 

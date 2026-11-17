@@ -97,6 +97,28 @@ data class SeasonDto(
 )
 
 @Serializable
+data class EpisodeGroupSummary(
+    val id: String = "", val name: String = "", val type: Int = 0,
+    @SerialName("episode_count") val episodeCount: Int = 0,
+    @SerialName("group_count") val groupCount: Int = 0,
+)
+@Serializable
+data class EpisodeGroupList(val results: List<EpisodeGroupSummary> = emptyList())
+@Serializable
+data class GroupedEpisode(
+    val id: Int = 0,
+    @SerialName("season_number") val season: Int = 0,
+    @SerialName("episode_number") val episode: Int = 0,
+    @SerialName("air_date") val airDate: String? = null,
+)
+@Serializable
+data class EpisodeGroupBlock(val order: Int = 0, val episodes: List<GroupedEpisode> = emptyList())
+@Serializable
+data class EpisodeGroupDetails(val groups: List<EpisodeGroupBlock> = emptyList())
+data class EpisodePart(val number: Int, val episodes: Int, val year: Int?)
+data class EpisodeParts(val name: String, val parts: List<EpisodePart>)
+
+@Serializable
 data class Named(val name: String = "")
 
 @Serializable
@@ -346,6 +368,31 @@ class TmdbApi(private val settings: SettingsStore) {
             ),
             Details.serializer(),
         )
+
+    /** A complete digital/parts order can split a broadcast season into multiple released parts. */
+    suspend fun episodeParts(id: Int, seasons: List<SeasonInfo>): EpisodeParts? {
+        val expected = seasons.sumOf { it.episodes }
+        if (expected <= 0) return null
+        val choices = get("tv/$id/episode_groups", emptyMap(), EpisodeGroupList.serializer()).results
+            .filter { it.type == 4 && it.episodeCount == expected && it.groupCount > 0 &&
+                (it.name.equals("Parts", true) || it.name.contains("Netflix", true)) &&
+                it.id.matches(Regex("[a-fA-F0-9]{24}")) }
+            .sortedBy { if (it.name.equals("Parts", true)) 0 else 1 }
+        for (choice in choices.take(2)) {
+            val details = get("tv/episode_group/${choice.id}", emptyMap(), EpisodeGroupDetails.serializer())
+            val groups = details.groups.sortedBy { it.order }
+            val episodes = groups.flatMap { it.episodes }
+            // An incomplete or duplicated group must not invent missing episodes or replace the normal order.
+            if (groups.size != choice.groupCount || groups.any { it.episodes.isEmpty() } ||
+                episodes.size != expected || episodes.map { it.id }.distinct().size != expected ||
+                episodes.any { it.id <= 0 || it.season <= 0 || it.episode <= 0 }) continue
+            val parts = groups.mapIndexed { index, group -> EpisodePart(index + 1, group.episodes.size,
+                group.episodes.mapNotNull { it.airDate?.take(4)?.toIntOrNull() }.minOrNull()) }
+            if (parts.map { it.episodes } == seasons.sortedBy { it.number }.map { it.episodes }) continue
+            return EpisodeParts(choice.name, parts)
+        }
+        return null
+    }
 
     /** English details: search titles, a fuller story, reviews and English trailers. */
     suspend fun englishDetails(type: MediaType, id: Int): Details =
