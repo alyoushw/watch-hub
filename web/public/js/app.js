@@ -3,7 +3,7 @@ import * as tmdb from "./tmdb.js?v=20261117b";
 import * as foryou from "./foryou.js?v=20261117b";
 import * as xt from "./xtream.js?v=20261117b";
 import * as fouru from "./fouru.js?v=20261117b";
-import * as features from "./features.js?v=20261117b";
+import * as features from "./features.js?v=20261117c";
 import * as sourceApi from "./sources.js?v=20261117b";
 import { restoreDownloads, addDownload } from "./downloads.js?v=20261117b";
 import { play, fmt } from "./player.js?v=20261117b";
@@ -1898,7 +1898,7 @@ restoreHistory().finally(async () => {
 
 // Open instantly from the device's copy, even while the free server wakes up.
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("sw.js?v=20261117b").catch(() => {});
+  navigator.serviceWorker.register("sw.js?v=20261117c").catch(() => {});
 }
 
 // ---------- ✨ مختار لك ----------
