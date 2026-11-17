@@ -195,7 +195,8 @@ fun SourceWatchScreen(
         }, confirmButton = { TextButton(onClick = { chooseSource = false }, modifier = Modifier.focusFrame()) { Text("إغلاق") } })
 }
 
-private const val TUKTUK_HOME = "https://tuktukcinemas.com/"
+// The owner's link; from Saudi it may serve the site itself, elsewhere it forwards to tuktukcinemas.com.
+private const val TUKTUK_HOME = "https://zx33.tuktuk-sa.online/"
 
 internal fun sourceQualityLabel(label: String): String = when {
     Regex("(?i)(2160|\\b4k\\b|\\buhd\\b)").containsMatchIn(label) -> "4K"
