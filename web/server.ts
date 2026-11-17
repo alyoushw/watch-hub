@@ -510,6 +510,11 @@ function assetLinks(): Response {
 
 Deno.serve({ port }, (req) => {
   const url = new URL(req.url);
+  // Older offline shells deliberately ignore this navigation path. Load the current entry
+  // without clearing IndexedDB/localStorage or touching the user's saved accounts.
+  if (url.pathname === "/refresh") return Deno.readFile(`${PUBLIC_DIR}/index.html`).then((body) => new Response(body, {
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+  }));
   if (url.pathname.startsWith("/sources/")) return handleSources(req, url, proxy);
   if (url.pathname.startsWith("/fouru/")) return fourU(req, url);
   if (url.pathname === "/proxy") return proxy(req, url);

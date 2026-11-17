@@ -1,5 +1,5 @@
 // Built-in 4U source; credentials and channel headers stay on the server.
-import { settings } from "./store.js";
+import { settings } from "./store.js?v=20261117b";
 export function endpoint(path, params = {}) {
   const query = new URLSearchParams(params);
   if (settings.proxyKey) query.set("key", settings.proxyKey);

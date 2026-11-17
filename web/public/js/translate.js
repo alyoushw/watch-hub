@@ -1,7 +1,7 @@
 // English → Arabic for stories and biographies TMDB only has in English. Uses Google's public
 // translate endpoint through the site's proxy (it does not answer browsers directly), and
 // MyMemory as a fallback. Results are kept on the device so each text is translated once.
-import { via } from "./xtream.js";
+import { via } from "./xtream.js?v=20261117b";
 
 const KEY = "watchhub-tr";
 let memo;

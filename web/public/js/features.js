@@ -1,9 +1,9 @@
-import * as tmdb from "./tmdb.js";
-import * as src from "./sources.js";
-import { settings, watchlist, history, isFinished } from "./store.js";
-import { play } from "./player.js";
-import { addDownload } from "./downloads.js";
-import { fillTranslated } from "./translate.js";
+import * as tmdb from "./tmdb.js?v=20261117b";
+import * as src from "./sources.js?v=20261117b";
+import { settings, watchlist, history, isFinished } from "./store.js?v=20261117b";
+import { play } from "./player.js?v=20261117b";
+import { addDownload } from "./downloads.js?v=20261117b";
+import { fillTranslated } from "./translate.js?v=20261117b";
 
 const view = document.getElementById("view");
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -261,7 +261,7 @@ export async function subscriptionsPage() {
 }
 
 export async function downloadsPage(id) {
-  const { listDownloads, offlineUrl, pauseDownload, resumeDownload, removeDownload } = await import("./downloads.js");
+  const { listDownloads, offlineUrl, pauseDownload, resumeDownload, removeDownload } = await import("./downloads.js?v=20261117b");
   const size = (n) => n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : `${(n / 1024 ** 2).toFixed(1)} MB`;
   const render = async () => {
     const items = await listDownloads(); if (!active(id)) return;

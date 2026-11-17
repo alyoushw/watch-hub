@@ -1,7 +1,7 @@
 // The search's categories and filters, and an offline understanding of everyday Arabic
 // requests ("مسلسل كوري درامي", "فيلم رعب إندونيسي", "شي مشابه لـ Interstellar").
 // Same lists and rules as the Android app (SmartSearch.kt), so both behave alike.
-import { SERVICES } from "./tmdb.js";
+import { SERVICES } from "./tmdb.js?v=20261117b";
 
 export const GENRES = [
   { key: "SCIFI", label: "خيال علمي", movie: 878, tv: 10765, words: ["خيال علمي", "فضاء", "فضايي", "فضائي"] },

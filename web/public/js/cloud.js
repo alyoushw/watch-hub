@@ -4,7 +4,7 @@
 // Same Firestore documents as the Android app (CloudSync.kt), under users/<uid>/:
 //   history/<entry key>, watchlist/<type:id>, meta/xtream — each with updatedAt (ms); the newest
 //   copy wins; removals are { deleted: true }. Settings come from the site's /config.json.
-import { history, watchlist, accounts, onLocalChange, currentProfile, labelProfileIfNew, switchProfile, clearProfileData } from "./store.js";
+import { history, watchlist, accounts, onLocalChange, currentProfile, labelProfileIfNew, switchProfile, clearProfileData } from "./store.js?v=20261117b";
 
 const SDK = "https://www.gstatic.com/firebasejs/10.14.1";
 const PROGRESS_EVERY_MS = 10000;

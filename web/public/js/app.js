@@ -1,18 +1,20 @@
 // Watch Hub on the web: the same hub as the Android app, for iPhone, iPad and computers.
-import * as tmdb from "./tmdb.js";
-import * as foryou from "./foryou.js";
-import * as xt from "./xtream.js";
-import * as fouru from "./fouru.js";
-import * as features from "./features.js";
-import * as sourceApi from "./sources.js";
-import { restoreDownloads, addDownload } from "./downloads.js";
-import { play, fmt } from "./player.js";
-import * as smart from "./smart.js";
-import { fillTranslated } from "./translate.js";
-import * as cloud from "./cloud.js";
-import { settings, watchlist, favorites, folders, recent, xtreamReady, history, isFinished, progressOf, accounts, restoreHistory } from "./store.js";
+import * as tmdb from "./tmdb.js?v=20261117b";
+import * as foryou from "./foryou.js?v=20261117b";
+import * as xt from "./xtream.js?v=20261117b";
+import * as fouru from "./fouru.js?v=20261117b";
+import * as features from "./features.js?v=20261117b";
+import * as sourceApi from "./sources.js?v=20261117b";
+import { restoreDownloads, addDownload } from "./downloads.js?v=20261117b";
+import { play, fmt } from "./player.js?v=20261117b";
+import * as smart from "./smart.js?v=20261117b";
+import { fillTranslated } from "./translate.js?v=20261117b";
+import * as cloud from "./cloud.js?v=20261117b";
+import { settings, watchlist, favorites, folders, recent, xtreamReady, history, isFinished, progressOf, accounts, restoreHistory } from "./store.js?v=20261117b";
 
 const view = document.getElementById("view");
+// Explicit recovery link restores the built-in proxy after connection troubleshooting.
+if (location.pathname === "/refresh" && !settings.proxy) settings.proxy = "/proxy";
 
 // ---------- helpers ----------
 
@@ -1896,7 +1898,7 @@ restoreHistory().finally(async () => {
 
 // Open instantly from the device's copy, even while the free server wakes up.
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("sw.js").catch(() => {});
+  navigator.serviceWorker.register("sw.js?v=20261117b").catch(() => {});
 }
 
 // ---------- ✨ مختار لك ----------

@@ -3,11 +3,11 @@
 // opens in VLC instead (Safari cannot play MKV and many streams).
 //
 // Safari plays HLS itself; other browsers use hls.js, and MPEG-TS live streams use mpegts.js.
-import { via } from "./xtream.js";
-import { offlineUrl, addDownload } from "./downloads.js";
-import { resolveEntry } from "./sources.js";
-import { settings, history, isFinished, historySaved } from "./store.js";
-import * as cloud from "./cloud.js";
+import { via } from "./xtream.js?v=20261117b";
+import { offlineUrl, addDownload } from "./downloads.js?v=20261117b";
+import { resolveEntry } from "./sources.js?v=20261117b";
+import { settings, history, isFinished, historySaved } from "./store.js?v=20261117b";
+import * as cloud from "./cloud.js?v=20261117b";
 
 const HLS_JS = "https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js";
 const MPEGTS_JS = "https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js";
