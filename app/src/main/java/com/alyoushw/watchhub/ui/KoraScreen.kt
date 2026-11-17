@@ -17,6 +17,9 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -92,6 +95,14 @@ fun KoraScreen(
     var nativeJob by remember { mutableStateOf<Job?>(null) }
     val nativeEnabled = Uri.parse(homeUrl).host == Uri.parse(KORA_HOME).host
     val found = remember { androidx.compose.runtime.mutableStateListOf<KoraNativeStream>() }
+    /** Watch servers and download pages read from the site's own page (label to address). */
+    val servers = remember { androidx.compose.runtime.mutableStateListOf<WebLinkItem>() }
+    var showServers by remember { mutableStateOf(false) }
+    var trying by remember { mutableStateOf<String?>(null) }
+    var tryJob by remember { mutableStateOf<Job?>(null) }
+    /** Hosts the user (or the auto-try) chose to open; top-level pages may go there. */
+    val chosenHosts = remember { mutableSetOf<String>() }
+    var openedAt by remember { mutableStateOf(0L) }
 
     fun closeFullscreen() {
         val callback = fullscreenCallback
@@ -264,6 +275,69 @@ fun KoraScreen(
         }
     }
 
+    fun addFound(stream: KoraNativeStream) {
+        if (found.none { it.url == stream.url }) {
+            found += stream
+            if (found.size > 12) found.removeAt(0)
+        }
+    }
+
+    /** Reads the open page: its server list and download links, plus any video its player has set up. */
+    fun scan(view: WebView, keepList: Boolean) {
+        view.evaluateJavascript(WEB_SCAN) { encoded ->
+            val text = runCatching { org.json.JSONTokener(encoded).nextValue() as? String }.getOrNull() ?: return@evaluateJavascript
+            val data = runCatching { org.json.JSONObject(text) }.getOrNull() ?: return@evaluateJavascript
+            val page = data.optString("page")
+            val media = data.optJSONArray("media")
+            for (i in 0 until (media?.length() ?: 0)) KoraNativeStream.fromPage(media!!.getString(i), page)?.let(::addFound)
+            val links = data.optJSONArray("links") ?: return@evaluateJavascript
+            val list = (0 until links.length()).mapNotNull { i ->
+                val o = links.getJSONObject(i)
+                WebLinkItem(o.optString("l").ifBlank { Uri.parse(o.optString("u")).host ?: "سيرفر" }, o.optString("u"), o.optString("k") == "download")
+            }.filter { it.url.startsWith("http") }
+            // Keep the title page's list while a server page is open.
+            if (list.any { !it.download } || !keepList && list.isNotEmpty()) {
+                servers.clear(); servers += list.distinctBy { it.url }.take(40)
+            }
+        }
+    }
+
+    fun openServer(link: WebLinkItem) {
+        val view = web ?: return
+        Uri.parse(link.url).host?.let { chosenHosts += it }
+        openedAt = android.os.SystemClock.elapsedRealtime()
+        error = null
+        view.loadUrl(link.url)
+    }
+
+    /** Opens each watch server in turn and plays the first one whose video really works. */
+    fun autoTry() {
+        val list = servers.filter { !it.download }
+        if (list.isEmpty()) { error = "ما لقينا سيرفرات في هذي الصفحة. افتح صفحة الفيلم أو الحلقة أول."; return }
+        tryJob?.cancel()
+        tryJob = scope.launch {
+            try {
+                for ((i, link) in list.withIndex()) {
+                    trying = "نجرّب السيرفر ${i + 1} من ${list.size}: ${link.label}"
+                    found.clear()
+                    openServer(link)
+                    var waited = 0
+                    while (waited < 15_000 && found.isEmpty()) {
+                        kotlinx.coroutines.delay(1500); waited += 1500
+                        web?.let { scan(it, keepList = true) }
+                    }
+                    val pick = found.lastOrNull { it.transport == com.alyoushw.watchhub.data.SourceTransport.HLS } ?: found.lastOrNull() ?: continue
+                    if (probe.compatible(pick.variant())) {
+                        trying = null
+                        playFound()
+                        return@launch
+                    }
+                }
+                error = "ولا سيرفر اشتغل تلقائياً. افتح القائمة واختر سيرفر، واضغط تشغيل داخل الموقع ثم زر مشغّل Watch Hub."
+            } finally { trying = null }
+        }
+    }
+
     BackHandler(enabled = canGoBack && fullscreen == null) { back() }
     DisposableEffect(lifecycle, web) {
         val view = web
@@ -316,6 +390,15 @@ fun KoraScreen(
             if (nativeOpening && !nativeStarted) Text("جاري فتح مشغّل Watch Hub…", modifier = Modifier.padding(12.dp))
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(12.dp)) }
             if (detectVideos) {
+                trying?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Gold, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
+                if (servers.isNotEmpty()) androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                    androidx.compose.material3.OutlinedButton(onClick = { if (trying == null) autoTry() else { tryJob?.cancel(); trying = null } },
+                        modifier = Modifier.weight(1f).focusFrame()) { Text(if (trying == null) "🔁 جرّب السيرفرات تلقائياً" else "إيقاف التجربة") }
+                    androidx.compose.material3.OutlinedButton(onClick = { showServers = true }, modifier = Modifier.weight(1f).focusFrame()) {
+                        Text("السيرفرات والتحميل (${servers.size})")
+                    }
+                }
                 if (found.isEmpty()) Text("افتح الفيلم أو الحلقة واختر سيرفراً وشغّله؛ أول ما يبدأ الفيديو يطلع لك زر التشغيل بمشغّل التطبيق.",
                     style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
                 else androidx.compose.material3.Button(onClick = ::playFound, enabled = !nativeOpening,
@@ -367,6 +450,7 @@ fun KoraScreen(
                             }
                         }
                         override fun onPageFinished(view: WebView, url: String?) {
+                            if (detectVideos && view == web) scan(view, keepList = Uri.parse(url ?: "").host?.contains(siteKeyword ?: "\u0000", true) != true)
                             if (view == web) {
                                 loading = false
                                 canGoBack = view.canGoBack() || windows.size > 1
@@ -377,8 +461,12 @@ fun KoraScreen(
                         }
                         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                             val scheme = request.url.scheme
+                            val host = request.url.host.orEmpty()
+                            val chosen = host in chosenHosts ||
+                                request.isRedirect && android.os.SystemClock.elapsedRealtime() - openedAt < 8_000
+                            if (chosen) request.url.host?.let { chosenHosts += it }
                             if (detectVideos && request.isForMainFrame && (scheme == "http" || scheme == "https") && siteKeyword != null &&
-                                request.url.host?.contains(siteKeyword, ignoreCase = true) != true) {
+                                !chosen && !host.contains(siteKeyword, ignoreCase = true)) {
                                 error = "منعنا تحويلاً لصفحة إعلان."
                                 return true
                             }
@@ -410,6 +498,22 @@ fun KoraScreen(
         }
     }
 
+    if (showServers) androidx.compose.material3.AlertDialog(onDismissRequest = { showServers = false },
+        title = { Text("سيرفرات المشاهدة والتحميل") },
+        text = {
+            Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp)) {
+                servers.forEachIndexed { i, link ->
+                    androidx.compose.material3.OutlinedButton(onClick = { showServers = false; found.clear(); openServer(link) },
+                        modifier = Modifier.fillMaxWidth().focusFrame()) {
+                        Text((if (link.download) "⬇ تحميل · " else "▶ ${i + 1} · ") + link.label + " · " + (Uri.parse(link.url).host ?: ""), maxLines = 2)
+                    }
+                }
+                Text("بعد ما يفتح السيرفر اضغط تشغيل داخل الصفحة إذا لزم، وأول ما يبدأ يطلع زر «شغّل الفيديو بمشغّل Watch Hub».",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = { TextButton(onClick = { showServers = false }, modifier = Modifier.focusFrame()) { Text("إغلاق") } })
+
     fullscreen?.let { video ->
         Dialog(onDismissRequest = ::closeFullscreen, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
             Box(Modifier.fillMaxSize().background(Color.Black)) {
@@ -428,6 +532,36 @@ fun KoraScreen(
 }
 
 private const val KORA_HOME = "https://majed-koora.live/"
+
+internal data class WebLinkItem(val label: String, val url: String, val download: Boolean)
+
+/**
+ * Reads the open page without running anything of its own: watch-server addresses (data-* links and
+ * iframes), download links, and media the page's player already holds (jwplayer/video tags/HTML).
+ * App-store, social and advert links are left out.
+ */
+private val WEB_SCAN = """
+    (function(){
+      var links=[],media=[],seen={},mseen={};
+      var skip=/(t\.me|telegram|twitter\.com|x\.com|facebook|instagram|tiktok|play\.google|apps\.apple|\.apk(\?|$)|whatsapp|doubleclick|googlesyndication)/i;
+      function abs(u){try{return new URL(u,location.href).href}catch(e){return null}}
+      function add(u,l,k){u=abs(u);if(!u||!/^https?:/.test(u)||skip.test(u)||seen[u])return;
+        if(u.split('#')[0]===location.href.split('#')[0])return;seen[u]=1;links.push({u:u,l:(l||'').replace(/\s+/g,' ').trim().slice(0,50),k:k});}
+      function addMedia(u){u=abs(u);if(u&&/^https:/.test(u)&&!mseen[u]){mseen[u]=1;media.push(u);}}
+      var attrs=['data-src','data-url','data-link','data-embed','data-embed-url','data-server','data-watch','data-iframe','data-frame','data-href'];
+      document.querySelectorAll('['+attrs.join('],[')+']').forEach(function(e){attrs.forEach(function(a){var v=e.getAttribute(a);
+        if(v&&/^(https?:)?\/\//.test(v)&&!/\.(jpe?g|png|webp|gif|svg|css|js)(\?|$)/i.test(v))add(v,e.textContent,'watch');});});
+      document.querySelectorAll('iframe[src]').forEach(function(f){if(f.offsetWidth>150)add(f.src,'السيرفر الحالي','watch');});
+      document.querySelectorAll('a[href]').forEach(function(a){var t=(a.textContent||'')+' '+(a.className||'')+' '+((a.parentElement&&a.parentElement.className)||'');
+        if(/\.(mp4|mkv|m3u8)(\?|$)/i.test(a.href))addMedia(a.href);
+        if(/تحميل|download/i.test(t))add(a.href,a.textContent,'download');});
+      try{if(window.jwplayer){var p=jwplayer().getPlaylist()||[];p.forEach(function(i){(i.sources||[{file:i.file}]).forEach(function(s){if(s.file)addMedia(s.file);});});}}catch(e){}
+      document.querySelectorAll('video,video source,source').forEach(function(v){var s=v.currentSrc||v.src;if(s&&!/^blob:/.test(s))addMedia(s);});
+      var html=document.documentElement.innerHTML,re=/https?:\/\/[^"'\s<>\\]+?\.(m3u8|mp4|mkv)(\?[^"'\s<>\\]*)?/gi,m,n=0;
+      while((m=re.exec(html))&&n<20){addMedia(m[0]);n++;}
+      return JSON.stringify({page:location.href,links:links.slice(0,40),media:media.slice(0,10)});
+    })();
+""".trimIndent()
 
 // Observe successful media responses after the website completes its own access flow.
 // Runs only in the HTTPS player origin, including its iframe; other sites/ad frames have no bridge.

@@ -33,6 +33,13 @@ internal data class KoraNativeStream(val url: String, val transport: SourceTrans
             if (AD_HOSTS.any { host.contains(it) }) return null
             return from(request.url.toString(), null, request.requestHeaders)
         }
+        /** A media address read from a server page (its player config or HTML), sent with that page as referer. */
+        fun fromPage(url: String, pageUrl: String): KoraNativeStream? {
+            val host = url.toHttpUrlOrNull()?.host?.lowercase(java.util.Locale.ROOT) ?: return null
+            if (AD_HOSTS.any { host.contains(it) }) return null
+            val page = pageUrl.toHttpUrlOrNull() ?: return null
+            return from(url, null, mapOf("Referer" to page.toString(), "Origin" to "${page.scheme}://${page.host}"))
+        }
         private val AD_HOSTS = listOf("doubleclick", "googlesyndication", "googleads", "adservice", "popads", "propeller",
             "adsterra", "exoclick", "juicyads", "trafficjunky", "adnxs", "imasdk", "vast", "onclick")
 
