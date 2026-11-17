@@ -80,6 +80,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="watchhub" android:host="detail" />
+                <data android:scheme="watchhub" android:host="resume" />
             </intent-filter>
             <!-- "Scan to sign in": a TV's QR code opens here on a phone that has the app. -->
             <intent-filter android:autoVerify="true">

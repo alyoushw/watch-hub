@@ -99,14 +99,20 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}) {
             if (isTv()) {
                 SectionTitle("متابعة المشاهدة على التلفزيون")
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("عرض قائمتي في Watch Next", Modifier.weight(1f))
+                    Text("عرض أعمالي على شاشة التلفزيون الرئيسية", Modifier.weight(1f))
                     androidx.compose.material3.Switch(
                         checked = watchNext,
                         onCheckedChange = container.settings::setWatchNext,
                         modifier = Modifier.focusFrame(),
                     )
                 }
-                Text("يعرض الأعمال المحددة كأشاهد حاليًا؛ فتح البطاقة يعرض تفاصيل العمل داخل Watch Hub.",
+                if (watchNext) {
+                    val homeContext = androidx.compose.ui.platform.LocalContext.current
+                    OutlinedButton(onClick = { com.alyoushw.watchhub.tv.WatchNextPublisher.requestChannel(homeContext) }, modifier = Modifier.focusFrame()) {
+                        Text("إظهار صف Watch Hub")
+                    }
+                }
+                Text("يعرض أعمال أشاهد حاليًا وما توقفت عنده؛ بطاقة المتابعة تستأنف المشغّل من موضع التوقف. ظهور الصفوف يعتمد على واجهة التلفزيون؛ متابعة المشاهدة في Google TV تحتاج اعتماد Google.",
                     style = MaterialTheme.typography.bodySmall)
                 HorizontalDivider()
             }

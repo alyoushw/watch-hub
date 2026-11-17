@@ -280,6 +280,8 @@ fun LiveChannels(showAccounts: Boolean = true, accountOverride: XtreamAccount? =
     var query by remember { mutableStateOf("") }
     /** The channel playing in the small picture, if any. */
     var previewing by remember { mutableStateOf<LiveHit?>(null) }
+    var previewGeneration by remember { mutableIntStateOf(0) }
+    var previewLease by remember { mutableStateOf<com.alyoushw.watchhub.player.LivePreviewLease?>(null) }
 
     // Leaving the app (or opening the full player) stops the small picture.
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -323,16 +325,13 @@ fun LiveChannels(showAccounts: Boolean = true, accountOverride: XtreamAccount? =
         container.settings.addXtreamRecent(hit.channel.id)
         val list = shown.ifEmpty { listOf(hit) }
         val items = list.mapIndexed { i, h ->
-            QueueItem(container.xtream.playUrls(h.channel, h.account), WatchEntry.live(h.channel, h.account), h.channel.num ?: (i + 1), h.channel)
+            QueueItem(container.xtream.playUrls(h.channel, h.account), WatchEntry.live(h.channel, h.account), h.channel.num ?: (i + 1), h.channel, httpHeaders = if (h.account.id == com.alyoushw.watchhub.data.FourU.account.id) com.alyoushw.watchhub.data.FourU.channelHeaders(h.channel.id) else emptyMap())
         }
         val index = list.indexOfFirst { it.key == hit.key }.coerceAtLeast(0)
-        // One connection at a time: the small picture lets go before the full player starts.
-        val wasPreviewing = previewing != null
+        val lease = previewLease?.takeIf { previewing?.key == hit.key && it.readyFor(WatchEntry.live(hit.channel, hit.account).key) }
+        PlayerActivity.start(context, items, index, lease)
         previewing = null
-        scope.launch {
-            if (wasPreviewing) delay(400)
-            PlayerActivity.start(context, items, index)
-        }
+        previewGeneration++
     }
 
     fun tap(hit: LiveHit) {
@@ -432,6 +431,7 @@ fun LiveChannels(showAccounts: Boolean = true, accountOverride: XtreamAccount? =
                     LivePicture(
                         hit = previewing,
                         idle = hit,
+                        onLease = { previewLease = it }, generation = previewGeneration,
                         onOpen = { (previewing ?: vm.selected)?.let(::openFull) },
                         modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
                     )
@@ -478,7 +478,7 @@ fun LiveChannels(showAccounts: Boolean = true, accountOverride: XtreamAccount? =
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 previewing?.let { hit ->
                     Column {
-                        LivePicture(hit = hit, idle = hit, onOpen = { openFull(hit) }, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f), rounded = false)
+                        LivePicture(hit = hit, idle = hit, onLease = { previewLease = it }, generation = previewGeneration, onOpen = { openFull(hit) }, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f), rounded = false)
                         Row(
                             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -659,16 +659,20 @@ private fun CategoryChips(categories: List<XtreamCategory>, favorites: Int, rece
  */
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
-private fun LivePicture(hit: LiveHit?, idle: LiveHit?, onOpen: () -> Unit, modifier: Modifier, rounded: Boolean = true) {
+private fun LivePicture(hit: LiveHit?, idle: LiveHit?, generation: Int, onLease: (com.alyoushw.watchhub.player.LivePreviewLease) -> Unit, onOpen: () -> Unit, modifier: Modifier, rounded: Boolean = true) {
     val context = LocalContext.current
     val container = appContainer()
-    val http = remember { androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(com.alyoushw.watchhub.data.Net.streams) }
-    val player = remember {
+    val http = remember(generation) { androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(com.alyoushw.watchhub.data.Net.streams) }
+    val player = remember(generation) {
         ExoPlayer.Builder(context, com.alyoushw.watchhub.data.playerRenderers(context))
             .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(context, http)))
             .build()
     }
-    DisposableEffect(player) { onDispose { player.release() } }
+    val lease = remember(player) { com.alyoushw.watchhub.player.LivePreviewLease(player, http) }
+    DisposableEffect(player) {
+        onLease(lease)
+        onDispose { if (!lease.transferred) player.release() }
+    }
     var buffering by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
     var quality by remember { mutableStateOf<String?>(null) }
@@ -678,6 +682,7 @@ private fun LivePicture(hit: LiveHit?, idle: LiveHit?, onOpen: () -> Unit, modif
     var errors by remember { mutableIntStateOf(0) }
 
     fun start(url: String) {
+        if (lease.transferred) return
         http.setDefaultRequestProperties(if (hit?.account?.id == com.alyoushw.watchhub.data.FourU.account.id) com.alyoushw.watchhub.data.FourU.channelHeaders(hit.channel.id) else emptyMap())
         player.setMediaItem(MediaItem.fromUri(url))
         player.prepare()
@@ -702,7 +707,9 @@ private fun LivePicture(hit: LiveHit?, idle: LiveHit?, onOpen: () -> Unit, modif
         onDispose { player.removeListener(listener) }
     }
 
-    LaunchedEffect(hit?.key) {
+    LaunchedEffect(hit?.key, player) {
+        if (lease.transferred) return@LaunchedEffect
+        lease.key = hit?.let { WatchEntry.live(it.channel, it.account).key }
         errors = 0
         failed = false
         quality = null
@@ -731,6 +738,7 @@ private fun LivePicture(hit: LiveHit?, idle: LiveHit?, onOpen: () -> Unit, modif
                     PlayerView(ctx).apply {
                         useController = false
                         this.player = player
+                        lease.view = this
                         setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
                     }
                 },

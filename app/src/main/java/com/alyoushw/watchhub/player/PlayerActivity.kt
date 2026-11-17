@@ -54,6 +54,7 @@ import kotlinx.coroutines.isActive
 @OptIn(UnstableApi::class)
 class PlayerActivity : ComponentActivity() {
     private lateinit var player: ExoPlayer
+    private var previewHttp: androidx.media3.datasource.okhttp.OkHttpDataSource.Factory? = null
     private val container get() = (application as WatchHubApp).container
     private val history get() = container.history
     private val cloud get() = container.cloud
@@ -178,7 +179,9 @@ class PlayerActivity : ComponentActivity() {
         }.build()
         val http = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(streamHttp)
         session.autoPreload = getSharedPreferences("player", MODE_PRIVATE).getBoolean("stallPreloadOptIn", false)
-        player = ExoPlayer.Builder(this, com.alyoushw.watchhub.data.playerRenderers(this))
+        val livePreview = LivePreviewLease.take(intent.getStringExtra("live_preview"), entry?.key)
+        previewHttp = livePreview?.http
+        player = livePreview?.player ?: ExoPlayer.Builder(this, com.alyoushw.watchhub.data.playerRenderers(this))
             .setBandwidthMeter(bandwidth)
             .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http)))
             .setSeekBackIncrementMs(10_000)
@@ -187,7 +190,7 @@ class PlayerActivity : ComponentActivity() {
             .setLoadControl(loadControl)
             .build()
         // Arabic audio and subtitles first when a file has them.
-        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+        if (livePreview == null) player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setPreferredAudioLanguages("ar")
             .setPreferredTextLanguages("ar")
             .build()
@@ -237,7 +240,7 @@ class PlayerActivity : ComponentActivity() {
             !packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_AUTOMOTIVE)) {
             phoneCast = PhoneCastController(this, player, ::castSource)
         }
-        playAt(position)
+        playAt(position, continueLive = livePreview != null)
         loadSeriesQueue()
         // Wi-Fi ↔ mobile data: the old connection is dead; reconnect at once on the new network.
         lifecycleScope.launch {
@@ -320,7 +323,7 @@ class PlayerActivity : ComponentActivity() {
     // ---------- moving through the queue ----------
 
     /** Starts queue item [i]: saves where the current one stopped, then resumes the new one. */
-    private fun playAt(i: Int) {
+    private fun playAt(i: Int, continueLive: Boolean = false) {
         if (i !in queue.indices) return
         resolveJob?.cancel()
         activeSourceUri?.let(container.playbackEngines::release)
@@ -361,6 +364,13 @@ class PlayerActivity : ComponentActivity() {
         session.hasNext = i < queue.lastIndex
         if (e.isLive && item.recordHistory) preloadIndexes()
         loadJob?.cancel()
+        if (continueLive && e.isLive) {
+            val uri = player.currentMediaItem?.localConfiguration?.uri?.toString()
+            urlIndex = item.urls.indexOf(uri).coerceAtLeast(0)
+            if (item.recordHistory) history.save(e, important = true)
+            started = true
+            return
+        }
         loadJob = lifecycleScope.launch {
             // Another device may have moved on a moment ago: take the newest spot from the account
             // first (at most ~2 s; offline or signed out, this device's own copy is used).
@@ -515,6 +525,7 @@ class PlayerActivity : ComponentActivity() {
         sourceHttpHeaders = current?.httpHeaders?.takeIf { it.isNotEmpty() }?.let { headers ->
             android.net.Uri.parse(uri).host?.let { host -> host to headers }
         }
+        previewHttp?.setDefaultRequestProperties(current?.httpHeaders.orEmpty())
         val item = MediaItem.Builder()
             .setUri(urls[urlIndex.coerceIn(0, urls.lastIndex)])
             .setMimeType(current?.mimeType)
@@ -804,12 +815,14 @@ class PlayerActivity : ComponentActivity() {
             start(context, listOf(QueueItem(urls, entry)), 0)
 
         /** Plays [items] starting at [index]: left/right (channels) or next episode move through them. */
-        fun start(context: Context, items: List<QueueItem>, index: Int) {
+        fun start(context: Context, items: List<QueueItem>, index: Int, preview: LivePreviewLease? = null) {
             val selected = items.getOrNull(index) ?: return
             if (selected.urls.isEmpty() && selected.entry.animeRef == null && selected.entry.sourceRef == null && selected.entry.fourURef == null) return
             PlayerQueue.items = items
             PlayerQueue.index = index
-            context.startActivity(Intent(context, PlayerActivity::class.java))
+            val token = preview?.takeIf { selected.entry.isLive && it.readyFor(selected.entry.key) }?.let(LivePreviewLease::offer)
+            try { context.startActivity(Intent(context, PlayerActivity::class.java).apply { token?.let { putExtra("live_preview", it) } }) }
+            catch (e: Exception) { token?.let(LivePreviewLease::cancel); throw e }
         }
     }
 }

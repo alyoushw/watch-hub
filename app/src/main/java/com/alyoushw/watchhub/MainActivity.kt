@@ -46,6 +46,21 @@ class MainActivity : ComponentActivity() {
             return
         }
         val uri = intent?.data ?: return
+        if (intent.action == Intent.ACTION_VIEW && uri.scheme == "watchhub" && uri.host == "resume") {
+            val container = (application as WatchHubApp).container
+            val e = uri.pathSegments.singleOrNull()?.let(container.history::get)
+            if (e == null || e.isLive || e.finished) {
+                android.widget.Toast.makeText(this, "هذا العمل لم يعد ضمن متابعة المشاهدة", android.widget.Toast.LENGTH_SHORT).show()
+                return
+            }
+            val sourced = e.animeRef != null || e.sourceRef != null || e.fourURef != null
+            if (!sourced && container.settings.xtreamAccount(e.accountId)?.isComplete != true) {
+                android.widget.Toast.makeText(this, "أضف حساب المشاهدة من الإعدادات أولاً", android.widget.Toast.LENGTH_LONG).show()
+                return
+            }
+            com.alyoushw.watchhub.player.PlayerActivity.start(this, if (sourced) emptyList() else container.xtream.playUrls(e), e)
+            return
+        }
         if (intent.action == Intent.ACTION_VIEW && uri.scheme == "watchhub" && uri.host == "detail") {
             val parts = uri.pathSegments
             val type = parts.getOrNull(0)?.let { com.alyoushw.watchhub.data.MediaType.fromPath(it) }
