@@ -247,7 +247,8 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
                     Text("⬇ ${d.label} · ${Uri.parse(d.url).host ?: ""}", maxLines = 2)
                 }
             }
-            if (done) item {
+            // Always visible: the report helps even while the search is still running or stuck.
+            item {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     OutlinedButton(onClick = { manual = searchUrl }, modifier = Modifier.fillMaxWidth().focusFrame()) { Text("تصفح الموقع بنفسك") }
                     TextButton(onClick = {
