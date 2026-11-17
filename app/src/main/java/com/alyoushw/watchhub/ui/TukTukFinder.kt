@@ -76,6 +76,7 @@ private data class FoundVideo(val server: String, val stream: KoraNativeStream)
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("SetJavaScriptEnabled")
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
     val context = LocalContext.current
