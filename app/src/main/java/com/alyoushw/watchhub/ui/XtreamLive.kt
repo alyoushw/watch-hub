@@ -138,7 +138,7 @@ data class LiveHit(val channel: XtreamItem, val account: XtreamAccount) {
 }
 
 /** All live channels of the account, grouped by category, with a now/next guide for the chosen one. */
-class LiveViewModel(private val api: XtreamApi) : ViewModel() {
+class LiveViewModel(private val api: XtreamApi, private val account: XtreamAccount? = null) : ViewModel() {
     var categories by mutableStateOf<List<XtreamCategory>>(emptyList())
         private set
     var channels by mutableStateOf<List<XtreamItem>>(emptyList())
@@ -222,8 +222,8 @@ class LiveViewModel(private val api: XtreamApi) : ViewModel() {
             loading = true
             error = null
             try {
-                categories = api.categories(XtreamKind.LIVE).distinctBy { it.id }
-                val all = api.all(XtreamKind.LIVE)
+                categories = (if (account != null) api.categories(XtreamKind.LIVE, account) else api.categories(XtreamKind.LIVE)).distinctBy { it.id }
+                val all = if (account != null) api.all(XtreamKind.LIVE, account) else api.all(XtreamKind.LIVE)
                 channels = all
                 counts = all.groupingBy { it.categoryId.orEmpty() }.eachCount()
             } catch (e: XtreamException) {
@@ -276,7 +276,7 @@ fun LiveChannels(showAccounts: Boolean = true, accountOverride: XtreamAccount? =
     var liveShare by remember { mutableStateOf<Pair<String, String>?>(null) }
     liveShare?.let { (t, u) -> StreamShareDialog(t, u) { liveShare = null } }
     var showGuide by remember { mutableStateOf(false) }
-    val vm: LiveViewModel = viewModel(key = "live:${account.host}:${account.username}") { LiveViewModel(container.xtream) }
+    val vm: LiveViewModel = viewModel(key = "live:${account.host}:${account.username}") { LiveViewModel(container.xtream, account) }
     var query by remember { mutableStateOf("") }
     /** The channel playing in the small picture, if any. */
     var previewing by remember { mutableStateOf<LiveHit?>(null) }

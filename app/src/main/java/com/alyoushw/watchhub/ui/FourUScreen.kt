@@ -113,7 +113,10 @@ fun FourUScreen(lookup: SourceLookup, onBack: () -> Unit) {
         })
     }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding).readableWidth(1200.dp), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+            if (loading) item {
+                Text(if (selected == null) "جاري البحث عن العمل في 4U…" else "جاري تحميل حلقات 4U…", color = Gold)
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+            }
             error?.let { message -> item { Text(message); TextButton(onClick = { retry++ }, modifier = Modifier.focusFrame()) { Text("حاول مرة ثانية") } } }
             val title = selected
             if (title == null) {
