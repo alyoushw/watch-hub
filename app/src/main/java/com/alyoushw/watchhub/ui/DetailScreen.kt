@@ -493,6 +493,11 @@ private fun DetailContent(
             item { WatchButtons(info, links, subscribedKeys, onWatch) }
 
             item { Column(Modifier.padding(horizontal = 16.dp)) {
+                SourceWatchButton(info.sourceLookup().copy(providerId = "tuktuk"), onOpenSources,
+                    Modifier.fillMaxWidth(), label = "تشغيل TukTuk")
+            } }
+
+            item { Column(Modifier.padding(horizontal = 16.dp)) {
                 SourceWatchButton(info.sourceLookup().copy(providerId = "moviz-time"), onOpenSources,
                     Modifier.fillMaxWidth(), label = "تشغيل Moviz Time")
             } }
@@ -505,11 +510,6 @@ private fun DetailContent(
             item { Column(Modifier.padding(horizontal = 16.dp)) {
                 SourceWatchButton(info.sourceLookup().copy(providerId = "egybest"), onOpenSources,
                     Modifier.fillMaxWidth(), label = "تشغيل EgyBest")
-            } }
-
-            item { Column(Modifier.padding(horizontal = 16.dp)) {
-                SourceWatchButton(info.sourceLookup().copy(providerId = "tuktuk"), onOpenSources,
-                    Modifier.fillMaxWidth(), label = "تشغيل TukTuk")
             } }
 
             item { Column(Modifier.padding(horizontal = 16.dp)) { SourceWatchButton(info.sourceLookup(), onOpenSources, Modifier.fillMaxWidth()) } }
