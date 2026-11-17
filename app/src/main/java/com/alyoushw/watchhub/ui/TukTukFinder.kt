@@ -99,7 +99,7 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
     // Shared between the browser callbacks and the search below.
     val frameLinks = remember { linkedMapOf<String, WebLinkItem>() }
     val media = remember { java.util.concurrent.ConcurrentHashMap<String, KoraNativeStream>() }
-    var pageDone by remember { mutableStateOf<CompletableDeferred<Unit>?>(null) }
+    var pageStarted by remember { mutableStateOf<CompletableDeferred<Unit>?>(null) }
     /** While pressing buttons, top-level pages must stay on this host (advert redirects are blocked). */
     var lockHost by remember { mutableStateOf<String?>(null) }
     var titlePageRef by remember { mutableStateOf<String?>(null) }
@@ -110,50 +110,72 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
         return
     }
 
-    suspend fun load(view: WebView, url: String, settleMs: Long = 2500, referer: String? = null): Boolean {
-        val wait = CompletableDeferred<Unit>()
-        pageDone = wait
-        // Embedded players often check that they were opened from the site's page.
-        if (referer != null) view.loadUrl(url, mapOf("Referer" to referer)) else view.loadUrl(url)
-        val ok = withTimeoutOrNull(30_000) { wait.await() } != null
-        delay(settleMs)
-        return ok
-    }
     suspend fun js(view: WebView, script: String): String? = suspendCancellableCoroutine { c ->
         view.evaluateJavascript(script) { encoded ->
             if (c.isActive) c.resume(runCatching { org.json.JSONTokener(encoded).nextValue() as? String }.getOrNull())
         }
     }
+    /**
+     * Opens [url] and returns as soon as [ready] (a JS condition) holds on the new page, instead of
+     * waiting for every advert and image to finish loading.
+     */
+    suspend fun load(view: WebView, url: String, settleMs: Long = 300, referer: String? = null,
+        ready: String = "document.readyState!=='loading'", timeoutMs: Long = 25_000): Boolean {
+        val started = CompletableDeferred<Unit>()
+        pageStarted = started
+        // Embedded players often check that they were opened from the site's page.
+        if (referer != null) view.loadUrl(url, mapOf("Referer" to referer)) else view.loadUrl(url)
+        val ok = withTimeoutOrNull(timeoutMs) {
+            started.await()
+            while (js(view, "(function(){try{return String(!!($ready))}catch(e){return 'false'}})()") != "true") delay(250)
+        } != null
+        delay(settleMs)
+        return ok
+    }
     fun note(line: String) { log += line; if (log.size > 200) log.removeAt(0) }
 
     LaunchedEffect(web, retry) {
         val view = web ?: return@LaunchedEffect
+        val cacheKey = "${query.type}:${query.tmdbId}:${query.season}:${query.episode}"
+        if (retry == 0) TukTukCache.results[cacheKey]?.let { c ->
+            videos.clear(); videos += c.videos; others.clear(); others += c.others; downloads.clear(); downloads += c.downloads
+            log.clear(); log += c.log; status = "جاهز: ${videos.size} سيرفر يشتغل"; done = true
+            return@LaunchedEffect
+        }
         videos.clear(); downloads.clear(); others.clear(); done = false; log.clear()
         try {
             // 1. Search and pick the matching film / series page.
             status = "نبحث عن «$title» في توك توك…"
             lockHost = null
-            load(view, searchUrl)
-            note("search ${view.url}")
             val wanted = SearchKey(title, query.year, if (series) query.season else null, if (series) query.episode else null)
-            var page = pickLink(js(view, LINKS_SCRIPT), wanted, view.url, note = ::note)
-                ?: run { status = "ما لقينا «$title» في نتائج توك توك."; done = true; return@LaunchedEffect }
-            status = "فتحنا صفحة العمل…"
-            frameLinks.clear(); media.clear() // nothing from the search page counts
-            load(view, page)
+            val hasServers = "!!document.querySelector('[data-link]')||document.readyState==='complete'"
+            // Films live at /<title-slug>-<year>/: open it straight away and skip the search page.
+            val slug = title.lowercase().replace(Regex("[^a-z0-9\\s-]"), "").trim().replace(Regex("[\\s-]+"), "-")
+            var page = home + "$slug-${query.year}/"
+            val direct = !series && slug.length >= 2 && load(view, page, ready = hasServers, timeoutMs = 12_000) &&
+                js(view, "String(!!document.querySelector('[data-link]'))") == "true"
+            note("direct $page -> $direct")
+            if (!direct) {
+                load(view, searchUrl, ready = "document.querySelectorAll('a[href]').length>30||document.readyState==='complete'")
+                note("search ${view.url}")
+                page = pickLink(js(view, LINKS_SCRIPT), wanted, view.url, note = ::note)
+                    ?: run { status = "ما لقينا «$title» في نتائج توك توك."; done = true; return@LaunchedEffect }
+                status = "فتحنا صفحة العمل…"
+                frameLinks.clear(); media.clear() // nothing from the search page counts
+                load(view, page, ready = hasServers)
+            }
             note("title ${view.url}")
             // A series page lists episodes: go to the episode itself.
             if (series) pickLink(js(view, LINKS_SCRIPT), wanted, view.url, episodeOnly = true, note = ::note)?.let {
-                page = it; frameLinks.clear(); media.clear(); load(view, it); note("episode ${view.url}")
+                page = it; frameLinks.clear(); media.clear(); load(view, it, ready = hasServers); note("episode ${view.url}")
             }
             // A separate "watch" page, when the title page links to one.
-            js(view, WATCH_LINK_SCRIPT)?.takeIf { it.startsWith("http") && it != view.url }?.let {
-                status = "فتحنا صفحة المشاهدة…"; frameLinks.clear(); media.clear(); load(view, it); note("watch ${view.url}")
+            if (js(view, "String(!!document.querySelector('[data-link]'))") != "true") js(view, WATCH_LINK_SCRIPT)?.takeIf { it.startsWith("http") && it != view.url }?.let {
+                status = "فتحنا صفحة المشاهدة…"; frameLinks.clear(); media.clear(); load(view, it, ready = hasServers); note("watch ${view.url}")
             }
             // 2. The page only loads its player after a press: press the watch buttons ourselves.
             status = "وصلنا: ${view.title ?: view.url}"
             lockHost = Uri.parse(view.url).host
-            delay(3000)
             note("dump " + (js(view, DUMP_SCRIPT) ?: "").take(2500))
             downloads += frameLinks.values.filter { it.download }.distinctBy { it.url }.take(12)
 
@@ -203,16 +225,21 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
             note("mirror pages ${mirrorPages.joinToString()}")
             for (mp in mirrorPages.take(3)) {
                 status = "نجيب قائمة السيرفرات…"
-                val r = try { TukTukMirrors.resolve(mp, titlePage) { status = it } }
+                fun mimeOf(t: SourceTransport) = when (t) {
+                    SourceTransport.HLS -> androidx.media3.common.MimeTypes.APPLICATION_M3U8
+                    SourceTransport.MKV -> androidx.media3.common.MimeTypes.VIDEO_MATROSKA
+                    else -> androidx.media3.common.MimeTypes.VIDEO_MP4
+                }
+                val r = try {
+                    TukTukMirrors.resolve(mp, titlePage, onProgress = { status = it }, onVariant = { v ->
+                        if (videos.none { it.stream.url == v.url }) videos += FoundVideo(v.label, KoraNativeStream(v.url, v.transport, mimeOf(v.transport), v.httpHeaders))
+                        status = "لقينا ${videos.size} سيرفر شغال، نكمل…"
+                    })
+                }
                     catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { note("mirrors error $e"); null }
                 note("mirrors $mp -> ${r?.variants?.size} ok, ${r?.others?.size} other")
                 r?.variants?.forEach { v ->
-                    val mime = when (v.transport) {
-                        SourceTransport.HLS -> androidx.media3.common.MimeTypes.APPLICATION_M3U8
-                        SourceTransport.MKV -> androidx.media3.common.MimeTypes.VIDEO_MATROSKA
-                        else -> androidx.media3.common.MimeTypes.VIDEO_MP4
-                    }
-                    if (videos.none { it.stream.url == v.url }) videos += FoundVideo(v.label, KoraNativeStream(v.url, v.transport, mime, v.httpHeaders))
+                    if (videos.none { it.stream.url == v.url }) videos += FoundVideo(v.label, KoraNativeStream(v.url, v.transport, mimeOf(v.transport), v.httpHeaders))
                 }
                 r?.others?.forEach { o -> if (others.none { it.url == o.url }) others += WebLinkItem(o.label, o.url, false) }
             }
@@ -237,7 +264,12 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
             status = if (videos.isEmpty()) "ما لقينا فيديو يشتغل تلقائياً. جرّب «تصفح الموقع» تحت." else "جاهز: ${videos.size} سيرفر يشتغل"
         } catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (e: Exception) { status = "صار خطأ أثناء البحث: ${e.javaClass.simpleName}"; note("error $e") }
-        finally { done = true; view.stopLoading(); view.loadUrl("about:blank") }
+        finally {
+            done = true; view.stopLoading(); view.loadUrl("about:blank")
+            if (videos.isNotEmpty() || others.isNotEmpty())
+                TukTukCache.results["${query.type}:${query.tmdbId}:${query.season}:${query.episode}"] =
+                    TukTukCache.Entry(videos.toList(), others.toList(), downloads.toList(), log.toList())
+        }
     }
 
     DisposableEffect(Unit) { onDispose { web?.apply { stopLoading(); destroy() } } }
@@ -247,11 +279,7 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
             IconButton(onClick = onBack, modifier = Modifier.focusFrame()) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع") }
         }, actions = { if (done) TextButton(onClick = { retry++ }, modifier = Modifier.focusFrame()) { Text("إعادة البحث") } })
     }) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(status, color = Gold)
-                    if (!done) LinearProgressIndicator(Modifier.fillMaxWidth())
+        androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
                     // The hidden browser that does the work (it must be attached to run).
                     androidx.compose.foundation.layout.Box(Modifier.size(1.dp)) {
                     AndroidView(modifier = Modifier.wrapContentSize(Alignment.TopStart, unbounded = true).requiredSize(400.dp, 760.dp).alpha(0f), factory = { host ->
@@ -261,6 +289,7 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
                             settings.mediaPlaybackRequiresUserGesture = true
                             settings.javaScriptCanOpenWindowsAutomatically = false
                             settings.setSupportMultipleWindows(false)
+                            settings.blockNetworkImage = true
                             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                             if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) &&
                                 WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
@@ -283,7 +312,9 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
                                 WebViewCompat.addDocumentStartJavaScript(this, FRAME_SCAN, setOf("*"))
                             }
                             webViewClient = object : WebViewClient() {
-                                override fun onPageFinished(view: WebView, url: String?) { pageDone?.complete(Unit) }
+                                override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                                    if (url != null && url != "about:blank") pageStarted?.complete(Unit)
+                                }
                                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                                     val scheme = request.url.scheme
                                     if (scheme != "http" && scheme != "https") return true // no app links / intents
@@ -293,6 +324,12 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
                                 }
                                 override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                                     KoraNativeStream.anySite(request)?.let { media.putIfAbsent(it.url, it) }
+                                    // Adverts, trackers, images and fonts only slow the hidden browser down.
+                                    val u = request.url
+                                    val path = u.path.orEmpty().lowercase()
+                                    if (!request.isForMainFrame && (BLOCK_HOSTS.containsMatchIn(u.host.orEmpty()) ||
+                                            Regex("\\.(png|jpe?g|gif|webp|svg|ico|woff2?|ttf|otf)$").containsMatchIn(path)))
+                                        return WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0)))
                                     return null
                                 }
                             }
@@ -300,6 +337,11 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
                         }
                     })
                     }
+        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(status, color = Gold)
+                    if (!done) LinearProgressIndicator(Modifier.fillMaxWidth())
                 }
             }
             if (videos.isNotEmpty()) item { Text("سيرفرات المشاهدة الشغالة", style = MaterialTheme.typography.titleMedium) }
@@ -338,8 +380,17 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
                 }
             }
         }
+        }
     }
 }
+
+/** Results per title for this app session: back from the player or a link shows them at once. */
+private object TukTukCache {
+    data class Entry(val videos: List<FoundVideo>, val others: List<WebLinkItem>, val downloads: List<WebLinkItem>, val log: List<String>)
+    val results = java.util.concurrent.ConcurrentHashMap<String, Entry>()
+}
+
+private val BLOCK_HOSTS = Regex("agl\\d|xbeat|histats|cvt-s\\d|adangle|popads|propeller|adsterra|exoclick|doubleclick|googlesyndication|googletagmanager|google-analytics|clarity\\.ms|ser-\\d+-host|\\.store$")
 
 private data class SearchKey(val title: String, val year: Int, val season: Int?, val episode: Int?)
 

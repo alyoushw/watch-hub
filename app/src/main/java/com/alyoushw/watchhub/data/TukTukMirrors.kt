@@ -42,7 +42,11 @@ object TukTukMirrors {
         ?.let { runCatching { String(java.util.Base64.getDecoder().decode(it)) }.getOrNull() }
         ?.takeIf { it.startsWith("http") } ?: url
 
-    suspend fun resolve(mirrorPage: String, referer: String, onProgress: (String) -> Unit = {}): Result = withContext(Dispatchers.IO) {
+    /** Mirrors that never give a playable link here (captcha / script-only players): listed, not tried. */
+    private val SKIP = setOf("doodstream", "vidara", "byse")
+
+    suspend fun resolve(mirrorPage: String, referer: String, onProgress: (String) -> Unit = {},
+        onVariant: (SourceVariant) -> Unit = {}): Result = withContext(Dispatchers.IO) {
         val page = mirrorPage.toHttpUrlOrNull()?.takeIf { it.isHttps } ?: return@withContext Result(emptyList(), emptyList())
         fun get(extra: Map<String, String> = emptyMap()): String = SourceHttp.client.newCall(Request.Builder().url(page)
             .header("User-Agent", AGENT).header("Referer", referer).apply { extra.forEach { (k, v) -> header(k, v) } }.build())
@@ -63,16 +67,20 @@ object TukTukMirrors {
                 Mirror(label, name, if (link.startsWith("//")) "https:$link" else link)
             }
         }
-        onProgress("لقينا ${mirrors.size} سيرفر بـ ${qualities.size} جودة، نجربها…")
-        val gate = Semaphore(4)
+        withContext(Dispatchers.Main) { onProgress("لقينا ${mirrors.size} سيرفر بـ ${qualities.size} جودة، نجربها…") }
+        val gate = Semaphore(8)
+        // Best quality first, TukTukVIP first within it: the first results show up quickest.
+        val ordered = mirrors.withIndex().sortedBy { (i, m) -> if (m.name.contains("vip", true)) -1000 + i else i }
         val tried = coroutineScope {
-            mirrors.mapIndexed { i, m -> async {
+            ordered.map { (i, m) -> async {
+                if (SKIP.any { m.name.contains(it, true) }) return@async m to emptyList<SourceVariant>()
                 gate.withPermit {
                     val host = m.url.toHttpUrlOrNull()?.host ?: return@withPermit m to emptyList<SourceVariant>()
                     val found = try {
                         embeds.resolveEmbed(m.url, page.toString(), "${m.quality} · ${m.name}", "tt$i", setOf(host))
                             .filter { probe.compatible(it) }
                     } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { emptyList() }
+                    found.firstOrNull()?.let { v -> withContext(Dispatchers.Main) { onVariant(v) } }
                     m to found.take(1)
                 }
             } }.awaitAll()
