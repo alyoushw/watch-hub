@@ -504,6 +504,12 @@ async function playHere(urls, entry) {
 }
 
 /** A small, bounded read checks the actual media response without exposing the URL/login. */
+// IPTV panels often serve only the home IP: the hosted proxy (a data-centre IP) is refused even
+// though the same link plays in VLC on the user's own network. The hint stays hedged.
+function iptvHint(viaProxy) {
+  return viaProxy ? "" : " إذا كان هذا اشتراك IPTV فقد يرفض سيرفره الوصول من خارج شبكتك المنزلية؛ جرّب نفس الرابط في VLC أو من تطبيق أندرويد.";
+}
+
 async function playbackDiagnosis(url, direct = false) {
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 8000);
   let reader;
@@ -516,9 +522,10 @@ async function playbackDiagnosis(url, direct = false) {
     }
     if (!response.ok) {
       if (response.status === 401) return "طلب الفيديو مرفوض (HTTP 401). قد يكون الرفض من مفتاح البروكسي أو بيانات الاشتراك؛ لا يثبت ذلك وجود مشكلة ترميز.";
-      if (response.status === 403) return "طلب الفيديو مرفوض (HTTP 403). قد يكون الرفض من البروكسي أو سيرفر الاشتراك؛ لا يثبت ذلك وجود مشكلة ترميز.";
-      if (response.status === 404) return "المصدر أعاد HTTP 404 عند طلب رابط الملف؛ لم يصل فيديو في هذا الطلب.";
-      return `تعذّر جلب ملف الفيديو (HTTP ${response.status}).`;
+      if (response.status === 403) return "طلب الفيديو مرفوض (HTTP 403). قد يكون الرفض من البروكسي أو سيرفر الاشتراك؛ لا يثبت ذلك وجود مشكلة ترميز." + iptvHint(!direct);
+      if (response.status === 404) return "المصدر أعاد HTTP 404 عند طلب رابط الملف؛ لم يصل فيديو في هذا الطلب." + iptvHint(!direct);
+      if (response.status === 456) return "سيرفر الاشتراك رفض الطلب (HTTP 456)." + iptvHint(!direct);
+      return `تعذّر جلب ملف الفيديو (HTTP ${response.status}).` + iptvHint(!direct);
     }
     reader = response.body?.getReader();
     if (!reader) return "وصل رد من المصدر دون بيانات فيديو.";

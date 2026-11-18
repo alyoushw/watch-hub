@@ -165,9 +165,7 @@ function fourUNormalize(raw: string) {
 type FourUCatalogue = { at: number; byName: Map<string, Record<string, unknown>[]> };
 const fourUCatalogues = new Map<boolean, FourUCatalogue>();
 const fourUCatalogueLoads = new Map<boolean, Promise<FourUCatalogue>>();
-function fourUCatalogue(series: boolean): Promise<FourUCatalogue> {
-  const cached = fourUCatalogues.get(series);
-  if (cached && Date.now() - cached.at < 6 * 60 * 60 * 1000) return Promise.resolve(cached);
+function loadFourUCatalogue(series: boolean): Promise<FourUCatalogue> {
   const pending = fourUCatalogueLoads.get(series); if (pending) return pending;
   const load = (async () => {
     const upstream = new URL(`${FOURU_MEDIA}/player_api.php`);
@@ -198,6 +196,22 @@ function fourUCatalogue(series: boolean): Promise<FourUCatalogue> {
     const result = { at: Date.now(), byName }; fourUCatalogues.set(series, result); return result;
   })().finally(() => { fourUCatalogueLoads.delete(series); });
   fourUCatalogueLoads.set(series, load); return load;
+}
+// Serve the cached catalogue at once; refresh it in the background before it expires, so a visitor
+// never waits for the large list (the first fetch happens on startup / a keep-alive ping instead).
+function fourUCatalogue(series: boolean): Promise<FourUCatalogue> {
+  const cached = fourUCatalogues.get(series);
+  if (cached && Date.now() - cached.at < 6 * 60 * 60 * 1000) {
+    if (Date.now() - cached.at > 5 * 60 * 60 * 1000) loadFourUCatalogue(series).catch(() => {});
+    return Promise.resolve(cached);
+  }
+  return loadFourUCatalogue(series);
+}
+/** Fetches the 4U lists ahead of visitors; safe to call often (it reuses fresh caches). */
+function warmFourU() {
+  fourUCatalogue(false).catch(() => {});
+  fourUCatalogue(true).catch(() => {});
+  if (!fourULive || Date.now() - fourULive.at > 4 * 60 * 1000) fourUChannels().catch(() => {});
 }
 async function fourUMatch(_req: Request, url: URL): Promise<Response> {
   const series = url.searchParams.get("series") === "true", year = Number(url.searchParams.get("year") || 0);
@@ -522,8 +536,10 @@ function assetLinks(): Response {
   }]);
 }
 
+warmFourU(); // populate the 4U lists at startup so the first visitor does not wait
 Deno.serve({ port }, (req) => {
   const url = new URL(req.url);
+  if (url.pathname === "/" || url.pathname === "/refresh") warmFourU();
   // Older offline shells deliberately ignore this navigation path. Load the current entry
   // without clearing IndexedDB/localStorage or touching the user's saved accounts.
   if (url.pathname === "/refresh") return Deno.readFile(`${PUBLIC_DIR}/index.html`).then((body) => new Response(body, {
