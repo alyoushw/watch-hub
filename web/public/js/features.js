@@ -1,9 +1,9 @@
-import * as tmdb from "./tmdb.js?v=20261117b";
-import * as src from "./sources.js?v=20261117b";
-import { settings, watchlist, history, isFinished } from "./store.js?v=20261117b";
-import { play } from "./player.js?v=20261117b";
-import { addDownload } from "./downloads.js?v=20261117b";
-import { fillTranslated } from "./translate.js?v=20261117b";
+import * as tmdb from "./tmdb.js?v=20261118a";
+import * as src from "./sources.js?v=20261118a";
+import { settings, watchlist, history, isFinished } from "./store.js?v=20261118a";
+import { play } from "./player.js?v=20261118a";
+import { addDownload } from "./downloads.js?v=20261118a";
+import { fillTranslated } from "./translate.js?v=20261118a";
 
 const view = document.getElementById("view");
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -118,7 +118,7 @@ export async function animeWatchPage(id, encoded) {
   const select = async (title) => {
     selected = title; view.innerHTML = cover(title.title, title.poster || lookup.image) + busy();
     try {
-      [related, episodes] = await Promise.all([src.animeRelated(title), src.animeEpisodes(title.id)]);
+      [related, episodes] = await Promise.all([src.animeRelated(title).catch(() => []), src.animeEpisodes(title.id)]);
       if (!active(id)) return;
       const seasons = [title, ...related].filter((x, i, a) => a.findIndex((y) => y.id === x.id) === i).sort((a, b) => a.season - b.season);
       view.innerHTML = cover(title.title, title.poster || lookup.image, lookup.overview) + `<div class="chips scroll">${seasons.map((s, i) => `<button class="chip ${s.id === title.id ? "on" : ""}" data-related="${i}">${esc(s.title)} · ${s.type === "MOVIE" ? "فيلم" : `الموسم ${s.season}`}</button>`).join("")}</div>
@@ -261,7 +261,7 @@ export async function subscriptionsPage() {
 }
 
 export async function downloadsPage(id) {
-  const { listDownloads, offlineUrl, pauseDownload, resumeDownload, removeDownload } = await import("./downloads.js?v=20261117b");
+  const { listDownloads, offlineUrl, pauseDownload, resumeDownload, removeDownload } = await import("./downloads.js?v=20261118a");
   const size = (n) => n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : `${(n / 1024 ** 2).toFixed(1)} MB`;
   const render = async () => {
     const items = await listDownloads(); if (!active(id)) return;

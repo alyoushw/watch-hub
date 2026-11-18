@@ -1,7 +1,8 @@
-import { resolveEntry } from "./sources.js?v=20261117b";
-import { urlsFor, via } from "./xtream.js?v=20261117b";
+import { resolveEntry } from "./sources.js?v=20261118a";
+import { urlsFor, via } from "./xtream.js?v=20261118a";
 let dbPromise, running = false;
 const active = new Map();
+const removed = new Set();
 const open = () => dbPromise ||= new Promise((resolve, reject) => {
   const request = indexedDB.open("watchhub-downloads", 1);
   request.onupgradeneeded = () => { request.result.createObjectStore("items"); request.result.createObjectStore("chunks"); };
@@ -16,7 +17,7 @@ async function request(store, mode, run) {
   });
 }
 const changed = () => window.dispatchEvent(new Event("watchhub:downloads"));
-const put = async (item) => { await request("items", "readwrite", (s) => s.put(item, item.entry.key)); changed(); };
+const put = async (item) => { if (removed.has(item.entry.key)) return; await request("items", "readwrite", (s) => s.put(item, item.entry.key)); changed(); };
 export const listDownloads = () => request("items", "readonly", (s) => s.getAll());
 const itemFor = (key) => request("items", "readonly", (s) => s.get(key));
 export async function offlineUrl(key) {
@@ -26,17 +27,20 @@ export async function offlineUrl(key) {
 export async function addDownload(entry, urls = []) {
   if (entry.kind === "live") throw new Error("تنزيل البث المباشر غير متاح");
   const old = await itemFor(entry.key); if (old?.state === "complete" || active.has(entry.key)) return;
+  removed.delete(entry.key);
   await put({ ...old, entry, urls: entry.animeRef || entry.sourceRef || entry.fourURef ? [] : urls, state: "queued", bytes: old?.bytes || 0, total: old?.total || 0, at: Date.now(), error: null });
   processQueue();
 }
 export async function pauseDownload(key) { active.get(key)?.abort(); const item = await itemFor(key); if (item && item.state !== "complete") await put({ ...item, state: "paused" }); }
 export async function resumeDownload(key) { const item = await itemFor(key); if (item && item.state !== "complete") { await put({ ...item, state: "queued", error: null }); processQueue(); } }
 export async function removeDownload(key) {
+  removed.add(key);
   active.get(key)?.abort();
   await request("chunks", "readwrite", (s) => s.delete(IDBKeyRange.bound([key, 0], [key, Number.MAX_SAFE_INTEGER])));
   await request("items", "readwrite", (s) => s.delete(key)); changed();
 }
 async function saveChunk(item, blob) {
+  if (removed.has(item.entry.key)) throw new DOMException("removed", "AbortError");
   const db = await open();
   await new Promise((resolve, reject) => {
     const tx = db.transaction(["items", "chunks"], "readwrite");

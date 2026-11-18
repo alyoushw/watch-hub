@@ -1,4 +1,4 @@
-import { settings } from "./store.js?v=20261117b";
+import { settings } from "./store.js?v=20261118a";
 export const PROVIDERS = [
   ["tuktuk", "TukTuk", "https://zx33.tuktuk-sa.online/"],
   ["moviz-time", "Moviz Time", "https://moviz-time.buzz/"],
@@ -28,6 +28,7 @@ export async function resolveEntry(entry) {
   }
   if (!anime && !source) throw new Error("مرجع المصدر غير متاح");
   const result = await read("resolve", { ref: JSON.stringify(anime || source), ...(settings.sourceCatalogue ? { catalogue: settings.sourceCatalogue } : {}) });
+  if (!Array.isArray(result.urls) || !result.urls.length || result.urls.some((value) => typeof value !== "string" || !/^https?:\/\//i.test(value))) throw new Error("لم يصل رابط فيديو صالح من المصدر");
   return result.urls;
 }
 export const animeSearch = (title, movie) => read("anime/search", { title, movie: String(movie) });

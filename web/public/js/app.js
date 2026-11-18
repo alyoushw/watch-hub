@@ -1,16 +1,16 @@
 // Watch Hub on the web: the same hub as the Android app, for iPhone, iPad and computers.
-import * as tmdb from "./tmdb.js?v=20261117b";
-import * as foryou from "./foryou.js?v=20261117b";
-import * as xt from "./xtream.js?v=20261117b";
-import * as fouru from "./fouru.js?v=20261117b";
-import * as features from "./features.js?v=20261117c";
-import * as sourceApi from "./sources.js?v=20261117b";
-import { restoreDownloads, addDownload } from "./downloads.js?v=20261117b";
-import { play, fmt } from "./player.js?v=20261117b";
-import * as smart from "./smart.js?v=20261117b";
-import { fillTranslated } from "./translate.js?v=20261117b";
-import * as cloud from "./cloud.js?v=20261117b";
-import { settings, watchlist, favorites, folders, recent, xtreamReady, history, isFinished, progressOf, accounts, restoreHistory } from "./store.js?v=20261117b";
+import * as tmdb from "./tmdb.js?v=20261118a";
+import * as foryou from "./foryou.js?v=20261118a";
+import * as xt from "./xtream.js?v=20261118a";
+import * as fouru from "./fouru.js?v=20261118a";
+import * as features from "./features.js?v=20261118a";
+import * as sourceApi from "./sources.js?v=20261118a";
+import { restoreDownloads, addDownload } from "./downloads.js?v=20261118a";
+import { play, fmt } from "./player.js?v=20261118a";
+import * as smart from "./smart.js?v=20261118a";
+import { fillTranslated } from "./translate.js?v=20261118a";
+import * as cloud from "./cloud.js?v=20261118a";
+import { settings, watchlist, favorites, folders, recent, xtreamReady, history, isFinished, progressOf, accounts, restoreHistory } from "./store.js?v=20261118a";
 
 const view = document.getElementById("view");
 // Explicit recovery link restores the built-in proxy after connection troubleshooting.
@@ -1464,7 +1464,7 @@ function entryMenu(e, card) {
     </div>`;
   wrap.querySelector(".sheet-title").textContent = e.title;
   wrap.querySelector('[data-a="open"]').textContent = label;
-  wrap.addEventListener("click", (ev) => {
+  wrap.addEventListener("click", async (ev) => {
     const a = ev.target.closest("[data-a]")?.dataset.a;
     if (ev.target === wrap || a === "x") return wrap.remove();
     if (a === "open") {
@@ -1476,8 +1476,10 @@ function entryMenu(e, card) {
     } else if (a === "link") {
       wrap.remove();
       // Plays at once in any player, but carries the account's user name and password.
-      const url = xt.urlsFor(e)[0];
-      if (!url || !confirm("الرابط يشغّل الفيديو على طول في أي مشغل (مثل VLC)، بس فيه اسم المستخدم وكلمة المرور حق حسابك: أي أحد يوصله يقدر يستخدم حسابك. تشاركه؟")) return;
+      let url;
+      try { url = (e.animeRef || e.sourceRef || e.fourURef ? await sourceApi.resolveEntry(e) : xt.urlsFor(e))[0]; }
+      catch (error) { toast(error.message || "تعذّر تجهيز رابط التشغيل"); return; }
+      if (!url || !confirm("رابط التشغيل قد يحتوي بيانات الوصول إلى المصدر أو حسابك؛ أي شخص يحصل عليه قد يتمكن من استخدامه. تشاركه؟")) return;
       (navigator.share ? navigator.share({ title: e.title, text: `▶ ${e.title}`, url }) : Promise.reject(new Error("no share")))
         .catch((err) => {
           if (err?.name === "AbortError") return;
@@ -1804,7 +1806,7 @@ async function settingsPage() {
     <section class="card-box">
       <h3>الآيفون والآيباد</h3>
       <label style="display:flex;gap:10px;align-items:center;cursor:pointer">
-        <input type="checkbox" id="vlc" ${settings.vlcOnIos !== false ? "checked" : ""} style="width:20px;height:20px;accent-color:var(--gold)">
+        <input type="checkbox" id="vlc" ${settings.vlcOnIos === true ? "checked" : ""} style="width:20px;height:20px;accent-color:var(--gold)">
         <span>افتح القنوات والأفلام والحلقات في تطبيق VLC على طول</span>
       </label>
       <p class="muted" style="margin:0;line-height:1.8;font-size:13px">Safari ما يشغّل صيغ كثيرة (مثل MKV)، وVLC يشغّل كل شي.
@@ -1898,7 +1900,7 @@ restoreHistory().finally(async () => {
 
 // Open instantly from the device's copy, even while the free server wakes up.
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("sw.js?v=20261117c").catch(() => {});
+  navigator.serviceWorker.register("sw.js?v=20261118a").catch(() => {});
 }
 
 // ---------- ✨ مختار لك ----------

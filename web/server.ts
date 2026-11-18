@@ -72,7 +72,7 @@ async function proxy(req: Request, self: URL, session?: MediaSession): Promise<R
         const providerHeaders = new Headers(headers);
         if (session.headers["User-Agent"]) providerHeaders.set("user-agent", session.headers["User-Agent"]);
         if (address.host === session.host) for (const [name, value] of Object.entries(session.headers)) providerHeaders.set(name, value);
-        upstream = await fetch(address, { headers: providerHeaders, redirect: "manual", signal: req.signal });
+        upstream = await fetch(address, { method: req.method === "HEAD" ? "HEAD" : "GET", headers: providerHeaders, redirect: "manual", signal: req.signal });
         const location = upstream.headers.get("location");
         if (![301,302,303,307,308].includes(upstream.status) || !location) break;
         await upstream.body?.cancel();
@@ -80,7 +80,7 @@ async function proxy(req: Request, self: URL, session?: MediaSession): Promise<R
         address = new URL(location, address);
         if (!/^https?:$/.test(address.protocol) || PROXY_HOSTS.length && !PROXY_HOSTS.includes(address.host.toLowerCase()) && !PROXY_HOSTS.includes(address.hostname.toLowerCase())) return fail(403, "host not allowed");
       }
-    } else upstream = await fetch(target, { headers, redirect: "follow", signal: req.signal });
+    } else upstream = await fetch(target, { method: req.method === "HEAD" ? "HEAD" : "GET", headers, redirect: "follow", signal: req.signal });
   } catch (e) {
     return fail(502, `could not reach server: ${e instanceof Error ? e.message : e}`);
   }
@@ -100,6 +100,7 @@ async function proxy(req: Request, self: URL, session?: MediaSession): Promise<R
     const named = VIDEO_TYPES[ext];
     if (named) out.set("content-type", named);
   }
+  if (req.method === "HEAD") return new Response(null, { status: upstream.status, headers: out });
   if (/mpegurl/i.test(type) || /\.m3u8?(\?|$)/i.test(new URL(finalUrl).pathname) || session && /\.txt$/i.test(new URL(finalUrl).pathname)) {
     if (!upstream.ok) return new Response(upstream.body, { status: upstream.status, headers: out });
     const reader = upstream.body?.getReader(); if (!reader) return fail(502, "empty playlist");

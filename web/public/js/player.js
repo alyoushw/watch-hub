@@ -1,13 +1,13 @@
 // Watch Hub's own player for computers (and Android browsers): custom controls, gestures,
 // subtitle and audio-track menus, picture size, speed, resume. On iPhone and iPad everything
-// opens in VLC instead (Safari cannot play MKV and many streams).
+// tries supported media here first; VLC remains an explicit option for unsupported files.
 //
 // Safari plays HLS itself; other browsers use hls.js, and MPEG-TS live streams use mpegts.js.
-import { via } from "./xtream.js?v=20261117b";
-import { offlineUrl, addDownload } from "./downloads.js?v=20261117b";
-import { resolveEntry } from "./sources.js?v=20261117b";
-import { settings, history, isFinished, historySaved } from "./store.js?v=20261117b";
-import * as cloud from "./cloud.js?v=20261117b";
+import { via } from "./xtream.js?v=20261118a";
+import { offlineUrl, addDownload } from "./downloads.js?v=20261118a";
+import { resolveEntry } from "./sources.js?v=20261118a";
+import { settings, history, isFinished, historySaved } from "./store.js?v=20261118a";
+import * as cloud from "./cloud.js?v=20261118a";
 
 const HLS_JS = "https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js";
 const MPEGTS_JS = "https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js";
@@ -34,6 +34,8 @@ let qIndex = 0;
 
 let engine = null; // { destroy, onFatal, hls? }
 let session = 0;
+let opening = 0;
+let cancelStart = null;
 let current = null; // { urls, entry, live }
 let saveTimer = null;
 
@@ -68,8 +70,10 @@ function loadScript(src) {
     scripts.set(src, new Promise((resolve, reject) => {
       const s = document.createElement("script");
       s.src = src;
-      s.onload = resolve;
+      const timeout = setTimeout(() => { s.remove(); scripts.delete(src); reject(new Error("script timeout")); }, 12000);
+      s.onload = () => { clearTimeout(timeout); resolve(); };
       s.onerror = () => {
+        clearTimeout(timeout);
         scripts.delete(src);
         reject(new Error("script"));
       };
@@ -92,7 +96,7 @@ export function fmt(sec) {
   return h ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
 }
 
-const fileUrl = (urls) => urls.find((u) => !/\.m3u8$/i.test(new URL(u).pathname)) || urls[0];
+const fileUrl = (urls) => urls.find((u) => !/\.m3u8$/i.test(new URL(u, location.href).pathname)) || urls[0];
 const vlcLink = (url) => `vlc-x-callback://x-callback-url/stream?url=${encodeURIComponent(url)}`;
 
 let indTimer;
@@ -137,6 +141,8 @@ function panel(text, buttons) {
 // ---------- engine ----------
 
 function reset() {
+  cancelStart?.();
+  cancelStart = null;
   if (engine) {
     try {
       engine.destroy();
@@ -153,6 +159,7 @@ function waitForStart(timeoutMs) {
   return new Promise((resolve, reject) => {
     const done = (ok) => {
       clearTimeout(timer);
+      if (cancelStart === onErr) cancelStart = null;
       video.removeEventListener("loadeddata", onOk);
       video.removeEventListener("error", onErr);
       ok ? resolve() : reject(new Error("failed"));
@@ -160,6 +167,7 @@ function waitForStart(timeoutMs) {
     const onOk = () => done(true);
     const onErr = () => done(false);
     const timer = setTimeout(() => done(false), timeoutMs);
+    cancelStart = onErr;
     video.addEventListener("loadeddata", onOk);
     video.addEventListener("error", onErr);
     engine?.onFatal?.(() => done(false));
@@ -168,12 +176,14 @@ function waitForStart(timeoutMs) {
 
 const nativeHls = () => video.canPlayType("application/vnd.apple.mpegurl") !== "";
 
-async function tryOne(url, startAt) {
+async function tryOne(url, startAt, mine) {
+  if (mine !== session) throw new Error("cancelled");
   reset();
   const src = via(url);
   const path = new URL(url).pathname.toLowerCase();
   if (path.endsWith(".m3u8") && !nativeHls()) {
     await loadScript(HLS_JS);
+    if (mine !== session) throw new Error("cancelled");
     const Hls = window.Hls;
     if (!Hls || !Hls.isSupported()) throw new Error("hls");
     const hls = new Hls({ enableWorker: true, startPosition: startAt || -1 });
@@ -184,6 +194,7 @@ async function tryOne(url, startAt) {
     hls.attachMedia(video);
   } else if (path.endsWith(".ts")) {
     await loadScript(MPEGTS_JS);
+    if (mine !== session) throw new Error("cancelled");
     const mpegts = window.mpegts;
     if (!mpegts || !mpegts.getFeatureList().mseLivePlayback) throw new Error("ts");
     const p = mpegts.createPlayer({ type: "mpegts", isLive: true, url: src });
@@ -229,22 +240,29 @@ function saveProgress(important = false) {
  * [list] (items of { urls, entry, number? }) and [index]: the channels or episodes around it.
  */
 export async function play(urls, entry, list = null, index = 0) {
+  const request = ++opening;
+  saveProgress(true);
+  // Invalidate the previous async start before any storage or source lookup.
+  session++;
+  reset();
   const downloaded = await offlineUrl(entry.key);
+  if (request !== opening) return;
   if (downloaded) { urls = [downloaded]; list = null; }
-  if (!downloaded && isIOS() && settings.vlcOnIos !== false && (entry.animeRef || entry.sourceRef || entry.fourURef)) {
-    try { urls = await resolveEntry(entry); } catch (e) { openOverlay(entry, entry.kind === "live"); ui.spin.hidden = true; errorEl.hidden = false; errorEl.textContent = e.message; return; }
+  queue = list && list.length ? list : [{ urls, entry }];
+  qIndex = list && list.length ? Math.max(0, Math.min(index, list.length - 1)) : 0;
+  if (!downloaded && isIOS() && settings.vlcOnIos === true && (entry.animeRef || entry.sourceRef || entry.fourURef)) {
+    try { urls = await resolveEntry(entry); if (request !== opening) return; } catch (e) { if (request !== opening) return; openOverlay(entry, entry.kind === "live"); ui.spin.hidden = true; errorEl.hidden = false; errorEl.textContent = e.message; return; }
   }
-  if (!downloaded && isIOS() && settings.vlcOnIos !== false) {
+  if (!downloaded && isIOS() && settings.vlcOnIos === true) {
     history.save(entry, true);
     return openInVlc(urls, entry);
   }
-  queue = list && list.length ? list : [{ urls, entry }];
-  qIndex = list && list.length ? Math.max(0, Math.min(index, list.length - 1)) : 0;
   return playAt(qIndex);
 }
 
 function playAt(i) {
   if (i < 0 || i >= queue.length) return;
+  opening++;
   if (current?.started) saveProgress(true);
   qIndex = i;
   upNextDismissed = null;
@@ -433,6 +451,7 @@ async function playHere(urls, entry) {
   if (current?.entry.key !== entry.key) clearExternalCaptions();
   const live = entry.kind === "live";
   const mine = ++session;
+  reset();
   current = { urls, entry, live, started: false };
   openOverlay(entry, live);
   ui.spin.hidden = false;
@@ -444,6 +463,7 @@ async function playHere(urls, entry) {
   const startAt = !live && saved && !isFinished(saved) && saved.positionMs > 10000 ? saved.positionMs / 1000 : 0;
   ui.spin.hidden = false;
   const downloaded = await offlineUrl(entry.key);
+  if (mine !== session) return;
   if (downloaded) urls = [downloaded];
   else if (entry.animeRef || entry.sourceRef || entry.fourURef) {
     try { urls = await resolveEntry(entry); if (mine !== session) return; current.urls = urls; }
@@ -451,9 +471,10 @@ async function playHere(urls, entry) {
   }
   for (const url of urls) {
     try {
-      await tryOne(url, startAt);
+      await tryOne(url, startAt, mine);
       if (mine !== session) return;
       current.started = true;
+      engine?.onFatal?.(() => { if (mine === session) { ui.spin.hidden = true; showFailure(fileUrl(current.urls)); } });
       if (startAt) flash(`نكمل من ${fmt(startAt)}`);
       clearInterval(saveTimer);
       saveTimer = setInterval(saveProgress, 5000);
@@ -469,8 +490,10 @@ async function playHere(urls, entry) {
 
 /** The browser could not play it: offer players that handle any format (MKV, AVI, …). */
 function showFailure(url) {
-  const ext = (new URL(url).pathname.split(".").pop() || "").toUpperCase();
-  const msg = panel(`المتصفح ما قدر يشغّل هذا الملف${ext ? ` (صيغة ${ext})` : ""}. شغّله في VLC أو Infuse:`, [
+  if (!url) return panel("لم يصل رابط تشغيل من المصدر. افتح صفحة العمل واختر السيرفر مرة ثانية.", [["إغلاق", close]]);
+  const ext = (new URL(url, location.href).pathname.split(".").pop() || "").toUpperCase();
+  const msg = panel(`تعذّر التشغيل${ext ? ` (${ext})` : ""}. قد يكون الرابط غير متاح أو ترميز الملف غير مدعوم. ملفات MKV لا تعمل مباشرة على الآيفون في كثير من الحالات؛ يمكنك تجربة VLC أو Infuse:`, [
+    ["حاول مرة ثانية", () => playAt(qIndex)],
     ["افتح في VLC", () => (location.href = vlcLink(url)), true],
     ["افتح في Infuse", () => (location.href = `infuse://x-callback-url/play?url=${encodeURIComponent(url)}`)],
     ["انسخ الرابط", async () => {
@@ -530,6 +553,7 @@ export function close() {
   ui.upnext.hidden = true;
   ui.banner.hidden = true;
   clearInterval(saveTimer);
+  opening++;
   session++;
   current = null;
   reset();
@@ -587,7 +611,7 @@ function toggleFullscreen() {
   if (document.fullscreenElement) {
     document.exitFullscreen().catch(() => {});
   } else if (box.requestFullscreen) {
-    box.requestFullscreen().catch(() => {});
+    box.requestFullscreen().catch(() => video.webkitEnterFullscreen?.());
   } else {
     video.webkitEnterFullscreen?.();
   }
@@ -612,6 +636,9 @@ function render() {
 
 ["timeupdate", "play", "pause", "durationchange", "progress"].forEach((e) => video.addEventListener(e, render));
 video.addEventListener("waiting", () => (ui.spin.hidden = false));
+video.addEventListener("error", () => {
+  if (current?.started) { ui.spin.hidden = true; showFailure(fileUrl(current.urls)); }
+});
 video.addEventListener("playing", () => {
   ui.spin.hidden = true;
   wake();
