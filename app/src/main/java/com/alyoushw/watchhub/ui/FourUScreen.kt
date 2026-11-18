@@ -127,6 +127,7 @@ private fun FourUCatalogueBrowse(series: Boolean) {
 }
 
 /** 4U series episodes, loaded on demand and played in the app player. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FourUSeriesEpisodes(seriesRow: JsonObject, onBack: () -> Unit) {
     val context = LocalContext.current
