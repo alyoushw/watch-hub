@@ -1,5 +1,5 @@
-import { resolveEntry } from "./sources.js?v=20261118a";
-import { urlsFor, via } from "./xtream.js?v=20261118a";
+import { resolveEntry } from "./sources.js?v=20261118b";
+import { urlsFor, via } from "./xtream.js?v=20261118b";
 let dbPromise, running = false;
 const active = new Map();
 const removed = new Set();

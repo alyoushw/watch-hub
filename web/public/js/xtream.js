@@ -1,6 +1,6 @@
 // The user's Xtream Codes account, reached through the site's proxy (most servers are plain http).
-import { settings, accounts } from "./store.js?v=20261118a";
-import { urls as fourUUrls } from "./fouru.js?v=20261118a";
+import { settings, accounts } from "./store.js?v=20261118b";
+import { urls as fourUUrls } from "./fouru.js?v=20261118b";
 
 export class XtreamError extends Error {}
 

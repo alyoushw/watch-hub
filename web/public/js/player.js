@@ -3,11 +3,11 @@
 // tries supported media here first; VLC remains an explicit option for unsupported files.
 //
 // Safari plays HLS itself; other browsers use hls.js, and MPEG-TS live streams use mpegts.js.
-import { via } from "./xtream.js?v=20261118a";
-import { offlineUrl, addDownload } from "./downloads.js?v=20261118a";
-import { resolveEntry } from "./sources.js?v=20261118a";
-import { settings, history, isFinished, historySaved } from "./store.js?v=20261118a";
-import * as cloud from "./cloud.js?v=20261118a";
+import { via } from "./xtream.js?v=20261118b";
+import { offlineUrl, addDownload } from "./downloads.js?v=20261118b";
+import { resolveEntry } from "./sources.js?v=20261118b";
+import { settings, history, isFinished, historySaved } from "./store.js?v=20261118b";
+import * as cloud from "./cloud.js?v=20261118b";
 
 const HLS_JS = "https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js";
 const MPEGTS_JS = "https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js";
@@ -97,7 +97,9 @@ export function fmt(sec) {
 }
 
 const fileUrl = (urls) => urls.find((u) => !/\.m3u8$/i.test(new URL(u, location.href).pathname)) || urls[0];
-const vlcLink = (url) => `vlc-x-callback://x-callback-url/stream?url=${encodeURIComponent(url)}`;
+const vlcLink = (url) => /Android/i.test(navigator.userAgent)
+  ? `intent://${url.replace(/^https?:\/\//i, "")}#Intent;scheme=${new URL(url).protocol.slice(0, -1)};package=org.videolan.vlc;type=video/*;end`
+  : `vlc-x-callback://x-callback-url/stream?url=${encodeURIComponent(url)}`;
 
 let indTimer;
 function flash(text, level) {
@@ -488,23 +490,68 @@ async function playHere(urls, entry) {
   showFailure(fileUrl(urls));
 }
 
-/** The browser could not play it: offer players that handle any format (MKV, AVI, …). */
+/** A small, bounded read checks the actual media response without exposing the URL/login. */
+async function playbackDiagnosis(url) {
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 8000);
+  let reader;
+  try {
+    const response = await fetch(via(url), { headers: { Range: "bytes=0-65535" }, signal: controller.signal });
+    if (!response.ok) {
+      if (response.status === 401) return "طلب الفيديو مرفوض (HTTP 401). قد يكون الرفض من مفتاح البروكسي أو بيانات الاشتراك؛ لا يثبت ذلك وجود مشكلة ترميز.";
+      if (response.status === 403) return "طلب الفيديو مرفوض (HTTP 403). قد يكون الرفض من البروكسي أو سيرفر الاشتراك؛ لا يثبت ذلك وجود مشكلة ترميز.";
+      if (response.status === 404) return "رابط الحلقة غير موجود لدى المصدر (HTTP 404).";
+      return `تعذّر جلب ملف الفيديو (HTTP ${response.status}).`;
+    }
+    reader = response.body?.getReader();
+    if (!reader) return "وصل رد من المصدر دون بيانات فيديو.";
+    const bytes = new Uint8Array(65536); let size = 0;
+    while (size < bytes.length) {
+      const { value, done } = await reader.read(); if (done) break;
+      const count = Math.min(value.length, bytes.length - size); bytes.set(value.subarray(0, count), size); size += count;
+    }
+    if (!size) return "وصل رد من المصدر لكن ملف الفيديو فارغ.";
+    const type = response.headers.get("content-type") || "";
+    if (/text\/html|application\/json/i.test(type)) return "المصدر أعاد صفحة أو رسالة بدل ملف فيديو.";
+    if (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {
+      const codecs = [];
+      const labels = { "V_MPEG4/ISO/AVC": "H.264", "V_MPEGH/ISO/HEVC": "HEVC / H.265", "V_VP9": "VP9", "V_AV1": "AV1", "A_AAC": "AAC", "A_AC3": "AC3", "A_EAC3": "E-AC3", "A_DTS": "DTS", "A_OPUS": "Opus" };
+      // CodecID is an EBML string element (0x86), with a short string length.
+      for (let i = 4; i + 2 < size; i++) if (bytes[i] === 0x86 && bytes[i + 1] >= 0x80) {
+        const length = bytes[i + 1] & 0x7f;
+        if (length && length <= 32 && i + 2 + length <= size) {
+          const id = new TextDecoder().decode(bytes.subarray(i + 2, i + 2 + length));
+          if (typeof labels[id] === "string" && !codecs.includes(labels[id])) codecs.push(labels[id]);
+        }
+      }
+      return `وصل ملف Matroska/WebM من السيرفر (HTTP ${response.status})${codecs.length ? `؛ الترميزات: ${codecs.join("، ")}` : ""}. وصول الملف لا يضمن أن المتصفح يستطيع تشغيل ترميزاته.`;
+    }
+    return `وصلت بيانات من المصدر (HTTP ${response.status})، لكن المتصفح لم يبدأ تشغيلها. لا يمكن تحديد الترميز من هذه القراءة القصيرة.`;
+  } catch {
+    return "لم يكتمل فحص رابط الفيديو؛ قد يكون الاتصال بطيئًا أو متوقفًا. لم نتأكد من وجود مشكلة ترميز.";
+  } finally { clearTimeout(timer); await reader?.cancel().catch(() => {}); controller.abort(); }
+}
+
 function showFailure(url) {
   if (!url) return panel("لم يصل رابط تشغيل من المصدر. افتح صفحة العمل واختر السيرفر مرة ثانية.", [["إغلاق", close]]);
   const ext = (new URL(url, location.href).pathname.split(".").pop() || "").toUpperCase();
-  const msg = panel(`تعذّر التشغيل${ext ? ` (${ext})` : ""}. قد يكون الرابط غير متاح أو ترميز الملف غير مدعوم. ملفات MKV لا تعمل مباشرة على الآيفون في كثير من الحالات؛ يمكنك تجربة VLC أو Infuse:`, [
+  const ios = isIOS(), mine = session;
+  saveProgress(true);
+  if (current) current.started = false;
+  reset();
+  const text = `تعذّر التشغيل${ext ? ` (${ext})` : ""}. جاري فحص استجابة المصدر…`;
+  const buttons = [
     ["حاول مرة ثانية", () => playAt(qIndex)],
     ["افتح في VLC", () => (location.href = vlcLink(url)), true],
-    ["افتح في Infuse", () => (location.href = `infuse://x-callback-url/play?url=${encodeURIComponent(url)}`)],
+    ...(ios ? [["افتح في Infuse", () => (location.href = `infuse://x-callback-url/play?url=${encodeURIComponent(url)}`)]] : []),
     ["انسخ الرابط", async () => {
-      try {
-        await navigator.clipboard.writeText(url);
-        msg.textContent = "✓ نسخنا الرابط. الصقه في أي مشغّل فيديو (في VLC: Network ← Network Stream).";
-      } catch {
-        prompt("انسخ الرابط:", url);
-      }
+      try { await navigator.clipboard.writeText(url); msg.textContent = "✓ نُسخ الرابط؛ يمكنك فتحه في مشغّل فيديو."; }
+      catch { prompt("انسخ الرابط:", url); }
     }],
-  ]);
+  ];
+  const msg = panel(text, buttons);
+  playbackDiagnosis(url).then((diagnosis) => {
+    if (mine === session && msg.isConnected) msg.textContent = `تعذّر التشغيل${ext ? ` (${ext})` : ""}. ${diagnosis}${ios && ext === "MKV" ? " دعم MKV على الآيفون محدود؛ يمكنك تجربة مشغّل خارجي." : ""}`;
+  });
 }
 
 /**
