@@ -4,7 +4,10 @@ import android.content.Context
 import java.io.File
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
@@ -27,6 +30,7 @@ object FourU {
     val account = XtreamAccount(MEDIA, "4u", "4u", "fouru", "4U")
     private const val ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzkzNzkzMjEyLCJleHAiOjE5NTE0NzMyMTJ9.iqm9WGbraabiykSNLiOnk6LS9kLusprYI0Lox568jXw"
     private val http = Net.streams.newBuilder().callTimeout(45, TimeUnit.SECONDS).build()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var liveCache: List<FourUChannel>? = null
 
     @Volatile private var cacheDir: File? = null
@@ -87,15 +91,27 @@ object FourU {
     }
 
     /** Index each kind once; another title no longer downloads the same 10–16 MB list. */
-    suspend fun matches(series: Boolean, names: List<String>, year: Int): List<JsonObject> = withContext(Dispatchers.IO) {
-        val keys = names.map { XtreamApi.normalizeTitle(it) }.filter { it.length >= 2 }.toSet()
-        if (keys.isEmpty()) return@withContext emptyList()
+    /** The movie or series list, downloaded once and reused from memory/disk for 6 hours. */
+    private suspend fun catalogueRows(series: Boolean): JsonArray {
         val action = if (series) "get_series" else "get_vod_streams"
-        val rows = cached(action, TimeUnit.HOURS.toMillis(6)) {
+        return cached(action, TimeUnit.HOURS.toMillis(6)) {
             val raw = catalog(action) as? JsonArray ?: throw XtreamException("تعذّر قراءة محتوى 4U")
             val fields = setOf("name", "series_id", "stream_id", "cover", "stream_icon", "releaseDate", "release_date", "container_extension")
             JsonArray(raw.mapNotNull { it as? JsonObject }.map { JsonObject(it.filterKeys { key -> key in fields }) })
         } as JsonArray
+    }
+
+    /**
+     * Fetches the 4U list in the background so opening its page later is instant. Fire-and-forget
+     * on a scope of its own, so moving between screens does not cancel the download; the 6-hour
+     * cache means it runs at most once per list per session.
+     */
+    fun prefetch(series: Boolean) { scope.launch { runCatching { catalogueRows(series) } } }
+
+    suspend fun matches(series: Boolean, names: List<String>, year: Int): List<JsonObject> = withContext(Dispatchers.IO) {
+        val keys = names.map { XtreamApi.normalizeTitle(it) }.filter { it.length >= 2 }.toSet()
+        if (keys.isEmpty()) return@withContext emptyList()
+        val rows = catalogueRows(series)
         val old = indexes[series]
         val index = if (old != null && old.first === rows) old.second else rows.mapNotNull { it as? JsonObject }
             .groupBy { XtreamApi.normalizeTitle(it.text4u("name")) }.also { indexes[series] = rows to it }

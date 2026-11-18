@@ -350,6 +350,8 @@ class DetailViewModel(
                     val saved = container.store.data.value.watchlist.firstOrNull { it.key == key }
                     if (saved != null) container.store.upsertWatch(info.toWatchItem(saved, links))
                     viewModelScope.launch { similar = preciseSimilar(info) }
+                    // Warm the 4U list in the background so its button opens instantly, not after ~30s.
+                    if (type == MediaType.MOVIE || type == MediaType.TV) com.alyoushw.watchhub.data.FourU.prefetch(type == MediaType.TV)
                     DetailState.Loaded(info)
                 }
             } catch (e: ApiException) {
