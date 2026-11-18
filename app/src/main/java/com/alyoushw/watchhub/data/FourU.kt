@@ -29,7 +29,7 @@ object FourU {
     const val MEDIA = "$BASE/media-4u-9d7f2c"
     val account = XtreamAccount(MEDIA, "4u", "4u", "fouru", "4U")
     private const val ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzkzNzkzMjEyLCJleHAiOjE5NTE0NzMyMTJ9.iqm9WGbraabiykSNLiOnk6LS9kLusprYI0Lox568jXw"
-    private val http = Net.streams.newBuilder().callTimeout(45, TimeUnit.SECONDS).build()
+    private val http = Net.streams.newBuilder().callTimeout(180, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var liveCache: List<FourUChannel>? = null
 
