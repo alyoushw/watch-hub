@@ -350,6 +350,8 @@ class DetailViewModel(
                     val saved = container.store.data.value.watchlist.firstOrNull { it.key == key }
                     if (saved != null) container.store.upsertWatch(info.toWatchItem(saved, links))
                     viewModelScope.launch { similar = preciseSimilar(info) }
+                    // Warm the 4U list in the background so its button opens instantly, not after ~30s.
+                    if (type == MediaType.MOVIE || type == MediaType.TV) com.alyoushw.watchhub.data.FourU.prefetch(type == MediaType.TV)
                     DetailState.Loaded(info)
                 }
             } catch (e: ApiException) {
@@ -484,11 +486,14 @@ private fun DetailContent(
                         titles = listOf(info.title, info.searchTitle),
                         year = info.year,
                         onOpenSeries = onOpenXtreamSeries,
-                        onOpenFourU = { onOpenSources(info.sourceLookup().copy(providerId = "4u")) },
                     )
                 }
             }
         }
+
+        item { Column(Modifier.padding(horizontal = 16.dp)) {
+            SourceWatchButton(info.sourceLookup().copy(providerId = "4u"), onOpenSources, Modifier.fillMaxWidth(), label = "4U")
+        } }
 
         if (!isAnime) {
             item { WatchButtons(info, links, subscribedKeys, onWatch) }
