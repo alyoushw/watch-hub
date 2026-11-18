@@ -1,6 +1,6 @@
 // The Movie Database: titles, details and where each one streams (via JustWatch).
-import { settings } from "./store.js?v=20261118b";
-import { endpoint as sourceEndpoint, read as sourceRead } from "./sources.js?v=20261118b";
+import { settings } from "./store.js?v=20261118c";
+import { endpoint as sourceEndpoint, read as sourceRead } from "./sources.js?v=20261118c";
 let configured = false;
 export const ready = () => !!settings.tmdbKey || configured;
 export async function configure() { try { configured = !!(await sourceRead("config")).tmdbConfigured; } catch { configured = false; } }

@@ -1,6 +1,6 @@
 // The user's Xtream Codes account, reached through the site's proxy (most servers are plain http).
-import { settings, accounts } from "./store.js?v=20261118b";
-import { urls as fourUUrls } from "./fouru.js?v=20261118b";
+import { settings, accounts } from "./store.js?v=20261118c";
+import { urls as fourUUrls } from "./fouru.js?v=20261118c";
 
 export class XtreamError extends Error {}
 
@@ -39,15 +39,20 @@ function account(acc) {
 }
 
 /** The account an item or history entry belongs to. */
-const accountOf = (x) => accounts.get(x && x.accountId) || accounts.active();
+const accountOf = (x) => {
+  if (!x?.accountId) return accounts.active();
+  const selected = accounts.get(x.accountId);
+  if (!selected) throw new XtreamError("حساب هذا المحتوى غير موجود على هذا المتصفح؛ افتح حسابه الصحيح من الإعدادات");
+  return selected;
+};
 
 /**
  * The free server sleeps when unused; while it wakes up, the host answers with its own
  * loading page instead of ours. Wait and retry (about a minute at most) until the proxy answers.
  */
-async function fetchWaking(href) {
+async function fetchWaking(href, signal) {
   for (let i = 0; ; i++) {
-    const res = await fetch(href);
+    const res = await fetch(href, { signal });
     const type = res.headers.get("content-type") || "";
     const ours = res.headers.has("access-control-allow-origin");
     if (ours || !type.includes("text/html") || !settings.proxy || i >= 20) return res;
@@ -55,7 +60,7 @@ async function fetchWaking(href) {
   }
 }
 
-async function call(action, params = {}, override) {
+async function call(action, params = {}, override, signal) {
   const a = account(override);
   const url = new URL(`${a.host}/player_api.php`);
   url.searchParams.set("username", a.user);
@@ -65,7 +70,7 @@ async function call(action, params = {}, override) {
 
   let res;
   try {
-    res = await fetchWaking(via(url.href));
+    res = await fetchWaking(via(url.href), signal);
   } catch {
     throw new XtreamError(settings.proxy
       ? "ما قدرنا نوصل للبروكسي، تأكد من رابطه في الإعدادات"
@@ -123,6 +128,7 @@ function toItem(kind, o, accountId) {
     name: text(o.name) || text(o.title) || id,
     image: image && image.startsWith("http") ? image : null,
     ext: text(o.container_extension),
+    directSource: text(o.direct_source),
     categoryId: text(o.category_id),
     num: Number(o.num) || null,
     tmdb: text(o.tmdb) || text(o.tmdb_id),
@@ -132,6 +138,7 @@ function toItem(kind, o, accountId) {
 }
 
 const cache = new Map();
+const seriesDetails = new Map();
 
 /** Every item of a kind, loaded once per login. */
 export async function all(kind, acc) {
@@ -150,6 +157,7 @@ export async function all(kind, acc) {
 
 export function clearCache() {
   cache.clear();
+  seriesDetails.clear();
 }
 
 function decode64(s) {
@@ -169,8 +177,8 @@ export async function shortEpg(streamId, acc) {
   }));
 }
 
-export async function series(id, acc) {
-  const root = await call("get_series_info", { series_id: id }, acc);
+export async function series(id, acc, signal) {
+  const root = await call("get_series_info", { series_id: id }, acc, signal);
   const info = (root && root.info) || {};
   const groups = root && root.episodes;
   const raw = Array.isArray(groups) ? groups.flat() : Object.values(groups || {}).flat();
@@ -183,10 +191,15 @@ export async function series(id, acc) {
       number: Number(e.episode_num) || 0,
       title: text(e.title) || `الحلقة ${e.episode_num}`,
       ext: text(e.container_extension),
+      directSource: text(e.direct_source),
       image: e.info && typeof e.info.movie_image === "string" && e.info.movie_image.startsWith("http") ? e.info.movie_image : null,
     }))
     .sort((a, b) => a.season - b.season || a.number - b.number);
-  return { name: text(info.name) || "", plot: text(info.plot), cover: text(info.cover), episodes };
+  const result = { name: text(info.name) || "", plot: text(info.plot), cover: text(info.cover), episodes };
+  const a = account(acc);
+  if (seriesDetails.size >= 16) seriesDetails.clear();
+  seriesDetails.set(`${a.id}:${id}`, { at: Date.now(), result });
+  return result;
 }
 
 function streamUrl(acc, type, file) {
@@ -197,24 +210,30 @@ function streamUrl(acc, type, file) {
 /** Links to try in order. Live: HLS (works everywhere, iPhone too), then MPEG-TS for computers. */
 export function playUrls(item) {
   const acc = accountOf(item);
-  if (item.kind === "live") return [streamUrl(acc, "live", `${item.id}.m3u8`), streamUrl(acc, "live", `${item.id}.ts`)];
-  if (item.kind === "movie") return vodUrls(acc, "movie", item.id, item.ext);
+  if (item.kind === "live") return withDirect(acc, item.directSource, [streamUrl(acc, "live", `${item.id}.m3u8`), streamUrl(acc, "live", `${item.id}.ts`)]);
+  if (item.kind === "movie") return vodUrls(acc, "movie", item.id, item.ext, item.directSource);
   return [];
 }
 
 /** [acc] is the account the series was opened from. */
-export const episodeUrls = (ep, acc) => vodUrls(acc || accountOf(ep), "series", ep.id, ep.ext);
+export const episodeUrls = (ep, acc) => vodUrls(acc || accountOf(ep), "series", ep.id, ep.ext, ep.directSource);
 
 /**
  * The file as the provider stores it, plus the same title as HLS (many panels serve that too).
  * Safari cannot open MKV or AVI at all, so there the HLS link goes first.
  */
-function vodUrls(acc, type, id, ext) {
+function withDirect(acc, value, fallback) {
+  let direct;
+  try { if (value && /^(https?:\/\/|\/)/i.test(value)) { const u = new URL(value, account(acc).host); if (/^https?:$/.test(u.protocol)) direct = u.href; } } catch { /* use the canonical provider URL */ }
+  return [...new Set([...(direct ? [direct] : []), ...fallback])];
+}
+
+function vodUrls(acc, type, id, ext, directSource) {
   const file = streamUrl(acc, type, `${id}.${ext || "mp4"}`);
   const hls = streamUrl(acc, type, `${id}.m3u8`);
   const playable = /^(mp4|m4v|mov)$/i.test(ext || "mp4");
   const safari = document.createElement("video").canPlayType("application/vnd.apple.mpegurl") !== "";
-  return !playable && safari ? [hls, file] : [file, hls];
+  return withDirect(acc, directSource, !playable && safari ? [hls, file] : [file, hls]);
 }
 
 /** "AR| The Batman (2022) 4K" → "the batman"; folds Arabic letter variants. Same rules as the Android app. */
@@ -248,12 +267,12 @@ export async function findMatch(kind, tmdbId, titles, year, acc) {
 const key = (accountId, kind, id) => `${accountId}:${kind}:${id}`;
 
 export const entryLive = (c) => ({
-  key: key(c.accountId, "live", c.id), kind: "live", itemId: c.id, title: c.name, image: c.image, accountId: c.accountId,
+  key: key(c.accountId, "live", c.id), kind: "live", itemId: c.id, title: c.name, image: c.image, accountId: c.accountId, directSource: c.directSource,
 });
 
 export const entryMovie = (m, tmdbId) => ({
   key: key(m.accountId, "movie", m.id), kind: "movie", itemId: m.id, title: m.name, image: m.image, ext: m.ext,
-  accountId: m.accountId, tmdbId: tmdbId || Number(m.tmdb) || null,
+  directSource: m.directSource, accountId: m.accountId, tmdbId: tmdbId || Number(m.tmdb) || null,
 });
 
 export const entryEpisode = (acc, seriesId, seriesName, cover, ep) => ({
@@ -264,6 +283,9 @@ export const entryEpisode = (acc, seriesId, seriesName, cover, ep) => ({
   subtitle: `الموسم ${ep.season} · الحلقة ${ep.number}` + (ep.title && !ep.title.startsWith("الحلقة") ? ` · ${ep.title}` : ""),
   image: ep.image || cover,
   ext: ep.ext,
+  directSource: ep.directSource,
+  season: ep.season,
+  episodeNumber: ep.number,
   seriesId,
   accountId: acc.id,
 });
@@ -273,9 +295,36 @@ export const episodeKey = (acc, ep) => key(acc.id, "episode", ep.id);
 /** Links for a history entry, from the account it was watched on. */
 export function urlsFor(e) {
   if (e.fourURef) return fourUUrls(e.fourURef);
-  if (e.kind === "live") return playUrls({ kind: "live", id: e.itemId, accountId: e.accountId });
-  if (e.kind === "movie") return playUrls({ kind: "movie", id: e.itemId, ext: e.ext, accountId: e.accountId });
-  return episodeUrls({ id: e.itemId, ext: e.ext, accountId: e.accountId });
+  if (e.kind === "live") return playUrls({ kind: "live", id: e.itemId, accountId: e.accountId, directSource: e.directSource });
+  if (e.kind === "movie") return playUrls({ kind: "movie", id: e.itemId, ext: e.ext, accountId: e.accountId, directSource: e.directSource });
+  return episodeUrls({ id: e.itemId, ext: e.ext, accountId: e.accountId, directSource: e.directSource });
 }
 
 /** Searches every account's channels, films and series by name (for the search page). */
+
+/** Refresh VOD metadata for history/resume instead of trusting an old file suffix forever. */
+export async function resolvePlayback(entry, supplied = []) {
+  const a = accountOf(entry); // Never silently substitute a different provider's account.
+  if (!a) return supplied;
+  if (entry.kind === "live") return urlsFor(entry);
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    if (entry.kind === "episode" && entry.seriesId) {
+      const old = seriesDetails.get(`${a.id}:${entry.seriesId}`);
+      const info = old && Date.now() - old.at < 30000 ? old.result : await series(entry.seriesId, a, controller.signal);
+      const episode = info.episodes.find((e) => e.id === String(entry.itemId));
+      if (episode) return episodeUrls({ ...episode, ext: episode.ext || entry.ext, directSource: episode.directSource || entry.directSource }, a);
+      // The provider may have replaced an episode ID; match only its exact season/number.
+      const named = /الموسم\s*(\d+).*?الحلقة\s*(\d+)/.exec(entry.subtitle || "");
+      const season = Number(entry.season || named?.[1]), number = Number(entry.episodeNumber || named?.[2]);
+      const same = info.episodes.filter((e) => e.season === season && e.number === number);
+      if (same.length === 1) return episodeUrls({ ...same[0], ext: same[0].ext || entry.ext }, a);
+    } else if (entry.kind === "movie") {
+      const root = await call("get_vod_info", { vod_id: entry.itemId }, a, controller.signal);
+      const row = root?.movie_data;
+      if (row && String(row.stream_id || entry.itemId) === String(entry.itemId)) return vodUrls(a, "movie", entry.itemId, text(row.container_extension) || entry.ext, text(row.direct_source) || entry.directSource);
+    }
+  } catch { /* Some panels do not implement detail reads; retain the provided file URL. */ }
+  finally { clearTimeout(timer); }
+  return supplied.length ? supplied : urlsFor(entry);
+}

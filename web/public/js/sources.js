@@ -1,4 +1,4 @@
-import { settings } from "./store.js?v=20261118b";
+import { settings } from "./store.js?v=20261118c";
 export const PROVIDERS = [
   ["tuktuk", "TukTuk", "https://zx33.tuktuk-sa.online/"],
   ["moviz-time", "Moviz Time", "https://moviz-time.buzz/"],

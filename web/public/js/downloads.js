@@ -1,5 +1,5 @@
-import { resolveEntry } from "./sources.js?v=20261118b";
-import { urlsFor, via } from "./xtream.js?v=20261118b";
+import { resolveEntry } from "./sources.js?v=20261118c";
+import { urlsFor, via, resolvePlayback } from "./xtream.js?v=20261118c";
 let dbPromise, running = false;
 const active = new Map();
 const removed = new Set();
@@ -53,7 +53,7 @@ async function transfer(item) {
   const key = item.entry.key, controller = new AbortController(); active.set(key, controller);
   let received = 0, buffers = [];
   try {
-    const urls = item.entry.animeRef || item.entry.sourceRef || item.entry.fourURef ? await resolveEntry(item.entry) : item.urls?.length ? item.urls : urlsFor(item.entry);
+    const urls = item.entry.animeRef || item.entry.sourceRef || item.entry.fourURef ? await resolveEntry(item.entry) : await resolvePlayback(item.entry, item.urls?.length ? item.urls : urlsFor(item.entry));
     const raw = urls[0]; if (!raw || /\.m3u8(?:\?|$)|\.ts(?:\?|$)/i.test(new URL(raw).pathname)) throw new Error("اختر سيرفر MP4 لتنزيل الفيديو");
     const response = await fetch(via(raw), { headers: item.bytes ? { Range: `bytes=${item.bytes}-`, ...(item.etag ? { "If-Range": item.etag } : {}) } : {}, signal: controller.signal });
     if (!response.ok) throw new Error(`تعذّر التنزيل (${response.status})`);

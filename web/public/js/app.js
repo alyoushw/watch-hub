@@ -1,16 +1,16 @@
 // Watch Hub on the web: the same hub as the Android app, for iPhone, iPad and computers.
-import * as tmdb from "./tmdb.js?v=20261118b";
-import * as foryou from "./foryou.js?v=20261118b";
-import * as xt from "./xtream.js?v=20261118b";
-import * as fouru from "./fouru.js?v=20261118b";
-import * as features from "./features.js?v=20261118b";
-import * as sourceApi from "./sources.js?v=20261118b";
-import { restoreDownloads, addDownload } from "./downloads.js?v=20261118b";
-import { play, fmt } from "./player.js?v=20261118b";
-import * as smart from "./smart.js?v=20261118b";
-import { fillTranslated } from "./translate.js?v=20261118b";
-import * as cloud from "./cloud.js?v=20261118b";
-import { settings, watchlist, favorites, folders, recent, xtreamReady, history, isFinished, progressOf, accounts, restoreHistory } from "./store.js?v=20261118b";
+import * as tmdb from "./tmdb.js?v=20261118c";
+import * as foryou from "./foryou.js?v=20261118c";
+import * as xt from "./xtream.js?v=20261118c";
+import * as fouru from "./fouru.js?v=20261118c";
+import * as features from "./features.js?v=20261118c";
+import * as sourceApi from "./sources.js?v=20261118c";
+import { restoreDownloads, addDownload } from "./downloads.js?v=20261118c";
+import { play, fmt } from "./player.js?v=20261118c";
+import * as smart from "./smart.js?v=20261118c";
+import { fillTranslated } from "./translate.js?v=20261118c";
+import * as cloud from "./cloud.js?v=20261118c";
+import { settings, watchlist, favorites, folders, recent, xtreamReady, history, isFinished, progressOf, accounts, restoreHistory } from "./store.js?v=20261118c";
 
 const view = document.getElementById("view");
 // Explicit recovery link restores the built-in proxy after connection troubleshooting.
@@ -1518,7 +1518,7 @@ function bindContinue() {
     if (!e) return;
     if (["episode", "anime_episode"].includes(e.kind) && isFinished(e) && e.seriesId) openEntryPage(e);
     else if (sourceApi.reference(e.sourceRef)?.providerId === "tpb") openEntryPage(e);
-    else play(e.animeRef || e.sourceRef ? [] : xt.urlsFor(e), e);
+    else play([], e);
   });
   root.addEventListener("contextmenu", (ev) => {
     const card = ev.target.closest("[data-k]");
@@ -1900,7 +1900,7 @@ restoreHistory().finally(async () => {
 
 // Open instantly from the device's copy, even while the free server wakes up.
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("sw.js?v=20261118b").catch(() => {});
+  navigator.serviceWorker.register("sw.js?v=20261118c").catch(() => {});
 }
 
 // ---------- ✨ مختار لك ----------

@@ -1,9 +1,9 @@
 // "✨ مختار لك": learns the user's taste from what they watch (the watch history and their list)
 // and suggests titles with the reason they fit: "لأنك شفت «X» · دراما، غموض · كوري".
 // Same idea as the Android app (data/Recommender.kt). "مو لي" shows less of that kind.
-import * as tmdb from "./tmdb.js?v=20261118b";
-import { history, watchlist, isFinished } from "./store.js?v=20261118b";
-import { normalizeTitle } from "./xtream.js?v=20261118b";
+import * as tmdb from "./tmdb.js?v=20261118c";
+import { history, watchlist, isFinished } from "./store.js?v=20261118c";
+import { normalizeTitle } from "./xtream.js?v=20261118c";
 
 const GENRES = {
   28: "أكشن", 12: "مغامرة", 16: "رسوم متحركة", 35: "كوميدي", 80: "جريمة", 99: "وثائقي", 18: "دراما", 10751: "عائلي",

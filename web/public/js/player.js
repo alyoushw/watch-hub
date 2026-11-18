@@ -3,11 +3,11 @@
 // tries supported media here first; VLC remains an explicit option for unsupported files.
 //
 // Safari plays HLS itself; other browsers use hls.js, and MPEG-TS live streams use mpegts.js.
-import { via } from "./xtream.js?v=20261118b";
-import { offlineUrl, addDownload } from "./downloads.js?v=20261118b";
-import { resolveEntry } from "./sources.js?v=20261118b";
-import { settings, history, isFinished, historySaved } from "./store.js?v=20261118b";
-import * as cloud from "./cloud.js?v=20261118b";
+import { via, resolvePlayback } from "./xtream.js?v=20261118c";
+import { offlineUrl, addDownload } from "./downloads.js?v=20261118c";
+import { resolveEntry } from "./sources.js?v=20261118c";
+import { settings, history, isFinished, historySaved } from "./store.js?v=20261118c";
+import * as cloud from "./cloud.js?v=20261118c";
 
 const HLS_JS = "https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js";
 const MPEGTS_JS = "https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js";
@@ -252,8 +252,12 @@ export async function play(urls, entry, list = null, index = 0) {
   if (downloaded) { urls = [downloaded]; list = null; }
   queue = list && list.length ? list : [{ urls, entry }];
   qIndex = list && list.length ? Math.max(0, Math.min(index, list.length - 1)) : 0;
-  if (!downloaded && isIOS() && settings.vlcOnIos === true && (entry.animeRef || entry.sourceRef || entry.fourURef)) {
-    try { urls = await resolveEntry(entry); if (request !== opening) return; } catch (e) { if (request !== opening) return; openOverlay(entry, entry.kind === "live"); ui.spin.hidden = true; errorEl.hidden = false; errorEl.textContent = e.message; return; }
+  if (!downloaded && isIOS() && settings.vlcOnIos === true) {
+    try {
+      if (entry.animeRef || entry.sourceRef || entry.fourURef) urls = await resolveEntry(entry);
+      else if (entry.accountId) urls = await resolvePlayback(entry, urls);
+      if (request !== opening) return;
+    } catch (e) { if (request !== opening) return; openOverlay(entry, entry.kind === "live"); ui.spin.hidden = true; errorEl.hidden = false; errorEl.textContent = e.message; return; }
   }
   if (!downloaded && isIOS() && settings.vlcOnIos === true) {
     history.save(entry, true);
@@ -470,6 +474,9 @@ async function playHere(urls, entry) {
   else if (entry.animeRef || entry.sourceRef || entry.fourURef) {
     try { urls = await resolveEntry(entry); if (mine !== session) return; current.urls = urls; }
     catch (e) { if (mine !== session) return; ui.spin.hidden = true; errorEl.hidden = false; errorEl.textContent = e.message; return; }
+  } else if (entry.accountId) {
+    try { urls = await resolvePlayback(entry, urls); if (mine !== session) return; current.urls = urls; }
+    catch (error) { if (mine !== session) return; ui.spin.hidden = true; errorEl.hidden = false; errorEl.textContent = error.message; return; }
   }
   for (const url of urls) {
     try {
@@ -495,11 +502,16 @@ async function playbackDiagnosis(url) {
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 8000);
   let reader;
   try {
-    const response = await fetch(via(url), { headers: { Range: "bytes=0-65535" }, signal: controller.signal });
+    let response = await fetch(via(url), { headers: { Range: "bytes=0-65535" }, signal: controller.signal });
+    // Some panels reject a Range probe despite accepting an ordinary video GET.
+    if ([404, 405, 416].includes(response.status)) {
+      await response.body?.cancel();
+      response = await fetch(via(url), { signal: controller.signal });
+    }
     if (!response.ok) {
       if (response.status === 401) return "طلب الفيديو مرفوض (HTTP 401). قد يكون الرفض من مفتاح البروكسي أو بيانات الاشتراك؛ لا يثبت ذلك وجود مشكلة ترميز.";
       if (response.status === 403) return "طلب الفيديو مرفوض (HTTP 403). قد يكون الرفض من البروكسي أو سيرفر الاشتراك؛ لا يثبت ذلك وجود مشكلة ترميز.";
-      if (response.status === 404) return "رابط الحلقة غير موجود لدى المصدر (HTTP 404).";
+      if (response.status === 404) return "المصدر أعاد HTTP 404 عند طلب رابط الملف؛ لم يصل فيديو في هذا الطلب.";
       return `تعذّر جلب ملف الفيديو (HTTP ${response.status}).`;
     }
     reader = response.body?.getReader();
