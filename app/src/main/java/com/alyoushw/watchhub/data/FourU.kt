@@ -1,8 +1,14 @@
 package com.alyoushw.watchhub.data
 
+import android.content.Context
+import java.io.File
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -21,8 +27,42 @@ object FourU {
     val account = XtreamAccount(MEDIA, "4u", "4u", "fouru", "4U")
     private const val ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzkzNzkzMjEyLCJleHAiOjE5NTE0NzMyMTJ9.iqm9WGbraabiykSNLiOnk6LS9kLusprYI0Lox568jXw"
     private val http = Net.streams.newBuilder().callTimeout(45, TimeUnit.SECONDS).build()
-    private var liveCache: List<FourUChannel>? = null
-    private val titleMatches = ConcurrentHashMap<String, JsonObject>()
+    @Volatile private var liveCache: List<FourUChannel>? = null
+
+    @Volatile private var cacheDir: File? = null
+    private data class Cached(val at: Long, val value: JsonElement)
+    private val saved = ConcurrentHashMap<String, Cached>()
+    private val locks = ConcurrentHashMap<String, Mutex>()
+    private val indexes = ConcurrentHashMap<Boolean, Pair<JsonArray, Map<String, List<JsonObject>>>>()
+
+    fun initialize(context: Context) { cacheDir = File(context.cacheDir, "fouru-v1") }
+
+    /** Reuse complete, validated lists across title pages and app restarts. Never cache errors. */
+    private suspend fun cached(key: String, ttl: Long, load: suspend () -> JsonElement): JsonElement = withContext(Dispatchers.IO) {
+        locks.getOrPut(key) { Mutex() }.withLock {
+            val now = System.currentTimeMillis()
+            saved[key]?.takeIf { now - it.at in 0..ttl }?.let { return@withLock it.value }
+            val file = cacheDir?.let { File(it, "$key.json") }
+            if (file != null && now - file.lastModified() in 0..ttl && file.length() in 1..(32L * 1024 * 1024)) {
+                runCatching { Json.parseToJsonElement(file.readText()) }.getOrNull()?.takeIf { it is JsonArray }?.let {
+                    saved[key] = Cached(file.lastModified(), it)
+                    return@withLock it
+                }
+            }
+            val value = load()
+            if (value !is JsonArray) throw XtreamException("تعذّر قراءة قائمة 4U")
+            saved[key] = Cached(System.currentTimeMillis(), value)
+            runCatching {
+                if (file != null) {
+                    file.parentFile?.mkdirs()
+                    val temp = File(file.parentFile, "$key.tmp")
+                    temp.writeText(value.toString())
+                    if (!temp.renameTo(file)) temp.delete()
+                }
+            }
+            value
+        }
+    }
 
     private suspend fun read(url: String, publicRead: Boolean = false): JsonElement = withContext(Dispatchers.IO) {
         val request = Request.Builder().url(url).apply {
@@ -46,76 +86,59 @@ object FourU {
         return read(url.build().toString())
     }
 
-    /** Read one title at a time and stop at the match, instead of waiting for the entire catalogue. */
-    @OptIn(ExperimentalSerializationApi::class)
+    /** Index each kind once; another title no longer downloads the same 10–16 MB list. */
     suspend fun matches(series: Boolean, names: List<String>, year: Int): List<JsonObject> = withContext(Dispatchers.IO) {
         val keys = names.map { XtreamApi.normalizeTitle(it) }.filter { it.length >= 2 }.toSet()
         if (keys.isEmpty()) return@withContext emptyList()
-        val cacheKey = "$series:$year:${keys.sorted()}"
-        titleMatches[cacheKey]?.let { return@withContext listOf(it) }
         val action = if (series) "get_series" else "get_vod_streams"
-        val url = "$MEDIA/player_api.php".toHttpUrl().newBuilder()
-            .addQueryParameter("username", "4u").addQueryParameter("password", "4u")
-            .addQueryParameter("action", action).build()
-        try {
-            http.newCall(Request.Builder().url(url).build()).execute().use { response ->
-                if (!response.isSuccessful) throw XtreamException("تعذّر الاتصال بـ4U (${response.code})")
-                val body = response.body ?: throw XtreamException("لم تصل بيانات 4U")
-                var bytes = 0L
-                val input = object : java.io.FilterInputStream(body.byteStream()) {
-                    override fun read(): Int {
-                        val value = super.read()
-                        if (value >= 0 && ++bytes > 32L * 1024 * 1024) throw XtreamException("بيانات 4U أكبر من الحد المسموح")
-                        return value
-                    }
-                    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
-                        val count = super.read(buffer, offset, length)
-                        if (count > 0) bytes += count
-                        if (bytes > 32L * 1024 * 1024) throw XtreamException("بيانات 4U أكبر من الحد المسموح")
-                        return count
-                    }
-                }
-                val found = Json.decodeToSequence<JsonObject>(input, DecodeSequenceMode.ARRAY_WRAPPED).firstOrNull { row ->
-                    val name = row.text4u("name")
-                    val release = Regex("(?:19|20)\\d{2}").find(row.text4u("releaseDate").ifBlank { name })?.value?.toIntOrNull()
-                    row.text4u(if (series) "series_id" else "stream_id").isNotBlank() &&
-                        XtreamApi.normalizeTitle(name) in keys && (year <= 0 || release == null || release == year)
-                }
-                if (found == null) emptyList() else {
-                    if (titleMatches.size > 128) titleMatches.clear()
-                    titleMatches[cacheKey] = found
-                    listOf(found)
-                }
-            }
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-        catch (e: XtreamException) { throw e }
-        catch (_: java.io.InterruptedIOException) { throw XtreamException("استغرق 4U وقتاً طويلاً في الرد؛ حاول مرة ثانية") }
-        catch (_: Exception) { throw XtreamException("تعذّر جلب محتوى 4U؛ تحقق من الاتصال وحاول مرة ثانية") }
+        val rows = cached(action, TimeUnit.HOURS.toMillis(6)) {
+            val raw = catalog(action) as? JsonArray ?: throw XtreamException("تعذّر قراءة محتوى 4U")
+            val fields = setOf("name", "series_id", "stream_id", "cover", "stream_icon", "releaseDate", "release_date", "container_extension")
+            JsonArray(raw.mapNotNull { it as? JsonObject }.map { JsonObject(it.filterKeys { key -> key in fields }) })
+        } as JsonArray
+        val old = indexes[series]
+        val index = if (old != null && old.first === rows) old.second else rows.mapNotNull { it as? JsonObject }
+            .groupBy { XtreamApi.normalizeTitle(it.text4u("name")) }.also { indexes[series] = rows to it }
+        val found = keys.asSequence().flatMap { index[it].orEmpty().asSequence() }.firstOrNull { row ->
+            val release = Regex("(?:19|20)\\d{2}").find(row.text4u("releaseDate").ifBlank { row.text4u("release_date").ifBlank { row.text4u("name") } })?.value?.toIntOrNull()
+            row.text4u(if (series) "series_id" else "stream_id").isNotBlank() && (year <= 0 || release == null || release == year)
+        }
+        listOfNotNull(found)
     }
 
-    suspend fun channels(): List<FourUChannel> {
-        liveCache?.let { return it }
-        val rows = mutableListOf<FourUChannel>()
-        var offset = 0
-        while (true) {
-            val page = read("$BASE/rest/v1/h9ch_26wd?select=id,category_id,name,stream_url,user_agent,referrer&order=id.asc&offset=$offset&limit=1000", true) as? JsonArray
-                ?: throw XtreamException("تعذّر قراءة قنوات 4U")
-            for (element in page) {
-                val row = element as? JsonObject ?: continue
-                val url = row.text4u("stream_url").takeIf { it.startsWith("https://") || it.startsWith("http://") } ?: continue
-                rows += FourUChannel(row.text4u("id"), row.text4u("category_id"), row.text4u("name"), url,
-                    buildMap { row.text4u("user_agent").takeIf { it.isNotBlank() }?.let { put("User-Agent", it) }; row.text4u("referrer").takeIf { it.isNotBlank() }?.let { put("Referer", it) } })
+    suspend fun channels(): List<FourUChannel> = withContext(Dispatchers.IO) {
+        val all = cached("live", TimeUnit.MINUTES.toMillis(15)) {
+            coroutineScope {
+                val rows = mutableListOf<JsonElement>()
+                var offset = 0
+                while (offset <= 100000) {
+                    // Four bounded requests instead of waiting for every page in turn.
+                    val pages = (0 until 4).map { page -> async {
+                        read("$BASE/rest/v1/h9ch_26wd?select=id,category_id,name,stream_url,user_agent,referrer&order=id.asc&offset=${offset + page * 1000}&limit=1000", true) as? JsonArray
+                            ?: throw XtreamException("تعذّر قراءة قنوات 4U")
+                    } }.awaitAll()
+                    var complete = false
+                    for (page in pages) {
+                        rows.addAll(page)
+                        if (page.size < 1000) { complete = true; break }
+                    }
+                    if (complete) return@coroutineScope JsonArray(rows)
+                    offset += 4000
+                }
+                throw XtreamException("قائمة قنوات 4U أكبر من الحد المسموح")
             }
-            if (page.size < 1000) break
-            offset += page.size
-            if (offset > 100000) throw XtreamException("قائمة قنوات 4U أكبر من الحد المسموح")
-        }
-        return rows.distinctBy { it.id }.also { liveCache = it }
+        } as JsonArray
+        all.mapNotNull { element ->
+            val row = element as? JsonObject ?: return@mapNotNull null
+            val url = row.text4u("stream_url").takeIf { it.startsWith("https://") || it.startsWith("http://") } ?: return@mapNotNull null
+            FourUChannel(row.text4u("id"), row.text4u("category_id"), row.text4u("name"), url,
+                buildMap { row.text4u("user_agent").takeIf { it.isNotBlank() }?.let { put("User-Agent", it) }; row.text4u("referrer").takeIf { it.isNotBlank() }?.let { put("Referer", it) } })
+        }.distinctBy { it.id }.also { liveCache = it }
     }
 
     suspend fun liveApi(action: String?, params: Map<String, String>): JsonElement = when (action) {
         "get_live_categories" -> {
-            val rows = read("$BASE/rest/v1/c5tg_84zr?select=id,name&order=id.asc&limit=1000", true) as? JsonArray ?: JsonArray(emptyList())
+            val rows = cached("categories", TimeUnit.MINUTES.toMillis(15)) { read("$BASE/rest/v1/c5tg_84zr?select=id,name&order=id.asc&limit=1000", true) } as JsonArray
             JsonArray(rows.mapNotNull { it as? JsonObject }.map { r -> buildJsonObject { put("category_id", r.text4u("id")); put("category_name", r.text4u("name")) } })
         }
         "get_live_streams" -> JsonArray(channels().filter { params["category_id"] == null || it.categoryId == params["category_id"] }.mapIndexed { index, c ->

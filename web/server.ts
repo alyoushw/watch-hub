@@ -132,8 +132,9 @@ function fourUChannels(): Promise<FourUChannel[]> {
   if (fourULoad) return fourULoad;
   fourULoad = (async () => {
     const rows: FourUChannel[] = [];
-    for (let offset = 0; offset <= 100000; offset += 1000) {
-      const page = await fourURead(`/rest/v1/h9ch_26wd?select=id,category_id,name,stream_url,user_agent,referrer&order=id.asc&limit=1000&offset=${offset}`);
+    for (let offset = 0; offset <= 100000; offset += 4000) {
+      const pages = await Promise.all(Array.from({ length: 4 }, (_, page) => fourURead(`/rest/v1/h9ch_26wd?select=id,category_id,name,stream_url,user_agent,referrer&order=id.asc&limit=1000&offset=${offset + page * 1000}`)));
+      for (const page of pages) {
       if (!Array.isArray(page)) throw new Error("تعذّر قراءة قنوات 4U");
       for (const row of page) {
         if (!/^https?:\/\//i.test(row.stream_url || "")) continue;
@@ -141,6 +142,7 @@ function fourUChannels(): Promise<FourUChannel[]> {
           headers: { ...(row.user_agent ? { user_agent: row.user_agent } : {}), ...(row.referrer ? { referrer: row.referrer } : {}) } });
       }
       if (page.length < 1000) { fourULive = { at: Date.now(), rows }; return rows; }
+      }
     }
     throw new Error("قائمة قنوات 4U أكبر من الحد المسموح");
   })().finally(() => { fourULoad = null; });
@@ -159,44 +161,55 @@ function fourUNormalize(raw: string) {
     .replace(/[^\p{L}\p{Nd}]+/gu, " ")
     .trim().replace(/\s+/g, " ");
 }
-const fourUMatches = new Map<string, { at: number; row: Record<string, unknown> }>();
-async function fourUMatch(req: Request, url: URL): Promise<Response> {
-  const series = url.searchParams.get("series") === "true", year = Number(url.searchParams.get("year")) || 0;
+type FourUCatalogue = { at: number; byName: Map<string, Record<string, unknown>[]> };
+const fourUCatalogues = new Map<boolean, FourUCatalogue>();
+const fourUCatalogueLoads = new Map<boolean, Promise<FourUCatalogue>>();
+function fourUCatalogue(series: boolean): Promise<FourUCatalogue> {
+  const cached = fourUCatalogues.get(series);
+  if (cached && Date.now() - cached.at < 6 * 60 * 60 * 1000) return Promise.resolve(cached);
+  const pending = fourUCatalogueLoads.get(series); if (pending) return pending;
+  const load = (async () => {
+    const upstream = new URL(`${FOURU_MEDIA}/player_api.php`);
+    upstream.searchParams.set("action", series ? "get_series" : "get_vod_streams");
+    upstream.searchParams.set("username", "4u"); upstream.searchParams.set("password", "4u");
+    const response = await fetch(upstream, { signal: AbortSignal.timeout(45000) });
+    if (!response.ok || !response.body) throw new Error("تعذّر جلب محتوى 4U");
+    const reader = response.body.getReader(), chunks: Uint8Array[] = []; let size = 0;
+    try {
+      while (true) {
+        const { value, done } = await reader.read(); if (done) break;
+        size += value.length; if (size > 32 * 1024 * 1024) throw new Error("catalogue too large");
+        chunks.push(value);
+      }
+    } finally { await reader.cancel().catch(() => {}); }
+    const bytes = new Uint8Array(size); let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+    const rows = JSON.parse(new TextDecoder().decode(bytes));
+    if (!Array.isArray(rows)) throw new Error("bad catalogue");
+    const fields = ["name", "series_id", "stream_id", "cover", "stream_icon", "releaseDate", "release_date", "container_extension"];
+    const byName = new Map<string, Record<string, unknown>[]>();
+    for (const raw of rows) {
+      if (!raw || typeof raw !== "object" || !raw[series ? "series_id" : "stream_id"]) continue;
+      const row = Object.fromEntries(fields.filter((key) => key in raw).map((key) => [key, raw[key]]));
+      const name = fourUNormalize(String(raw.name || ""));
+      const group = byName.get(name) || []; group.push(row); byName.set(name, group);
+    }
+    const result = { at: Date.now(), byName }; fourUCatalogues.set(series, result); return result;
+  })().finally(() => { fourUCatalogueLoads.delete(series); });
+  fourUCatalogueLoads.set(series, load); return load;
+}
+async function fourUMatch(_req: Request, url: URL): Promise<Response> {
+  const series = url.searchParams.get("series") === "true", year = Number(url.searchParams.get("year") || 0);
   const supplied = JSON.parse(url.searchParams.get("names") || "[]");
   if (!Array.isArray(supplied) || supplied.length > 8 || supplied.some((x) => typeof x !== "string" || x.length > 300)) return fail(400, "bad title");
   const names = new Set(supplied.map(fourUNormalize).filter((x) => x.length >= 2));
   if (!names.size) return Response.json([], { headers: CORS });
-  const cacheKey = JSON.stringify([series, year, [...names].sort()]), cached = fourUMatches.get(cacheKey);
-  if (cached && Date.now() - cached.at < 300000) return Response.json([cached.row], { headers: CORS });
-  const upstream = new URL(`${FOURU_MEDIA}/player_api.php`); upstream.searchParams.set("action", series ? "get_series" : "get_vod_streams"); upstream.searchParams.set("username", "4u"); upstream.searchParams.set("password", "4u");
-  const response = await fetch(upstream, { signal: AbortSignal.any([req.signal, AbortSignal.timeout(45000)]) });
-  if (!response.ok || !response.body) return fail(502, "تعذّر جلب محتوى 4U");
-  const reader = response.body.getReader(), decoder = new TextDecoder();
-  let opened = false, depth = 0, quoted = false, escaped = false, item = "", bytes = 0;
-  try {
-    while (true) {
-      const { value, done } = await reader.read(); if (done) break;
-      bytes += value.length; if (bytes > 32 * 1024 * 1024) throw new Error("catalogue too large");
-      const chunk = decoder.decode(value, { stream: true });
-      for (const c of chunk) {
-        if (!opened) { if (/\s|\uFEFF/.test(c)) continue; if (c !== "[") throw new Error("bad catalogue"); opened = true; continue; }
-        if (depth === 0) { if (/\s|,/.test(c)) continue; if (c === "]") return Response.json([], { headers: CORS }); if (c !== "{") throw new Error("bad row"); depth = 1; item = "{"; continue; }
-        item += c; if (item.length > 2 * 1024 * 1024) throw new Error("row too large");
-        if (quoted) { if (escaped) escaped = false; else if (c === "\\") escaped = true; else if (c === '"') quoted = false; }
-        else if (c === '"') quoted = true;
-        else if (c === "{") depth++;
-        else if (c === "}" && --depth === 0) {
-          const row = JSON.parse(item), release = /(?:19|20)\d{2}/.exec(row.releaseDate || row.name || "")?.[0];
-          if (names.has(fourUNormalize(row.name)) && (!year || !release || Number(release) === year)) {
-            if (fourUMatches.size > 128) fourUMatches.clear(); fourUMatches.set(cacheKey, { at: Date.now(), row });
-            return Response.json([row], { headers: { ...CORS, "cache-control": "no-store" } });
-          }
-          item = "";
-        }
-      }
-    }
-    throw new Error("incomplete catalogue");
-  } finally { await reader.cancel().catch(() => {}); }
+  const catalogue = await fourUCatalogue(series);
+  for (const name of names) for (const row of catalogue.byName.get(name) || []) {
+    const release = /(?:19|20)\d{2}/.exec(String(row.releaseDate || row.release_date || row.name || ""))?.[0];
+    if (!year || !release || Number(release) === year) return Response.json([row], { headers: { ...CORS, "cache-control": "no-store" } });
+  }
+  return Response.json([], { headers: { ...CORS, "cache-control": "no-store" } });
 }
 
 async function fourU(req: Request, url: URL): Promise<Response> {

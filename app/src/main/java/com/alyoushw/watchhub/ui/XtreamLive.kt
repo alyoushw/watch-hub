@@ -222,8 +222,15 @@ class LiveViewModel(private val api: XtreamApi, private val account: XtreamAccou
             loading = true
             error = null
             try {
-                categories = (if (account != null) api.categories(XtreamKind.LIVE, account) else api.categories(XtreamKind.LIVE)).distinctBy { it.id }
-                val all = if (account != null) api.all(XtreamKind.LIVE, account) else api.all(XtreamKind.LIVE)
+                val all = if (account != null && account.id == FourU.account.id) coroutineScope {
+                    val groups = async { api.categories(XtreamKind.LIVE, account) }
+                    val streams = async { api.all(XtreamKind.LIVE, account) }
+                    categories = groups.await().distinctBy { it.id }
+                    streams.await()
+                } else {
+                    categories = (if (account != null) api.categories(XtreamKind.LIVE, account) else api.categories(XtreamKind.LIVE)).distinctBy { it.id }
+                    if (account != null) api.all(XtreamKind.LIVE, account) else api.all(XtreamKind.LIVE)
+                }
                 channels = all
                 counts = all.groupingBy { it.categoryId.orEmpty() }.eachCount()
             } catch (e: XtreamException) {
