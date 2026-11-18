@@ -41,30 +41,55 @@ object FourU {
 
     fun initialize(context: Context) { cacheDir = File(context.cacheDir, "fouru-v1") }
 
-    /** Reuse complete, validated lists across title pages and app restarts. Never cache errors. */
-    private suspend fun cached(key: String, ttl: Long, load: suspend () -> JsonElement): JsonElement = withContext(Dispatchers.IO) {
-        locks.getOrPut(key) { Mutex() }.withLock {
-            val now = System.currentTimeMillis()
-            saved[key]?.takeIf { now - it.at in 0..ttl }?.let { return@withLock it.value }
+    private val refreshing = ConcurrentHashMap.newKeySet<String>()
+
+    /** The saved list from memory, else disk, whatever its age (null if never downloaded). */
+    private fun savedList(key: String): Cached? {
+        saved[key]?.let { return it }
+        val file = cacheDir?.let { File(it, "$key.json") } ?: return null
+        if (file.length() !in 1..(32L * 1024 * 1024)) return null
+        val value = runCatching { Json.parseToJsonElement(file.readText()) }.getOrNull()?.takeIf { it is JsonArray } ?: return null
+        return Cached(file.lastModified(), value).also { saved[key] = it }
+    }
+
+    /** Downloads the list and stores it in memory and on disk. Never caches errors. */
+    private suspend fun download(key: String, load: suspend () -> JsonElement): JsonElement {
+        val value = load()
+        if (value !is JsonArray) throw XtreamException("تعذّر قراءة قائمة 4U")
+        saved[key] = Cached(System.currentTimeMillis(), value)
+        runCatching {
             val file = cacheDir?.let { File(it, "$key.json") }
-            if (file != null && now - file.lastModified() in 0..ttl && file.length() in 1..(32L * 1024 * 1024)) {
-                runCatching { Json.parseToJsonElement(file.readText()) }.getOrNull()?.takeIf { it is JsonArray }?.let {
-                    saved[key] = Cached(file.lastModified(), it)
-                    return@withLock it
+            if (file != null) {
+                file.parentFile?.mkdirs()
+                val temp = File(file.parentFile, "$key.tmp")
+                temp.writeText(value.toString())
+                if (!temp.renameTo(file)) temp.delete()
+            }
+        }
+        return value
+    }
+
+    /**
+     * Serve the saved list at once — even when it is older than [ttl] — and refresh it quietly in
+     * the background. Only the very first use (nothing cached yet) waits for the ~11 MB download;
+     * after that opening 4U is instant, and the list still updates on its own. Opening a title page
+     * no longer downloads anything, so browsing stays fast.
+     */
+    private suspend fun cached(key: String, ttl: Long, load: suspend () -> JsonElement): JsonElement = withContext(Dispatchers.IO) {
+        val existing = savedList(key)
+        if (existing != null) {
+            if (System.currentTimeMillis() - existing.at !in 0..ttl && refreshing.add(key)) {
+                scope.launch {
+                    try { locks.getOrPut(key) { Mutex() }.withLock { download(key, load) } }
+                    catch (_: Exception) { /* keep serving the saved list */ }
+                    finally { refreshing.remove(key) }
                 }
             }
-            val value = load()
-            if (value !is JsonArray) throw XtreamException("تعذّر قراءة قائمة 4U")
-            saved[key] = Cached(System.currentTimeMillis(), value)
-            runCatching {
-                if (file != null) {
-                    file.parentFile?.mkdirs()
-                    val temp = File(file.parentFile, "$key.tmp")
-                    temp.writeText(value.toString())
-                    if (!temp.renameTo(file)) temp.delete()
-                }
-            }
-            value
+            return@withContext existing.value
+        }
+        locks.getOrPut(key) { Mutex() }.withLock {
+            savedList(key)?.let { if (System.currentTimeMillis() - it.at in 0..ttl) return@withLock it.value }
+            download(key, load)
         }
     }
 
@@ -100,13 +125,6 @@ object FourU {
             JsonArray(raw.mapNotNull { it as? JsonObject }.map { JsonObject(it.filterKeys { key -> key in fields }) })
         } as JsonArray
     }
-
-    /**
-     * Fetches the 4U list in the background so opening its page later is instant. Fire-and-forget
-     * on a scope of its own, so moving between screens does not cancel the download; the 6-hour
-     * cache means it runs at most once per list per session.
-     */
-    fun prefetch(series: Boolean) { scope.launch { runCatching { catalogueRows(series) } } }
 
     suspend fun matches(series: Boolean, names: List<String>, year: Int): List<JsonObject> = withContext(Dispatchers.IO) {
         val keys = names.map { XtreamApi.normalizeTitle(it) }.filter { it.length >= 2 }.toSet()
