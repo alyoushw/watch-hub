@@ -9,10 +9,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -28,26 +24,6 @@ import kotlinx.serialization.json.*
 
 @Composable
 fun FourULiveChannels() {
-    // 4U is fast to browse by category (no huge list download), so it offers live, movies and series.
-    var mode by rememberSaveable { mutableStateOf("live") }
-    Column(Modifier.fillMaxSize()) {
-        LazyRow(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            item { FilterChip(selected = mode == "live", onClick = { mode = "live" }, label = { Text("مباشر") }, modifier = Modifier.focusFrame()) }
-            item { FilterChip(selected = mode == "movies", onClick = { mode = "movies" }, label = { Text("أفلام 4U") }, modifier = Modifier.focusFrame()) }
-            item { FilterChip(selected = mode == "series", onClick = { mode = "series" }, label = { Text("مسلسلات 4U") }, modifier = Modifier.focusFrame()) }
-        }
-        Box(Modifier.weight(1f)) {
-            when (mode) {
-                "movies" -> FourUCatalogueBrowse(series = false)
-                "series" -> FourUCatalogueBrowse(series = true)
-                else -> FourULiveAccounts()
-            }
-        }
-    }
-}
-
-@Composable
-private fun FourULiveAccounts() {
     val settings = appContainer().settings
     val accounts by settings.xtreamAccounts.collectAsStateWithLifecycle()
     val active by settings.xtream.collectAsStateWithLifecycle()
@@ -64,124 +40,6 @@ private fun FourULiveAccounts() {
         }
         Box(Modifier.weight(1f)) {
             LiveChannels(showAccounts = false, accountOverride = FourU.account.takeIf { fourU || usable.isEmpty() })
-        }
-    }
-}
-
-/** Fast 4U browse: pick a category, its works load on demand (no 11 MB catalogue download). */
-@Composable
-private fun FourUCatalogueBrowse(series: Boolean) {
-    val context = LocalContext.current
-    var cats by remember(series) { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
-    var cat by remember(series) { mutableStateOf<String?>(null) }
-    var items by remember(series) { mutableStateOf<List<JsonObject>>(emptyList()) }
-    var loading by remember(series) { mutableStateOf(true) }
-    var error by remember(series) { mutableStateOf<String?>(null) }
-    var openSeries by remember(series) { mutableStateOf<JsonObject?>(null) }
-    LaunchedEffect(series) {
-        loading = true; error = null
-        try {
-            val arr = FourU.catalog(if (series) "get_series_categories" else "get_vod_categories") as? JsonArray ?: JsonArray(emptyList())
-            cats = arr.mapNotNull { it as? JsonObject }.map { it.text4u("category_id") to it.text4u("category_name") }.filter { it.first.isNotBlank() }
-            cat = cats.firstOrNull()?.first
-        } catch (e: CancellationException) { throw e } catch (e: Exception) { error = e.message ?: "تعذّر تحميل أقسام 4U" }
-        finally { loading = false }
-    }
-    LaunchedEffect(cat, series) {
-        val c = cat ?: return@LaunchedEffect
-        loading = true; error = null
-        try {
-            val arr = FourU.catalog(if (series) "get_series" else "get_vod_streams", mapOf("category_id" to c)) as? JsonArray ?: JsonArray(emptyList())
-            items = arr.mapNotNull { it as? JsonObject }
-        } catch (e: CancellationException) { throw e } catch (e: Exception) { error = e.message ?: "تعذّر تحميل محتوى 4U" }
-        finally { loading = false }
-    }
-    fun playMovie(row: JsonObject) {
-        val id = row.text4u("stream_id"); if (id.isBlank()) return
-        val entry = WatchEntry("fouru:movie:$id", WatchEntry.MOVIE, id, row.text4u("name"), subtitle = "4U",
-            image = row.text4u("stream_icon"), accountId = "fouru",
-            fourURef = FourURef("movie", id, row.text4u("container_extension").ifBlank { "mp4" }))
-        PlayerActivity.start(context, listOf(QueueItem(emptyList(), entry)), 0)
-    }
-    openSeries?.let { s -> FourUSeriesEpisodes(s) { openSeries = null }; return }
-    Column(Modifier.fillMaxSize()) {
-        if (cats.isNotEmpty()) LazyRow(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(cats, key = { it.first }) { (id, name) ->
-                FilterChip(selected = cat == id, onClick = { cat = id }, label = { Text(name, maxLines = 1) }, modifier = Modifier.focusFrame())
-            }
-        }
-        if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-        error?.let { Text(it, Modifier.padding(12.dp)) }
-        LazyColumn(Modifier.fillMaxSize().readableWidth(1200.dp), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (!loading && error == null && items.isEmpty()) item { Text("لا يوجد محتوى في هذا القسم حالياً", Modifier.padding(12.dp)) }
-            items(items, key = { it.text4u(if (series) "series_id" else "stream_id") }) { row ->
-                Row(Modifier.fillMaxWidth().clickable { if (series) openSeries = row else playMovie(row) }.focusFrame().padding(4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    AsyncImage(model = row.text4u(if (series) "cover" else "stream_icon"), contentDescription = row.text4u("name"),
-                        contentScale = ContentScale.Crop, modifier = Modifier.width(60.dp).height(90.dp).clip(RoundedCornerShape(6.dp)))
-                    Text(row.text4u("name"), Modifier.weight(1f).align(Alignment.CenterVertically), maxLines = 3)
-                }
-            }
-        }
-    }
-}
-
-/** 4U series episodes, loaded on demand and played in the app player. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun FourUSeriesEpisodes(seriesRow: JsonObject, onBack: () -> Unit) {
-    val context = LocalContext.current
-    val history by appContainer().history.entries.collectAsStateWithLifecycle()
-    var episodes by remember(seriesRow) { mutableStateOf<List<JsonObject>>(emptyList()) }
-    var loading by remember(seriesRow) { mutableStateOf(true) }
-    var error by remember(seriesRow) { mutableStateOf<String?>(null) }
-    var season by remember(seriesRow) { mutableIntStateOf(1) }
-    BackHandler { onBack() }
-    LaunchedEffect(seriesRow) {
-        loading = true; error = null
-        try {
-            val root = FourU.catalog("get_series_info", mapOf("series_id" to seriesRow.text4u("series_id"))) as? JsonObject
-                ?: throw XtreamException("تعذّر قراءة حلقات 4U")
-            episodes = withContext(Dispatchers.Default) {
-                val rows = when (val groups = root["episodes"]) {
-                    is JsonObject -> groups.values.flatMap { (it as? JsonArray).orEmpty() }
-                    is JsonArray -> groups.flatMap { (it as? JsonArray) ?: listOf(it) }
-                    else -> emptyList()
-                }
-                rows.mapNotNull { it as? JsonObject }.filter { it.text4u("id").isNotBlank() }.distinctBy { it.text4u("id") }
-                    .sortedWith(compareBy({ it.text4u("season").toIntOrNull() ?: 1 }, { it.text4u("episode_num").toIntOrNull() ?: 0 }))
-            }
-            season = episodes.firstOrNull()?.text4u("season")?.toIntOrNull() ?: 1
-        } catch (e: CancellationException) { throw e } catch (e: Exception) { error = e.message ?: "تعذّر تحميل الحلقات" }
-        finally { loading = false }
-    }
-    fun entry(ep: JsonObject): WatchEntry {
-        val id = ep.text4u("id")
-        return WatchEntry("fouru:episode:$id", WatchEntry.EPISODE, id, seriesRow.text4u("name"),
-            subtitle = "الموسم ${ep.text4u("season")} · الحلقة ${ep.text4u("episode_num")}",
-            image = seriesRow.text4u("cover"), seriesId = seriesRow.text4u("series_id"), accountId = "fouru",
-            fourURef = FourURef("series", id, ep.text4u("container_extension").ifBlank { "mp4" }))
-    }
-    fun play(ep: JsonObject) {
-        val inSeason = episodes.filter { (it.text4u("season").toIntOrNull() ?: 1) == season }
-        PlayerActivity.start(context, inSeason.map { QueueItem(emptyList(), entry(it)) }, inSeason.indexOf(ep).coerceAtLeast(0))
-    }
-    Scaffold(contentWindowInsets = WindowInsets(0), topBar = {
-        TopAppBar(title = { Text(seriesRow.text4u("name"), maxLines = 1) }, navigationIcon = {
-            TextButton(onClick = onBack, modifier = Modifier.focusFrame()) { Text("رجوع") }
-        })
-    }) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding).readableWidth(1200.dp), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-            error?.let { m -> item { Text(m) } }
-            val seasons = episodes.map { it.text4u("season").toIntOrNull() ?: 1 }.distinct()
-            if (seasons.size > 1) item { LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(seasons) { n -> FilterChip(selected = season == n, onClick = { season = n }, label = { Text("الموسم $n") }, modifier = Modifier.focusFrame()) } } }
-            if (!loading && error == null && episodes.isEmpty()) item { Text("لا توجد حلقات متاحة في 4U حالياً") }
-            items(episodes.filter { (it.text4u("season").toIntOrNull() ?: 1) == season }, key = { it.text4u("id") }) { ep ->
-                val watched = history.firstOrNull { it.key == "fouru:episode:${ep.text4u("id")}" }
-                EpisodePlaybackRow("الحلقة ${ep.text4u("episode_num")}", ep.text4u("title"), (ep["info"] as? JsonObject)?.text4u("movie_image"), watched,
-                    watched != null && !watched.finished, onLongClick = { play(ep) }, onClick = { play(ep) })
-            }
         }
     }
 }

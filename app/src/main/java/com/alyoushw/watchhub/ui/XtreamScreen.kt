@@ -1,6 +1,11 @@
 package com.alyoushw.watchhub.ui
 
 import com.alyoushw.watchhub.data.MediaType
+import com.alyoushw.watchhub.data.FourU
+import com.alyoushw.watchhub.data.FourURef
+import com.alyoushw.watchhub.data.text4u
+import com.alyoushw.watchhub.player.QueueItem
+import kotlinx.serialization.json.JsonObject
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedButton
@@ -644,18 +649,25 @@ fun XtreamWatchButton(
     titles: List<String>,
     year: String?,
     onOpenSeries: (String) -> Unit,
+    onOpenFourU: () -> Unit = {},
 ) {
     val container = appContainer()
     val context = LocalContext.current
     val accounts by container.settings.xtreamAccounts.collectAsStateWithLifecycle()
     val usable = accounts.filter { it.isComplete }
-    if (usable.isEmpty()) return
 
     var searching by remember(isSeries, tmdbId, titles, year, usable) { mutableStateOf(true) }
     var matches by remember(isSeries, tmdbId, titles, year, usable) { mutableStateOf<List<XtreamWatchChoice>>(emptyList()) }
+    // 4U is searched alongside the user's accounts and shown as its own version in the same button.
+    var fourU by remember(isSeries, tmdbId, titles, year) { mutableStateOf<List<JsonObject>>(emptyList()) }
     var chooseVersion by remember(isSeries, tmdbId, titles, year, usable) { mutableStateOf(false) }
     LaunchedEffect(isSeries, tmdbId, titles, year, usable) {
+        searching = true
+        fourU = emptyList()
         val kind = if (isSeries) XtreamKind.SERIES else XtreamKind.MOVIE
+        // 4U can be slow the first time, so it runs on its own and appends when ready; the user's
+        // accounts are shown as soon as they answer without waiting for it.
+        launch { fourU = runCatching { FourU.matches(isSeries, titles, year?.toIntOrNull() ?: 0) }.getOrDefault(emptyList()) }
         matches = coroutineScope {
             usable.map { acc ->
                 async {
@@ -673,6 +685,7 @@ fun XtreamWatchButton(
         }
         searching = false
     }
+    val total = matches.size + fourU.size
 
     fun play(choice: XtreamWatchChoice) {
         chooseVersion = false
@@ -684,13 +697,27 @@ fun XtreamWatchButton(
             PlayerActivity.start(context, container.xtream.playUrls(found, acc), WatchEntry.movie(found, acc, tmdbId))
         }
     }
+    fun playFourU(row: JsonObject) {
+        chooseVersion = false
+        if (isSeries) { onOpenFourU(); return } // the 4U screen loads episodes
+        val id = row.text4u("stream_id"); if (id.isBlank()) { onOpenFourU(); return }
+        val entry = WatchEntry("fouru:movie:$id", WatchEntry.MOVIE, id, row.text4u("name"), subtitle = "4U",
+            image = row.text4u("stream_icon"), accountId = "fouru", tmdbId = tmdbId.takeIf { it > 0 },
+            fourURef = FourURef("movie", id, row.text4u("container_extension").ifBlank { "mp4" }))
+        PlayerActivity.start(context, listOf(QueueItem(emptyList(), entry)), 0)
+    }
+    fun playFirst() {
+        if (matches.size == 1 && fourU.isEmpty()) play(matches.single())
+        else if (matches.isEmpty() && fourU.size == 1) playFourU(fourU.single())
+        else chooseVersion = true
+    }
 
     if (chooseVersion) {
         val firstFocus = remember { FocusRequester() }
         LaunchedEffect(Unit) { withFrameNanos { }; runCatching { firstFocus.requestFocus() } }
         AlertDialog(
             onDismissRequest = { chooseVersion = false },
-            title = { Text("اختر النسخة (${matches.size})") },
+            title = { Text("اختر النسخة ($total)") },
             text = {
                 LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     itemsIndexed(matches, key = { _, choice -> "${choice.account.id}:${choice.item.id}" }) { index, choice ->
@@ -703,6 +730,14 @@ fun XtreamWatchButton(
                             }
                         }
                     }
+                    itemsIndexed(fourU, key = { _, row -> "4u:" + row.text4u(if (isSeries) "series_id" else "stream_id") }) { _, row ->
+                        OutlinedButton(onClick = { playFourU(row) }, modifier = Modifier.fillMaxWidth().focusFrame()) {
+                            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(row.text4u("name"), fontWeight = FontWeight.Bold)
+                                Text("4U", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
                 }
             },
             confirmButton = { TextButton(onClick = { chooseVersion = false }, modifier = Modifier.focusFrame()) { Text("إغلاق") } },
@@ -710,23 +745,24 @@ fun XtreamWatchButton(
     }
 
     val colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Color(0xFF1C1206))
+    val many = usable.size > 1 || fourU.isNotEmpty()
     when {
         searching -> Button(onClick = {}, enabled = false, colors = colors, modifier = Modifier.height(44.dp)) {
             CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.width(8.dp))
-            Text(if (usable.size > 1) "نبحث في حساباتك…" else "نبحث في حسابك…")
+            Text(if (many) "نبحث في حساباتك…" else "نبحث في حسابك…")
         }
-        matches.isEmpty() -> Button(onClick = {}, enabled = false, colors = colors, modifier = Modifier.height(44.dp)) {
+        total == 0 -> if (usable.isNotEmpty()) Button(onClick = {}, enabled = false, colors = colors, modifier = Modifier.height(44.dp)) {
             Text(if (usable.size > 1) "مو موجود في حساباتك" else "مو موجود في حسابك")
         }
         else -> Button(
-            onClick = { if (matches.size > 1) chooseVersion = true else play(matches.single()) },
+            onClick = { playFirst() },
             colors = colors, modifier = Modifier.height(44.dp).focusFrame(),
         ) {
             Icon(Icons.Filled.PlayArrow, contentDescription = null)
             Spacer(Modifier.width(6.dp))
-            Text((if (usable.size > 1) "مشاهدة في حساباتي" else "مشاهدة في حسابي") +
-                if (matches.size > 1) " · ${matches.size} نسخ" else "", fontWeight = FontWeight.Bold)
+            Text((if (many) "مشاهدة في حساباتي" else "مشاهدة في حسابي") +
+                if (total > 1) " · $total نسخ" else "", fontWeight = FontWeight.Bold)
         }
     }
 }

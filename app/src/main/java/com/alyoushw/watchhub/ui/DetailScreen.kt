@@ -484,14 +484,11 @@ private fun DetailContent(
                         titles = listOf(info.title, info.searchTitle),
                         year = info.year,
                         onOpenSeries = onOpenXtreamSeries,
+                        onOpenFourU = { onOpenSources(info.sourceLookup().copy(providerId = "4u")) },
                     )
                 }
             }
         }
-
-        item { Column(Modifier.padding(horizontal = 16.dp)) {
-            SourceWatchButton(info.sourceLookup().copy(providerId = "4u"), onOpenSources, Modifier.fillMaxWidth(), label = "4U")
-        } }
 
         if (!isAnime) {
             item { WatchButtons(info, links, subscribedKeys, onWatch) }
