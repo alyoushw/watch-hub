@@ -1,6 +1,6 @@
 // The user's Xtream Codes account, reached through the site's proxy (most servers are plain http).
-import { settings, accounts } from "./store.js?v=20261118c";
-import { urls as fourUUrls } from "./fouru.js?v=20261118c";
+import { settings, accounts } from "./store.js?v=20261118d";
+import { urls as fourUUrls } from "./fouru.js?v=20261118d";
 
 export class XtreamError extends Error {}
 
@@ -232,7 +232,8 @@ function vodUrls(acc, type, id, ext, directSource) {
   const file = streamUrl(acc, type, `${id}.${ext || "mp4"}`);
   const hls = streamUrl(acc, type, `${id}.m3u8`);
   const playable = /^(mp4|m4v|mov)$/i.test(ext || "mp4");
-  const safari = document.createElement("video").canPlayType("application/vnd.apple.mpegurl") !== "";
+  const appleMobile = /iPhone|iPad|iPod/.test(navigator.userAgent) || navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
+  const safari = appleMobile || /Version\/[\d.]+.*Safari/.test(navigator.userAgent) && !/Chrome|Chromium|Edg\//.test(navigator.userAgent);
   return withDirect(acc, directSource, !playable && safari ? [hls, file] : [file, hls]);
 }
 
@@ -327,4 +328,18 @@ export async function resolvePlayback(entry, supplied = []) {
   } catch { /* Some panels do not implement detail reads; retain the provided file URL. */ }
   finally { clearTimeout(timer); }
   return supplied.length ? supplied : urlsFor(entry);
+}
+
+/** A provider's media may be reachable from the user's network even when its server route fails. */
+export function secureDirectUrl(entry, raw) {
+  if (entry.animeRef || entry.sourceRef || entry.fourURef || !entry.accountId) return null;
+  const a = accounts.get(entry.accountId); if (!a) return null;
+  try {
+    const url = new URL(raw), host = new URL(normalizeHost(a.host));
+    if (url.origin === location.origin || url.hostname !== host.hostname) return null;
+    if (url.protocol === "https:") return url.href;
+    // Try the standard secure port only for a standard HTTP URL. Custom ports keep using the proxy.
+    if (url.protocol !== "http:" || url.port && url.port !== "80") return null;
+    url.protocol = "https:"; url.port = ""; return url.href;
+  } catch { return null; }
 }

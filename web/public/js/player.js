@@ -3,11 +3,11 @@
 // tries supported media here first; VLC remains an explicit option for unsupported files.
 //
 // Safari plays HLS itself; other browsers use hls.js, and MPEG-TS live streams use mpegts.js.
-import { via, resolvePlayback } from "./xtream.js?v=20261118c";
-import { offlineUrl, addDownload } from "./downloads.js?v=20261118c";
-import { resolveEntry } from "./sources.js?v=20261118c";
-import { settings, history, isFinished, historySaved } from "./store.js?v=20261118c";
-import * as cloud from "./cloud.js?v=20261118c";
+import { via, resolvePlayback, secureDirectUrl } from "./xtream.js?v=20261118d";
+import { offlineUrl, addDownload } from "./downloads.js?v=20261118d";
+import { resolveEntry } from "./sources.js?v=20261118d";
+import { settings, history, isFinished, historySaved } from "./store.js?v=20261118d";
+import * as cloud from "./cloud.js?v=20261118d";
 
 const HLS_JS = "https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js";
 const MPEGTS_JS = "https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js";
@@ -178,10 +178,10 @@ function waitForStart(timeoutMs) {
 
 const nativeHls = () => video.canPlayType("application/vnd.apple.mpegurl") !== "";
 
-async function tryOne(url, startAt, mine) {
+async function tryOne(url, startAt, mine, direct = false) {
   if (mine !== session) throw new Error("cancelled");
   reset();
-  const src = via(url);
+  const src = direct ? url : via(url);
   const path = new URL(url).pathname.toLowerCase();
   if (path.endsWith(".m3u8") && !nativeHls()) {
     await loadScript(HLS_JS);
@@ -208,7 +208,7 @@ async function tryOne(url, startAt, mine) {
   } else {
     video.src = src;
   }
-  const started = waitForStart(25000);
+  const started = waitForStart(direct ? 12000 : 25000);
   video.play().catch(() => { /* needs a tap; the play button is there */ });
   await started;
   if (startAt > 0 && Math.abs(video.currentTime - startAt) > 5) video.currentTime = startAt;
@@ -478,12 +478,17 @@ async function playHere(urls, entry) {
     try { urls = await resolvePlayback(entry, urls); if (mine !== session) return; current.urls = urls; }
     catch (error) { if (mine !== session) return; ui.spin.hidden = true; errorEl.hidden = false; errorEl.textContent = error.message; return; }
   }
-  for (const url of urls) {
+  const candidates = urls.flatMap((url) => {
+    const secure = !downloaded && secureDirectUrl(entry, url);
+    return [...(secure ? [{ url: secure, direct: true }] : []), { url, direct: false }];
+  });
+  for (const { url, direct } of candidates) {
     try {
-      await tryOne(url, startAt, mine);
+      await tryOne(url, startAt, mine, direct);
       if (mine !== session) return;
       current.started = true;
-      engine?.onFatal?.(() => { if (mine === session) { ui.spin.hidden = true; showFailure(fileUrl(current.urls)); } });
+      current.playbackUrl = url; current.direct = direct;
+      engine?.onFatal?.(() => { if (mine === session) { ui.spin.hidden = true; showFailure(current.playbackUrl, current.direct); } });
       if (startAt) flash(`نكمل من ${fmt(startAt)}`);
       clearInterval(saveTimer);
       saveTimer = setInterval(saveProgress, 5000);
@@ -494,19 +499,20 @@ async function playHere(urls, entry) {
   }
   if (mine !== session) return;
   ui.spin.hidden = true;
-  showFailure(fileUrl(urls));
+  const diagnostic = candidates.find((candidate) => candidate.direct && !/\.m3u8$/i.test(new URL(candidate.url).pathname));
+  showFailure(diagnostic?.url || fileUrl(urls), diagnostic?.direct || false);
 }
 
 /** A small, bounded read checks the actual media response without exposing the URL/login. */
-async function playbackDiagnosis(url) {
+async function playbackDiagnosis(url, direct = false) {
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 8000);
   let reader;
   try {
-    let response = await fetch(via(url), { headers: { Range: "bytes=0-65535" }, signal: controller.signal });
+    let response = await fetch(direct ? url : via(url), { headers: { Range: "bytes=0-65535" }, signal: controller.signal });
     // Some panels reject a Range probe despite accepting an ordinary video GET.
     if ([404, 405, 416].includes(response.status)) {
       await response.body?.cancel();
-      response = await fetch(via(url), { signal: controller.signal });
+      response = await fetch(direct ? url : via(url), { signal: controller.signal });
     }
     if (!response.ok) {
       if (response.status === 401) return "طلب الفيديو مرفوض (HTTP 401). قد يكون الرفض من مفتاح البروكسي أو بيانات الاشتراك؛ لا يثبت ذلك وجود مشكلة ترميز.";
@@ -543,7 +549,7 @@ async function playbackDiagnosis(url) {
   } finally { clearTimeout(timer); await reader?.cancel().catch(() => {}); controller.abort(); }
 }
 
-function showFailure(url) {
+function showFailure(url, direct = false) {
   if (!url) return panel("لم يصل رابط تشغيل من المصدر. افتح صفحة العمل واختر السيرفر مرة ثانية.", [["إغلاق", close]]);
   const ext = (new URL(url, location.href).pathname.split(".").pop() || "").toUpperCase();
   const ios = isIOS(), mine = session;
@@ -561,7 +567,7 @@ function showFailure(url) {
     }],
   ];
   const msg = panel(text, buttons);
-  playbackDiagnosis(url).then((diagnosis) => {
+  playbackDiagnosis(url, direct).then((diagnosis) => {
     if (mine === session && msg.isConnected) msg.textContent = `تعذّر التشغيل${ext ? ` (${ext})` : ""}. ${diagnosis}${ios && ext === "MKV" ? " دعم MKV على الآيفون محدود؛ يمكنك تجربة مشغّل خارجي." : ""}`;
   });
 }
@@ -696,7 +702,7 @@ function render() {
 ["timeupdate", "play", "pause", "durationchange", "progress"].forEach((e) => video.addEventListener(e, render));
 video.addEventListener("waiting", () => (ui.spin.hidden = false));
 video.addEventListener("error", () => {
-  if (current?.started) { ui.spin.hidden = true; showFailure(fileUrl(current.urls)); }
+  if (current?.started) { ui.spin.hidden = true; showFailure(current.playbackUrl || fileUrl(current.urls), current.direct || false); }
 });
 video.addEventListener("playing", () => {
   ui.spin.hidden = true;

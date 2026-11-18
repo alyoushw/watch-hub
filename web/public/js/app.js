@@ -1,16 +1,16 @@
 // Watch Hub on the web: the same hub as the Android app, for iPhone, iPad and computers.
-import * as tmdb from "./tmdb.js?v=20261118c";
-import * as foryou from "./foryou.js?v=20261118c";
-import * as xt from "./xtream.js?v=20261118c";
-import * as fouru from "./fouru.js?v=20261118c";
-import * as features from "./features.js?v=20261118c";
-import * as sourceApi from "./sources.js?v=20261118c";
-import { restoreDownloads, addDownload } from "./downloads.js?v=20261118c";
-import { play, fmt } from "./player.js?v=20261118c";
-import * as smart from "./smart.js?v=20261118c";
-import { fillTranslated } from "./translate.js?v=20261118c";
-import * as cloud from "./cloud.js?v=20261118c";
-import { settings, watchlist, favorites, folders, recent, xtreamReady, history, isFinished, progressOf, accounts, restoreHistory } from "./store.js?v=20261118c";
+import * as tmdb from "./tmdb.js?v=20261118d";
+import * as foryou from "./foryou.js?v=20261118d";
+import * as xt from "./xtream.js?v=20261118d";
+import * as fouru from "./fouru.js?v=20261118d";
+import * as features from "./features.js?v=20261118d";
+import * as sourceApi from "./sources.js?v=20261118d";
+import { restoreDownloads, addDownload } from "./downloads.js?v=20261118d";
+import { play, fmt } from "./player.js?v=20261118d";
+import * as smart from "./smart.js?v=20261118d";
+import { fillTranslated } from "./translate.js?v=20261118d";
+import * as cloud from "./cloud.js?v=20261118d";
+import { settings, watchlist, favorites, folders, recent, xtreamReady, history, isFinished, progressOf, accounts, restoreHistory } from "./store.js?v=20261118d";
 
 const view = document.getElementById("view");
 // Explicit recovery link restores the built-in proxy after connection troubleshooting.
@@ -1900,7 +1900,7 @@ restoreHistory().finally(async () => {
 
 // Open instantly from the device's copy, even while the free server wakes up.
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("sw.js?v=20261118c").catch(() => {});
+  navigator.serviceWorker.register("sw.js?v=20261118d").catch(() => {});
 }
 
 // ---------- ✨ مختار لك ----------
