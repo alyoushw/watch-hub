@@ -196,20 +196,22 @@ class WatchHistory(context: Context) {
     @Synchronized
     fun switchProfile(from: String, to: String, discard: Boolean) {
         val e = prefs.edit()
-        for (k in listOf(KEY_ITEMS, KEY_REMOVED)) {
+        for (k in listOf(KEY_ITEMS, KEY_REMOVED, KEY_CW_HIDDEN)) {
             if (discard) e.remove("$k@$from") else e.putString("$k@$from", prefs.getString(k, null))
             e.putString(k, prefs.getString("$k@$to", null))
             e.remove("$k@$to")
         }
         e.commit()
         _entries.value = load()
+        _continueHidden.value = loadHidden()
     }
 
     /** Forgets everything watched in this profile. */
     @Synchronized
     fun clearAll() {
-        prefs.edit().remove(KEY_ITEMS).remove(KEY_REMOVED).commit()
+        prefs.edit().remove(KEY_ITEMS).remove(KEY_REMOVED).remove(KEY_CW_HIDDEN).commit()
         _entries.value = emptyList()
+        _continueHidden.value = emptyMap()
     }
 
     /** Re-points entries after account ids changed (old id → new id). */
@@ -228,21 +230,53 @@ class WatchHistory(context: Context) {
         }
     }
 
+    // ---- hidden from "تابع المشاهدة" (the series/film stays in history, just leaves the row) ----
+
+    private fun loadHidden(): Map<String, Long> = runCatching {
+        json.decodeFromString(removalsSerializer, prefs.getString(KEY_CW_HIDDEN, "{}") ?: "{}")
+    }.getOrDefault(emptyMap())
+
+    private val _continueHidden = MutableStateFlow(loadHidden())
+
+    /** Series/films the user dropped from "تابع المشاهدة": group key → when hidden. */
+    val continueHidden: StateFlow<Map<String, Long>> = _continueHidden.asStateFlow()
+
+    /** One key per series (so all its episodes share it), else the entry's own key. */
+    private fun continueGroupKey(e: WatchEntry): String =
+        if (e.isEpisode && e.seriesId != null) "${e.accountId}:${e.seriesId}" else e.key
+
+    /**
+     * Drops the whole series (or film) from "تابع المشاهدة" without touching the watch history, so
+     * the series page still shows which episodes were watched. Watching a newer episode brings it
+     * back on its own.
+     */
+    fun hideFromContinue(e: WatchEntry) {
+        val gk = continueGroupKey(e)
+        val now = System.currentTimeMillis()
+        val next = _continueHidden.value + (gk to now)
+        _continueHidden.value = next
+        prefs.edit().putString(KEY_CW_HIDDEN, json.encodeToString(removalsSerializer, next.entries.sortedByDescending { it.value }.take(300).associate { it.key to it.value })).commit()
+    }
+
     /** For the "تابع المشاهدة" row: one card per series (its latest episode), finished films left out. */
     fun continueList(): List<WatchEntry> {
+        val hidden = _continueHidden.value
         val seenSeries = mutableSetOf<String>()
         return _entries.value.filter { e ->
-            when {
+            val keep = when {
                 e.isEpisode && e.seriesId != null -> seenSeries.add("${e.accountId}:${e.seriesId}")
                 e.kind == WatchEntry.MOVIE -> !e.finished
                 else -> true
             }
+            // Hidden stays hidden until something newer than the moment it was hidden is watched.
+            keep && (hidden[continueGroupKey(e)]?.let { e.updatedAt > it } ?: true)
         }
     }
 
     private companion object {
         const val KEY_ITEMS = "items_v2"
         const val KEY_REMOVED = "removed_v2"
+        const val KEY_CW_HIDDEN = "continue_hidden_v1"
         const val MAX = 80
     }
 }

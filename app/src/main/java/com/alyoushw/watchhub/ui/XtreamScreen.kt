@@ -852,10 +852,11 @@ fun ContinueWatchingRow(
     val scope = rememberCoroutineScope()
     val accounts by container.settings.xtreamAccounts.collectAsStateWithLifecycle()
     val entries by container.history.entries.collectAsStateWithLifecycle()
+    val hidden by container.history.continueHidden.collectAsStateWithLifecycle()
     var menuFor by remember { mutableStateOf<WatchEntry?>(null) }
     var streamShare by remember { mutableStateOf<Pair<String, String>?>(null) }
     streamShare?.let { (t, u) -> StreamShareDialog(t, u) { streamShare = null } }
-    val list = remember(entries, accounts, kinds, animeMovies) {
+    val list = remember(entries, hidden, accounts, kinds, animeMovies) {
         val ids = accounts.map { it.id }.toSet()
         container.history.continueList().filter { e ->
             e.kind in kinds && if (e.animeRef != null) {
@@ -969,9 +970,9 @@ fun ContinueWatchingRow(
                     OutlinedButton(
                         modifier = Modifier.fillMaxWidth().focusFrame(),
                         onClick = {
-                            container.history.remove(e.key)
+                            container.history.hideFromContinue(e)
                             menuFor = null
-                            android.widget.Toast.makeText(context, "انحذف من «تابع المشاهدة»", android.widget.Toast.LENGTH_SHORT).show()
+                            android.widget.Toast.makeText(context, "انشال من «تابع المشاهدة»", android.widget.Toast.LENGTH_SHORT).show()
                         },
                     ) { Text("احذف من تابع المشاهدة", color = MaterialTheme.colorScheme.error) }
                 }
