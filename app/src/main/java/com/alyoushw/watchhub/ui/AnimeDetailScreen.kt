@@ -175,7 +175,10 @@ private fun AnimeContent(vm: AnimeDetailViewModel, anime: JAnime, onOpen: (Media
     val data by container.store.data.collectAsStateWithLifecycle()
     val saved = data.watchlist.firstOrNull { it.key == WatchItem.keyOf(MediaType.ANIME, anime.malId) }
 
+    val animeListState = androidx.compose.foundation.lazy.rememberLazyListState()
     LazyColumn(
+        modifier = Modifier.tvScrollAssist(animeListState),
+        state = animeListState,
         contentPadding = PaddingValues(bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {

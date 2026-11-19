@@ -96,8 +96,10 @@ fun SubscriptionsScreen() {
                 )
             }
         } else {
+            val subsListState = androidx.compose.foundation.lazy.rememberLazyListState()
             LazyColumn(
-                Modifier.fillMaxSize().padding(padding),
+                Modifier.fillMaxSize().padding(padding).tvScrollAssist(subsListState),
+                state = subsListState,
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {

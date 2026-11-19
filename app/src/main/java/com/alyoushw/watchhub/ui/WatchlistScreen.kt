@@ -171,7 +171,10 @@ fun WatchlistScreen(onOpen: (MediaType, Int) -> Unit) {
                     body = if (data.watchlist.isEmpty()) "ابحث عن أي فيلم أو مسلسل واضغط «أضفه لقائمتي»." else null,
                 )
             } else {
+                val watchlistState = androidx.compose.foundation.lazy.rememberLazyListState()
                 LazyColumn(
+                    modifier = Modifier.tvScrollAssist(watchlistState),
+                    state = watchlistState,
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {

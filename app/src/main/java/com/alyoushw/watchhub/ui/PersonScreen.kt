@@ -133,8 +133,11 @@ fun PersonScreen(id: Int, onBack: () -> Unit, onOpen: (MediaType, Int) -> Unit) 
                         .distinctBy { "${it.mediaType}:${it.id}" }
                         .sortedByDescending { it.popularity ?: 0.0 }
 
+                    val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
                     LazyVerticalGrid(
                         columns = GridCells.Adaptive(112.dp),
+                        modifier = Modifier.tvScrollAssist(gridState),
+                        state = gridState,
                         contentPadding = PaddingValues(12.dp),
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp),

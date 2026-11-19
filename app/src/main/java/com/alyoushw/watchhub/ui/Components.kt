@@ -65,6 +65,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.ui.focus.focusProperties
+import kotlinx.coroutines.launch
 import coil.compose.AsyncImage
 import com.alyoushw.watchhub.data.StreamingService
 import com.alyoushw.watchhub.data.TmdbApi
@@ -629,3 +633,35 @@ fun Modifier.tvTextField(): Modifier = composed {
 @Composable
 fun tvKeyboard(base: androidx.compose.foundation.text.KeyboardOptions = androidx.compose.foundation.text.KeyboardOptions.Default): androidx.compose.foundation.text.KeyboardOptions =
     if (isTv()) base.copy(showKeyboardOnFocus = false) else base
+
+/**
+ * TV remote: when Up/Down finds nothing focusable inside a scrolling page, scroll the page by a
+ * step instead of jumping the focus out (to the back button in the top bar, or off the list).
+ * Without this, content above/below the focused item — text, posters, a header — is unreachable
+ * once the page has been scrolled. At the very top/bottom the focus leaves as usual.
+ * Put it on the scroll container (LazyColumn / grid / verticalScroll) and pass its scroll state.
+ */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+@Composable
+fun Modifier.tvScrollAssist(state: androidx.compose.foundation.gestures.ScrollableState): Modifier {
+    if (!isTv()) return this
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val step = with(androidx.compose.ui.platform.LocalDensity.current) { 300.dp.toPx() }
+    return this
+        .focusProperties {
+            exit = { direction ->
+                when {
+                    direction == androidx.compose.ui.focus.FocusDirection.Up && state.canScrollBackward -> {
+                        scope.launch { state.animateScrollBy(-step) }
+                        androidx.compose.ui.focus.FocusRequester.Cancel
+                    }
+                    direction == androidx.compose.ui.focus.FocusDirection.Down && state.canScrollForward -> {
+                        scope.launch { state.animateScrollBy(step) }
+                        androidx.compose.ui.focus.FocusRequester.Cancel
+                    }
+                    else -> androidx.compose.ui.focus.FocusRequester.Default
+                }
+            }
+        }
+        .focusGroup()
+}

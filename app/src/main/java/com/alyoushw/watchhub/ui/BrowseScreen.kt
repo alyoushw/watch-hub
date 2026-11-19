@@ -124,6 +124,7 @@ fun BrowseScreen(onBack: () -> Unit, onOpen: (MediaType, Int) -> Unit) {
                 vm.items.isEmpty() -> MessageBox("ما فيه أعمال هنا للحين")
                 else -> LazyVerticalGrid(
                     columns = GridCells.Adaptive(112.dp),
+                    modifier = Modifier.tvScrollAssist(grid),
                     state = grid,
                     contentPadding = PaddingValues(12.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),

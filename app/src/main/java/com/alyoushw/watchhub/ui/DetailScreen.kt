@@ -471,6 +471,7 @@ private fun DetailContent(
     val isAnime = 16 in info.genreIds && (info.originalLanguage == "ja" || "JP" in info.countries)
 
     LazyColumn(
+        modifier = Modifier.tvScrollAssist(listState),
         state = listState,
         contentPadding = PaddingValues(bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),

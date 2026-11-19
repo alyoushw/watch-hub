@@ -301,8 +301,12 @@ private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind
                     vm.loading -> CenteredLoading()
                     vm.error != null -> MessageBox(vm.error.orEmpty(), actionLabel = "حاول مرة ثانية", onAction = vm::retry)
                     vm.items.isEmpty() -> MessageBox("ما فيه شي في هذا القسم")
-                    else -> LazyVerticalGrid(
+                    else -> {
+                    val xtreamGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+                    LazyVerticalGrid(
                         columns = GridCells.Adaptive(if (vm.kind == XtreamKind.LIVE) 120.dp else 112.dp),
+                        modifier = Modifier.tvScrollAssist(xtreamGridState),
+                        state = xtreamGridState,
                         contentPadding = PaddingValues(12.dp),
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -323,6 +327,7 @@ private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind
                                 }
                             }
                         }
+                    }
                     }
                 }
             }
@@ -561,8 +566,10 @@ fun XtreamSeriesScreen(seriesId: String, onBack: () -> Unit) {
                             dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = { markFor = null }) { Text("إلغاء") } },
                         )
                     }
+                    val seriesListState = androidx.compose.foundation.lazy.rememberLazyListState()
                     LazyColumn(
-                        Modifier.readableWidth(900.dp),
+                        Modifier.tvScrollAssist(seriesListState).readableWidth(900.dp),
+                        state = seriesListState,
                         contentPadding = PaddingValues(12.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {

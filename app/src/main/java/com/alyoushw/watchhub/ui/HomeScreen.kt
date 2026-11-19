@@ -508,7 +508,10 @@ fun HomeScreen(
             else -> {
                 // The trending row becomes the big banner; for anime the first row feeds it.
                 val hero = vm.sections.firstOrNull { it.wide } ?: vm.sections.firstOrNull()
+                val homeListState = androidx.compose.foundation.lazy.rememberLazyListState()
                 LazyColumn(
+                    modifier = Modifier.tvScrollAssist(homeListState),
+                    state = homeListState,
                     contentPadding = PaddingValues(bottom = 28.dp),
                     verticalArrangement = Arrangement.spacedBy(26.dp),
                 ) {

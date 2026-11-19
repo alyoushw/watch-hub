@@ -87,11 +87,13 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}) {
         contentWindowInsets = WindowInsets(0),
         topBar = { TopAppBar(title = { Text("الإعدادات") }) },
     ) { padding ->
+        val settingsScroll = rememberScrollState()
         Column(
             Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .verticalScroll(rememberScrollState())
+                .tvScrollAssist(settingsScroll)
+                .verticalScroll(settingsScroll)
                 .readableWidth()
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
