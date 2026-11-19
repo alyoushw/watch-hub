@@ -933,14 +933,14 @@ fun ContinueWatchingRow(
                             }
                         },
                     ) { Text(openLabel) }
-                    if (e.kind == WatchEntry.EPISODE && e.sourceRef == null) {
+                    if ((e.kind == WatchEntry.EPISODE || e.kind == WatchEntry.ANIME) && e.sourceRef == null) {
                         OutlinedButton(
                             modifier = Modifier.fillMaxWidth().focusFrame(),
                             onClick = {
                                 menuFor = null
                                 openPlatformPage(e)
                             },
-                        ) { Text("معلومات المسلسل (المنصة)") }
+                        ) { Text("صفحة المسلسل (المنصة)") }
                     }
                     if (e.sourceRef == null && e.fourURef == null) {
                         OutlinedButton(

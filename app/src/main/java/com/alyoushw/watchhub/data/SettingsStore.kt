@@ -231,7 +231,7 @@ class SettingsStore(context: Context) {
 
     // ---------- live screen look: folder navigator vs the classic list ----------
 
-    private val _liveFolderUi = MutableStateFlow(prefs.getBoolean(KEY_LIVE_FOLDER_UI, true))
+    private val _liveFolderUi = MutableStateFlow(prefs.getBoolean(KEY_LIVE_FOLDER_UI, false))
 
     /** When on, the live tab opens the folder navigator (قسم ▸ مجموعة ▸ قناة ▸ جودة ▸ سيرفر). */
     val liveFolderUi: StateFlow<Boolean> = _liveFolderUi.asStateFlow()

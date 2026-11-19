@@ -66,6 +66,11 @@ private data class ChannelNode(val key: String, val title: String, val number: I
 private data class Brand(val label: String, val channels: List<ChannelNode>)
 private data class Section(val label: String, val brands: List<Brand>)
 
+// A favourite can be a whole brand, a channel, or one quality — starred from wherever you are.
+private fun brandFav(s: Section, b: Brand) = "B\u0001${s.label}\u0001${b.label}"
+private fun channelFav(ch: ChannelNode) = "C\u0001${ch.key}"
+private fun qualityFav(ch: ChannelNode, q: Quality) = "Q\u0001${ch.key}\u0001${q.label}"
+
 private val QUALITY_ORDER = listOf("8k", "4k", "fhd", "hd", "sd", "hevc", "raw", "50fps", "60fps", "low")
 private val SECTION_ORDER = listOf("رياضة", "أخبار", "أفلام", "مسلسلات", "أطفال", "دينية", "موسيقى", "وثائقي", "أخرى")
 
@@ -316,6 +321,7 @@ fun FolderLiveScreen() {
     val accent = MaterialTheme.colorScheme.primary
     val cur = stack.last()
     fun push(l: Level) { stack = stack + l }
+    fun fav(k: String) = container.settings.toggleFolderFavorite(k)
 
     fun play(hit: LiveHit, siblings: List<LiveHit>) {
         container.settings.addXtreamRecent(hit.channel.id)
@@ -375,19 +381,39 @@ fun FolderLiveScreen() {
         ) {
             when (cur) {
                 Level.Root -> {
-                    if (favorites.isNotEmpty()) item { FolderRow("⭐ المفضلة", "${favorites.size} قناة") { push(Level.Favorites) } }
+                    if (favorites.isNotEmpty()) item { FolderRow("⭐ المفضلة", "${favorites.size} مفضّلة") { push(Level.Favorites) } }
                     items(vm.sections) { s -> FolderRow(s.label, "${s.brands.size} مجموعة") { push(Level.SectionLevel(s)) } }
                 }
                 Level.Favorites -> {
-                    val favChannels = vm.allChannels.values.filter { it.key in favorites }.sortedBy { natKey(it.title) }
-                    if (favChannels.isEmpty()) item { Text("لا توجد قنوات مفضّلة بعد. اضغط مطولاً على أي قناة لإضافتها.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                    items(favChannels) { ch -> ChannelRow(ch, colorOf, favorite = true, onClick = { push(Level.ChannelLevel(ch)) }, onLong = { container.settings.toggleFolderFavorite(ch.key) }) }
+                    if (favorites.isEmpty()) item { Text("لا توجد مفضّلة بعد. اضغط مطولاً على أي مجموعة أو قناة أو جودة لإضافتها.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    // Walked in tree order, so favourites stay sorted the same way as the folders.
+                    vm.sections.forEach { s ->
+                        s.brands.forEach { b ->
+                            val bk = brandFav(s, b)
+                            if (bk in favorites) item(key = bk) { FolderRow(b.label, "${b.channels.size} قناة · ${s.label}", favorite = true, onLong = { fav(bk) }) { push(Level.BrandLevel(s, b)) } }
+                            b.channels.forEach { ch ->
+                                val ck = channelFav(ch)
+                                if (ck in favorites) item(key = ck) { ChannelRow(ch, colorOf, favorite = true, onClick = { push(Level.ChannelLevel(ch)) }, onLong = { fav(ck) }) }
+                                ch.qualities.forEach { q ->
+                                    val qk = qualityFav(ch, q)
+                                    if (qk in favorites) item(key = qk) { QualityRow(q, colorOf, accent, favorite = true, onLong = { fav(qk) }) { openQuality(ch, q) } }
+                                }
+                            }
+                        }
+                    }
                 }
-                is Level.SectionLevel -> items(cur.section.brands) { b -> FolderRow(b.label, "${b.channels.size} قناة") { push(Level.BrandLevel(cur.section, b)) } }
+                is Level.SectionLevel -> items(cur.section.brands) { b ->
+                    val bk = brandFav(cur.section, b)
+                    FolderRow(b.label, "${b.channels.size} قناة", favorite = bk in favorites, onLong = { fav(bk) }) { push(Level.BrandLevel(cur.section, b)) }
+                }
                 is Level.BrandLevel -> items(cur.brand.channels) { ch ->
-                    ChannelRow(ch, colorOf, favorite = ch.key in favorites, onClick = { push(Level.ChannelLevel(ch)) }, onLong = { container.settings.toggleFolderFavorite(ch.key) })
+                    val ck = channelFav(ch)
+                    ChannelRow(ch, colorOf, favorite = ck in favorites, onClick = { push(Level.ChannelLevel(ch)) }, onLong = { fav(ck) })
                 }
-                is Level.ChannelLevel -> items(cur.channel.qualities) { q -> QualityRow(q, colorOf, accent) { openQuality(cur.channel, q) } }
+                is Level.ChannelLevel -> items(cur.channel.qualities) { q ->
+                    val qk = qualityFav(cur.channel, q)
+                    QualityRow(q, colorOf, accent, favorite = qk in favorites, onLong = { fav(qk) }) { openQuality(cur.channel, q) }
+                }
                 is Level.QualityLevel -> items(cur.quality.hits) { hit ->
                     ServerRow(hit, colorOf[hit.account.id] ?: accent, accent) { play(hit, cur.quality.hits) }
                 }
@@ -413,8 +439,9 @@ private fun RowCard(onClick: () -> Unit, onLong: (() -> Unit)? = null, content: 
 }
 
 @Composable
-private fun FolderRow(title: String, subtitle: String, onClick: () -> Unit) {
-    RowCard(onClick) {
+private fun FolderRow(title: String, subtitle: String, favorite: Boolean = false, onLong: (() -> Unit)? = null, onClick: () -> Unit) {
+    RowCard(onClick, onLong) {
+        if (favorite) Text("⭐", fontSize = 13.sp)
         Column(Modifier.weight(1f)) {
             Text(title, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
@@ -449,9 +476,10 @@ private fun ChannelRow(ch: ChannelNode, colorOf: Map<String, Color>, favorite: B
 }
 
 @Composable
-private fun QualityRow(q: Quality, colorOf: Map<String, Color>, accent: Color, onClick: () -> Unit) {
+private fun QualityRow(q: Quality, colorOf: Map<String, Color>, accent: Color, favorite: Boolean = false, onLong: (() -> Unit)? = null, onClick: () -> Unit) {
     val single = q.hits.size <= 1
-    RowCard(onClick) {
+    RowCard(onClick, onLong) {
+        if (favorite) Text("⭐", fontSize = 13.sp)
         Box(Modifier.clip(RoundedCornerShape(7.dp)).background(accent).padding(horizontal = 9.dp, vertical = 3.dp)) {
             Text(q.label, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
         }
