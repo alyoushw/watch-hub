@@ -30,6 +30,11 @@ android {
         buildConfigField("String", "TMDB_KEY", "\"${tmdbKey.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r")}\"")
         val animeifyToken = System.getenv("WATCHHUB_ANIMEIFY_TOKEN").orEmpty().trim()
         buildConfigField("String", "ANIMEIFY_TOKEN", "\"${animeifyToken.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+        // Optional: Xtream accounts baked into the build and added to "قنواتي" on first launch, so a
+        // shared/trial copy already has them (JSON array of {name, host, user, pass}). Kept in a repo
+        // secret, never in source. Only private/preview builds carry them, never the public release.
+        val defaultAccounts = if (privatePreview) System.getenv("WATCHHUB_DEFAULT_ACCOUNTS").orEmpty().trim() else ""
+        buildConfigField("String", "DEFAULT_ACCOUNTS", "\"${defaultAccounts.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r")}\"")
     }
 
     // A fixed release key (from CI secrets) lets new APKs install over old ones and keep the data.

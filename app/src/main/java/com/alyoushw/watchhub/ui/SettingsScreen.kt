@@ -163,6 +163,10 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}) {
 
             HorizontalDivider()
 
+            LiveLookSection()
+
+            HorizontalDivider()
+
             YouTubeSection()
 
             HorizontalDivider()
@@ -1058,6 +1062,29 @@ private fun ChannelFoldersSection() {
             },
             dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = { renaming = null }) { Text("إلغاء") } },
         )
+    }
+}
+
+/**
+ * "شكل المباشر": the new folder navigator (قسم ▸ مجموعة ▸ قناة ▸ جودة ▸ سيرفر), or the classic
+ * channel list. The folder view gathers the same channel across every account under one entry.
+ */
+@Composable
+private fun LiveLookSection() {
+    val settings = appContainer().settings
+    val on by settings.liveFolderUi.collectAsStateWithLifecycle()
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionTitle("شكل المباشر")
+        Text(
+            "واجهة المجلدات: تدخل قسم (رياضة، أخبار…) ثم المجموعة ثم القناة، وتختار الجودة والسيرفر. " +
+                "نفس القناة من كل حساباتك تتجمّع تحت مكان واحد. أطفئها لو تبي القائمة التقليدية.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("واجهة المجلدات", modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
+            androidx.compose.material3.Switch(checked = on, onCheckedChange = settings::setLiveFolderUi, modifier = Modifier.focusFrame())
+        }
     }
 }
 

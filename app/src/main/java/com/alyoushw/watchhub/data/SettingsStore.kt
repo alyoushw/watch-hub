@@ -90,17 +90,45 @@ class SettingsStore(context: Context) {
 
     private val _xtreamAccounts: MutableStateFlow<List<XtreamAccount>>
 
+    @kotlinx.serialization.Serializable
+    private data class SeedAccount(val name: String = "", val host: String = "", val user: String = "", val pass: String = "")
+
+    /** Accounts baked into the build (WATCHHUB_DEFAULT_ACCOUNTS); added once on the very first launch. */
+    private fun defaultSeedAccounts(): List<XtreamAccount> {
+        val raw = com.alyoushw.watchhub.BuildConfig.DEFAULT_ACCOUNTS.trim()
+        if (raw.isBlank()) return emptyList()
+        val seeds = runCatching {
+            accountsJson.decodeFromString(kotlinx.serialization.builtins.ListSerializer(SeedAccount.serializer()), raw)
+        }.getOrDefault(emptyList())
+        return seeds.mapNotNull { s ->
+            val host = s.host.trim()
+            val user = s.user.trim()
+            if (host.isBlank() || user.isBlank()) return@mapNotNull null
+            val h = XtreamApi.normalizeHost(host)
+            XtreamAccount(h, user, s.pass, XtreamAccount.stableId(h, user), s.name.trim())
+        }.distinctBy { it.id }
+    }
+
     init {
         val loaded = loadAccounts()
         val changes = mutableMapOf<String, String>()
-        val fixed = loaded.map { a ->
+        var fixed = loaded.map { a ->
             val stable = XtreamAccount.stableId(a.host, a.username)
             if (a.id != stable) changes[a.id] = stable
             a.copy(id = stable)
         }.distinctBy { it.id }
         accountIdChanges = changes
+        // First launch only: if the user has no accounts, add the ones baked into the build.
+        var seededNow = false
+        if (!prefs.getBoolean(KEY_SEEDED, false)) {
+            if (fixed.isEmpty()) {
+                val seed = defaultSeedAccounts()
+                if (seed.isNotEmpty()) { fixed = seed; seededNow = true }
+            }
+            prefs.edit().putBoolean(KEY_SEEDED, true).apply()
+        }
         _xtreamAccounts = MutableStateFlow(fixed)
-        if (changes.isNotEmpty() || prefs.getString(KEY_XTREAM_ACCOUNTS, null) == null && fixed.isNotEmpty()) {
+        if (seededNow || changes.isNotEmpty() || prefs.getString(KEY_XTREAM_ACCOUNTS, null) == null && fixed.isNotEmpty()) {
             prefs.edit().putString(KEY_XTREAM_ACCOUNTS, accountsJson.encodeToString(accountsSerializer, fixed)).apply()
             prefs.getString(KEY_XTREAM_ACTIVE, null)?.let { old -> changes[old]?.let { prefs.edit().putString(KEY_XTREAM_ACTIVE, it).apply() } }
         }
@@ -199,6 +227,18 @@ class SettingsStore(context: Context) {
     fun setYoutubeEnabled(on: Boolean) {
         prefs.edit().putBoolean(KEY_YOUTUBE, on).apply()
         _youtube.value = on
+    }
+
+    // ---------- live screen look: folder navigator vs the classic list ----------
+
+    private val _liveFolderUi = MutableStateFlow(prefs.getBoolean(KEY_LIVE_FOLDER_UI, true))
+
+    /** When on, the live tab opens the folder navigator (قسم ▸ مجموعة ▸ قناة ▸ جودة ▸ سيرفر). */
+    val liveFolderUi: StateFlow<Boolean> = _liveFolderUi.asStateFlow()
+
+    fun setLiveFolderUi(on: Boolean) {
+        prefs.edit().putBoolean(KEY_LIVE_FOLDER_UI, on).apply()
+        _liveFolderUi.value = on
     }
 
     // ---------- channel folders ("رياضة", "أخبار", …) ----------
@@ -360,5 +400,7 @@ class SettingsStore(context: Context) {
         const val KEY_XTREAM_RECENT = "xtream_recent"
         const val KEY_XTREAM_FOLDERS = "xtream_folders"
         const val KEY_YOUTUBE = "youtube_enabled"
+        const val KEY_SEEDED = "accounts_seeded"
+        const val KEY_LIVE_FOLDER_UI = "live_folder_ui"
     }
 }

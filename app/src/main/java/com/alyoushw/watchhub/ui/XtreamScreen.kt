@@ -192,7 +192,8 @@ fun XtreamScreen(onOpenSeries: (String) -> Unit, onOpenSettings: () -> Unit) {
 /** Live channels only, for the "مباشر" tab on the Home screen. */
 @Composable
 fun XtreamLiveChannels(onOpenSettings: () -> Unit) {
-    FourULiveChannels()
+    val folderUi by appContainer().settings.liveFolderUi.collectAsStateWithLifecycle()
+    if (folderUi) FolderLiveScreen() else FourULiveChannels()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
