@@ -86,10 +86,20 @@ class Updater(private val context: Context) {
         }
         val found = runCatching {
             http.newCall(
-                Request.Builder().url(LATEST).header("Accept", "application/vnd.github+json").build(),
+                // The automatic check reads only the "latest" release (a silent release is skipped, so nobody
+                // gets a notice). The Settings button also sees silent releases: it takes the newest build-N.
+                Request.Builder().url(if (manual) RELEASES else LATEST).header("Accept", "application/vnd.github+json").build(),
             ).execute().use { res ->
                 if (!res.isSuccessful) return@use null
-                val o = json.parseToJsonElement(res.body?.string().orEmpty()).jsonObject
+                val text = res.body?.string().orEmpty()
+                val o = if (manual) {
+                    json.parseToJsonElement(text).jsonArray.map { it.jsonObject }
+                        .filter { it["draft"]?.jsonPrimitive?.let { p -> p.contentOrNull == "true" } != true &&
+                            it["prerelease"]?.jsonPrimitive?.let { p -> p.contentOrNull == "true" } != true }
+                        .filter { it["tag_name"]?.jsonPrimitive?.contentOrNull?.startsWith("build-") == true }
+                        .maxByOrNull { it["tag_name"]?.jsonPrimitive?.contentOrNull?.removePrefix("build-")?.toIntOrNull() ?: 0 }
+                        ?: return@use null
+                } else json.parseToJsonElement(text).jsonObject
                 val build = o["tag_name"]?.jsonPrimitive?.contentOrNull?.removePrefix("build-")?.toIntOrNull() ?: return@use null
                 // Clean shown version from the release name, e.g. "Watch Hub v7" → "7".
                 val version = o["name"]?.jsonPrimitive?.contentOrNull?.let { Regex("v\\s*(\\d+)").find(it)?.groupValues?.get(1) }
@@ -211,6 +221,7 @@ class Updater(private val context: Context) {
     companion object {
         private const val NOTES = "https://raw.githubusercontent.com/alyoushw/watch-hub"
         private const val LATEST = "https://api.github.com/repos/alyoushw/watch-hub/releases/latest"
+        private const val RELEASES = "https://api.github.com/repos/alyoushw/watch-hub/releases?per_page=15"
         private const val KEY_DISMISSED = "dismissed"
         private const val KEY_NOTIFIED = "notified"
         private const val CHANNEL = "updates"
