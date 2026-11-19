@@ -74,11 +74,17 @@ private fun normKey(s: String): String =
 
 private fun natKey(s: String): String = Regex("\\d+").replace(s) { it.value.padStart(6, '0') }
 
-/** English/French (and other non-Arabic language) feeds the owner does not want listed. */
-private fun isForeign(name: String): Boolean {
+/** Feeds the owner does not want listed: foreign languages, France (FR), Turkey (TK/TR), Extra. */
+private fun isUnwanted(name: String): Boolean {
     val n = normKey(name)
-    return listOf("english", "anglais", "french", "francais", "franc", "espanol", "deutsch", "italiano", "portugu").any { it in n }
+    if (listOf("english", "anglais", "french", "francais", "franc", "espanol", "deutsch", "italiano", "portugu", "turkish", "turkey", "extra").any { it in n }) return true
+    return Regex("\\b(fr|tk|tr)\\b").containsMatchIn(n)
 }
+
+/** Drops a leading feed prefix like "UHD:", "F:", "NM:", "VIP:", "AR:" so it does not pollute the
+ *  quality or the brand (the resolution lives at the end of the name). */
+private fun stripFeedPrefix(name: String): String =
+    name.replaceFirst(Regex("^\\s*[\\p{L}0-9]{1,6}\\s*:\\s*"), "")
 
 /** The top section of a channel from its category and name. */
 private fun sectionOf(text: String): String {
@@ -215,14 +221,15 @@ private class FolderLiveViewModel(
         val sectionMap = linkedMapOf<String, SAcc>()
         for ((acc, cats, chans) in loaded) {
             for (ch in chans) {
-                if (isForeign(ch.name)) continue
+                if (isUnwanted(ch.name)) continue
                 val catName = ch.categoryId?.let { cats[it] }.orEmpty()
-                val combined = "$catName ${ch.name}"
+                val name = stripFeedPrefix(ch.name) // parse the real name, not the "UHD:"/"F:" prefix
+                val combined = "$catName $name"
                 val section = sectionOf(combined)
                 val bLabel = canonicalBrand(combined)
-                val num = numberOf(ch.name)
-                val qLabel = qualityLabel(ch.name)
-                val chTitle = if (num != null) "$bLabel $num" else cleanTitle(ch.name)
+                val num = numberOf(name)
+                val qLabel = qualityLabel(name)
+                val chTitle = if (num != null) "$bLabel $num" else cleanTitle(name)
                 val chKey = num?.toString() ?: ("n:" + normKey(chTitle).filter { it.isLetterOrDigit() })
                 val s = sectionMap.getOrPut(section) { SAcc(section) }
                 val b = s.brands.getOrPut(bLabel) { BAcc(bLabel) }
