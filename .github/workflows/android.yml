@@ -188,3 +188,19 @@ jobs:
           make_latest: false
           target_commitish: ${{ github.sha }}
           body: ${{ inputs.distribution == 'validation' && 'ملف مراجعة خاص لتحديث التطبيق الأساسي بنفس المعرّف والتوقيع. لم ينشر كتحديث عام.' || 'نسخة خاصة مستقلة للتجربة. لا تستبدل التطبيق الرئيسي ولا تُرسل كتحديث عام.' }}
+
+      # A fixed link for the TV's Downloader app: one pre-release "tv-preview" whose APK is replaced by
+      # each private build. It is a pre-release, never "latest", so app updates are not affected, and
+      # the preview app has its own id, so it never replaces the main app.
+      - name: Update fixed TV preview link
+        if: github.event_name == 'workflow_dispatch' && inputs.distribution == 'private'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: tv-preview
+          name: Watch Hub - TV preview (latest private build)
+          files: ${{ env.APK_NAME }}
+          draft: false
+          prerelease: true
+          make_latest: false
+          target_commitish: ${{ github.sha }}
+          body: 'رابط ثابت لنسخة التجربة على التلفاز (Downloader). يتبدّل الملف مع كل نسخة تجريبية. تطبيق مستقل لا يستبدل الرسمي.'
