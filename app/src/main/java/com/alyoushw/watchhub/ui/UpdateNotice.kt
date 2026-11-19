@@ -82,7 +82,7 @@ fun UpdateNotice() {
         title = { Text("يوجد تحديث جديد") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("النسخة ${u.build} جاهزة (عندك ${updater.currentBuild}).")
+                Text("النسخة ${u.version?.let { "v$it" } ?: u.build} جاهزة (عندك ${updater.currentVersion}).")
                 u.notes?.let { notes ->
                     // What is new in this build (release notes, or docs/whats-new.md at its tag).
                     Text(

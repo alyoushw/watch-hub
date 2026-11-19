@@ -39,7 +39,7 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 
 /** A newer build on GitHub: its number and where its APK is. */
-data class AppUpdate(val build: Int, val url: String, val notes: String?)
+data class AppUpdate(val build: Int, val url: String, val notes: String?, val version: String? = null)
 
 /**
  * Keeps the app up to date from its GitHub releases ("build-N"): finds a newer build than this
@@ -62,6 +62,9 @@ class Updater(private val context: Context) {
     val progress: StateFlow<Float?> = _progress.asStateFlow()
 
     val currentBuild: Int get() = BuildConfig.BUILD_NUMBER
+
+    /** The clean shown version of this install (1, 2, 3…), from the VERSION file at build time. */
+    val currentVersion: String get() = BuildConfig.VERSION_NAME.substringBefore('-')
 
     private var lastCheck = 0L
 
@@ -88,6 +91,8 @@ class Updater(private val context: Context) {
                 if (!res.isSuccessful) return@use null
                 val o = json.parseToJsonElement(res.body?.string().orEmpty()).jsonObject
                 val build = o["tag_name"]?.jsonPrimitive?.contentOrNull?.removePrefix("build-")?.toIntOrNull() ?: return@use null
+                // Clean shown version from the release name, e.g. "Watch Hub v7" → "7".
+                val version = o["name"]?.jsonPrimitive?.contentOrNull?.let { Regex("v\\s*(\\d+)").find(it)?.groupValues?.get(1) }
                 val apk = o["assets"]?.jsonArray?.map { it.jsonObject }
                     ?.firstOrNull { it["name"]?.jsonPrimitive?.contentOrNull?.endsWith(".apk") == true }
                     ?.get("browser_download_url")?.jsonPrimitive?.contentOrNull ?: return@use null
@@ -97,7 +102,7 @@ class Updater(private val context: Context) {
                             r.body?.string()?.takeIf { r.isSuccessful && it.isNotBlank() }
                         }
                     }.getOrNull()
-                AppUpdate(build, apk, notes)
+                AppUpdate(build, apk, notes, version)
             }
         }.getOrNull()
         if (found != null) lastCheck = System.currentTimeMillis()
@@ -195,7 +200,7 @@ class Updater(private val context: Context) {
         val n = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("يوجد تحديث جديد لـ Watch Hub")
-            .setContentText("النسخة ${update.build} جاهزة، افتح التطبيق واضغط «تحديث»")
+            .setContentText("النسخة ${update.version?.let { "v$it" } ?: update.build} جاهزة، افتح التطبيق واضغط «تحديث»")
             .setContentIntent(open)
             .setAutoCancel(true)
             .build()

@@ -1174,14 +1174,14 @@ private fun AppVersionRow() {
     var status by remember { mutableStateOf<String?>(null) }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f)) {
-            Text("النسخة ${updater.currentBuild}", fontWeight = FontWeight.Medium)
+            Text("النسخة v${updater.currentVersion}", fontWeight = FontWeight.Medium)
             status?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
         OutlinedButton(modifier = Modifier.focusFrame(), onClick = {
             status = "نتحقق…"
             scope.launch {
                 val u = updater.check(manual = true)
-                status = if (u != null) "فيه نسخة جديدة: ${u.build}" else "عندك آخر نسخة ✓"
+                status = if (u != null) "فيه نسخة جديدة: ${u.version?.let { "v$it" } ?: u.build}" else "عندك آخر نسخة ✓"
             }
         }) { Text("تحقق من التحديثات") }
     }
