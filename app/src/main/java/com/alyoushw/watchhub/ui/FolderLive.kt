@@ -72,12 +72,28 @@ private val SECTION_ORDER = listOf("رياضة", "أخبار", "أفلام", "م
 private fun normKey(s: String): String =
     s.lowercase().replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا').replace('ة', 'ه').replace('ى', 'ي')
 
+/** Superscript / modifier letters (ᴿᴬᵂ, ᴴᴰ, ʰᵉᵛᶜ…) some servers use for the quality → plain ASCII. */
+private val SUPER = mapOf(
+    'ᴬ' to 'A', 'ᴮ' to 'B', 'ᴰ' to 'D', 'ᴱ' to 'E', 'ᴳ' to 'G', 'ᴴ' to 'H',
+    'ᴵ' to 'I', 'ᴶ' to 'J', 'ᴷ' to 'K', 'ᴸ' to 'L', 'ᴹ' to 'M', 'ᴺ' to 'N',
+    'ᴼ' to 'O', 'ᴾ' to 'P', 'ᴿ' to 'R', 'ᵀ' to 'T', 'ᵁ' to 'U', 'ᵂ' to 'W',
+    'ⱽ' to 'V',
+    'ʰ' to 'h', 'ʲ' to 'j', 'ʳ' to 'r', 'ʷ' to 'w', 'ʸ' to 'y', 'ˡ' to 'l',
+    'ˢ' to 's', 'ˣ' to 'x', 'ᵃ' to 'a', 'ᵇ' to 'b', 'ᶜ' to 'c', 'ᵈ' to 'd',
+    'ᵉ' to 'e', 'ᶠ' to 'f', 'ᵍ' to 'g', 'ᶦ' to 'i', 'ᵏ' to 'k', 'ᵐ' to 'm',
+    'ⁿ' to 'n', 'ᵒ' to 'o', 'ᵖ' to 'p', 'ᵗ' to 't', 'ᵘ' to 'u', 'ᵛ' to 'v',
+    '⁰' to '0', '¹' to '1', '²' to '2', '³' to '3', '⁴' to '4', '⁵' to '5',
+    '⁶' to '6', '⁷' to '7', '⁸' to '8', '⁹' to '9',
+)
+
+private fun deSuper(s: String): String = if (s.none { it in SUPER }) s else buildString { for (c in s) append(SUPER[c] ?: c) }
+
 private fun natKey(s: String): String = Regex("\\d+").replace(s) { it.value.padStart(6, '0') }
 
 /** Feeds the owner does not want listed: foreign languages, France (FR), Turkey (TK/TR), Extra. */
 private fun isUnwanted(name: String): Boolean {
     val n = normKey(name)
-    if (listOf("english", "anglais", "french", "francais", "franc", "espanol", "deutsch", "italiano", "portugu", "turkish", "turkey", "extra").any { it in n }) return true
+    if (listOf("english", "anglais", "french", "francais", "franc", "espanol", "deutsch", "italiano", "portugu", "turkish", "turkey", "extra", "xtra").any { it in n }) return true
     return Regex("\\b(fr|tk|tr)\\b").containsMatchIn(n)
 }
 
@@ -221,9 +237,10 @@ private class FolderLiveViewModel(
         val sectionMap = linkedMapOf<String, SAcc>()
         for ((acc, cats, chans) in loaded) {
             for (ch in chans) {
-                if (isUnwanted(ch.name)) continue
+                val plain = deSuper(ch.name) // superscript quality letters → ASCII (ᴿᴬᵂ → RAW)
+                if (isUnwanted(plain)) continue
                 val catName = ch.categoryId?.let { cats[it] }.orEmpty()
-                val name = stripFeedPrefix(ch.name) // parse the real name, not the "UHD:"/"F:" prefix
+                val name = stripFeedPrefix(plain) // parse the real name, not the "UHD:"/"F:" prefix
                 val combined = "$catName $name"
                 val section = sectionOf(combined)
                 val bLabel = canonicalBrand(combined)
@@ -456,7 +473,7 @@ private fun ServerRow(hit: LiveHit, color: Color, accent: Color, onClick: () -> 
             Text(hit.account.label, color = color, fontWeight = FontWeight.Bold, fontSize = 12.sp)
         }
         Column(Modifier.weight(1f)) {
-            Text(hit.channel.name, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(deSuper(hit.channel.name), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Text("▶", color = accent)
     }
