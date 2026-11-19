@@ -374,13 +374,58 @@ private fun ClaudeSection() {
 }
 
 /** The user's Xtream Codes logins from their providers: a list, each with a name, and a form to add or edit one. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun XtreamSection(onOpen: () -> Unit) {
     val container = appContainer()
     val accounts by container.settings.xtreamAccounts.collectAsStateWithLifecycle()
     val active by container.settings.xtream.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     // null: no form open; an account with a blank id: adding a new one.
     var editing by remember { mutableStateOf<XtreamAccount?>(null) }
+    var importOpen by remember { mutableStateOf(false) }
+    var importText by remember { mutableStateOf("") }
+
+    if (importOpen) {
+        val parsed = remember(importText) { XtreamAccount.parseList(importText) }
+        AlertDialog(
+            onDismissRequest = { importOpen = false },
+            title = { Text("لصق حسابات") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "الصق سطر لكل حساب بالصيغة: الاسم | الهوست | المستخدم | المرور — أو رابط Xtream. يُضاف الكل دفعة.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = importText,
+                        onValueChange = { importText = it },
+                        label = { Text("الحسابات") },
+                        modifier = Modifier.fillMaxWidth().tvTextField(),
+                        minLines = 4,
+                    )
+                    Text(
+                        if (importText.isBlank()) "" else "جاهز للإضافة: ${parsed.size} حساب",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    modifier = Modifier.focusFrame(),
+                    onClick = {
+                        parsed.forEach { container.settings.saveXtreamAccount(it) }
+                        importOpen = false
+                        importText = ""
+                        android.widget.Toast.makeText(context, "تمت إضافة ${parsed.size} حساب", android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                ) { Text("أضف (${parsed.size})") }
+            },
+            dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = { importOpen = false }) { Text("إلغاء") } },
+        )
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SectionTitle("حسابات Xtream Codes")
@@ -413,10 +458,11 @@ private fun XtreamSection(onOpen: () -> Unit) {
             }
         }
         if (editing == null) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(modifier = Modifier.focusFrame(), onClick = { editing = XtreamAccount("", "", "") }) {
                     Text(if (accounts.isEmpty()) "+ أضف حساب" else "+ أضف حساب ثاني")
                 }
+                OutlinedButton(modifier = Modifier.focusFrame(), onClick = { importOpen = true }) { Text("📋 لصق حسابات") }
                 if (accounts.isNotEmpty()) {
                     OutlinedButton(modifier = Modifier.focusFrame(), onClick = onOpen) { Text("افتح «قنواتي»") }
                 }

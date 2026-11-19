@@ -51,6 +51,38 @@ data class XtreamAccount(
             }
             return "x" + h.toString(36)
         }
+
+        /**
+         * Parses one or more accounts from pasted text, one per line. Each line may be either an
+         * Xtream URL (…/get.php?username=U&password=P) or fields separated by | , ; or tab in the
+         * order "name | host | user | pass" (the name is optional: "host | user | pass" also works).
+         */
+        fun parseList(text: String): List<XtreamAccount> =
+            text.lines().mapNotNull { parseOne(it.trim()) }.distinctBy { it.id }
+
+        private fun build(name: String, host: String, user: String, pass: String): XtreamAccount? {
+            val h = XtreamApi.normalizeHost(host.trim())
+            val u = user.trim()
+            if (h.isBlank() || u.isBlank() || pass.isBlank()) return null
+            return XtreamAccount(h, u, pass.trim(), stableId(h, u), name.trim())
+        }
+
+        private fun parseOne(line: String): XtreamAccount? {
+            if (line.isBlank()) return null
+            // An Xtream URL carries the login in its query.
+            if (line.contains("://") && line.contains("username=", ignoreCase = true)) {
+                val url = line.toHttpUrlOrNull() ?: return null
+                val user = url.queryParameter("username") ?: return null
+                val pass = url.queryParameter("password") ?: return null
+                val host = url.scheme + "://" + url.host + ":" + url.port
+                return build("", host, user, pass)
+            }
+            val parts = line.split(Regex("[|,;\\t]")).map { it.trim() }.filter { it.isNotEmpty() }
+            val hostIdx = parts.indexOfFirst { it.contains("://") || Regex("\\.[A-Za-z]{2,}").containsMatchIn(it) }
+            if (hostIdx < 0 || hostIdx + 2 > parts.lastIndex) return null
+            val name = parts.take(hostIdx).joinToString(" ")
+            return build(name, parts[hostIdx], parts[hostIdx + 1], parts[hostIdx + 2])
+        }
     }
 }
 
