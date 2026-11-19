@@ -53,18 +53,58 @@ data class XtreamAccount(
         }
 
         /**
-         * Parses one or more accounts from pasted text, one per line. Each line may be either an
-         * Xtream URL (…/get.php?username=U&password=P) or fields separated by | , ; or tab in the
-         * order "name | host | user | pass" (the name is optional: "host | user | pass" also works).
+         * Parses one or more accounts from pasted text. It accepts, in any mix:
+         *  - one line per account: "name | host | user | pass" (separators | , ; or tab);
+         *  - an Xtream URL: …/get.php?username=U&password=P;
+         *  - labelled fields on their own lines in any order (الاسم/الهوست/المستخدم/المرور, or
+         *    name/host/user/pass), one account per block, blocks split by a blank line.
          */
-        fun parseList(text: String): List<XtreamAccount> =
-            text.lines().mapNotNull { parseOne(it.trim()) }.distinctBy { it.id }
+        fun parseList(text: String): List<XtreamAccount> {
+            val records = mutableListOf<MutableList<String>>()
+            var cur = mutableListOf<String>()
+            for (raw in text.lines()) {
+                val line = raw.trim()
+                if (line.isEmpty()) { if (cur.isNotEmpty()) { records.add(cur); cur = mutableListOf() } }
+                else cur.add(line)
+            }
+            if (cur.isNotEmpty()) records.add(cur)
+            return records.flatMap { parseRecord(it) }.distinctBy { it.id }
+        }
 
         private fun build(name: String, host: String, user: String, pass: String): XtreamAccount? {
             val h = XtreamApi.normalizeHost(host.trim())
             val u = user.trim()
             if (h.isBlank() || u.isBlank() || pass.isBlank()) return null
             return XtreamAccount(h, u, pass.trim(), stableId(h, u), name.trim())
+        }
+
+        /** Which field a label names, so the pasted order does not matter. */
+        private fun labelKey(raw: String): String? {
+            val s = raw.trim().lowercase()
+            return when {
+                s.contains("مستخدم") || s.contains("user") -> "user"
+                s.contains("مرور") || s.contains("باسورد") || s.contains("pass") -> "pass"
+                s.contains("هوست") || s.contains("رابط") || s.contains("host") || s.contains("url") || s.contains("سيرفر") || s.contains("server") -> "host"
+                s.contains("اسم") || s == "name" -> "name"
+                else -> null
+            }
+        }
+
+        private fun parseRecord(lines: List<String>): List<XtreamAccount> {
+            val fields = linkedMapOf<String, String>()
+            lines.forEach { line ->
+                val m = Regex("^([\\p{L} ]+?)\\s*[:=]\\s*(.+)$").find(line)
+                val key = m?.let { labelKey(it.groupValues[1]) }
+                if (key != null && key !in fields) fields[key] = m!!.groupValues[2].trim()
+            }
+            fields["host"]?.let { return listOfNotNull(build(fields["name"].orEmpty(), it, fields["user"].orEmpty(), fields["pass"].orEmpty())) }
+            if (lines.size == 1) return listOfNotNull(parseOne(lines[0]))
+            // Bare values, one per line: find the host, then user and pass follow it.
+            val hostIdx = lines.indexOfFirst { it.contains("://") || Regex("\\.[A-Za-z]{2,}").containsMatchIn(it) }
+            if (hostIdx in 0..(lines.size - 3)) {
+                return listOfNotNull(build(lines.take(hostIdx).joinToString(" "), lines[hostIdx], lines[hostIdx + 1], lines[hostIdx + 2]))
+            }
+            return emptyList()
         }
 
         private fun parseOne(line: String): XtreamAccount? {

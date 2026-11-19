@@ -394,7 +394,11 @@ private fun XtreamSection(onOpen: () -> Unit) {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "الصق سطر لكل حساب بالصيغة: الاسم | الهوست | المستخدم | المرور — أو رابط Xtream. يُضاف الكل دفعة.",
+                        "الصق حساباتك ويُضاف الكل دفعة. تقدر تكتبها بأي طريقة:\n" +
+                            "• سطر لكل حساب: الاسم | الهوست | المستخدم | المرور\n" +
+                            "• أو كل خانة بسطر مع اسمها (بأي ترتيب)، وافصل بين الحسابات بسطر فاضي:\n" +
+                            "   الاسم: سترونج\n   الهوست: http://...\n   المستخدم: ...\n   المرور: ...\n" +
+                            "• أو رابط Xtream (get.php).",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
