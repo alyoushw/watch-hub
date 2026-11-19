@@ -21,6 +21,10 @@ on:
         description: 'Also run the Android emulator smoke test (about 4 extra minutes; validation builds always run it)'
         type: boolean
         default: false
+      notify:
+        description: 'Stable release only: false publishes it without becoming "latest", so the app shows no update notice'
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -172,7 +176,7 @@ jobs:
           tag_name: build-${{ github.run_number }}
           name: Watch Hub v${{ steps.ver.outputs.rel }}
           files: ${{ env.APK_NAME }}
-          make_latest: true
+          make_latest: ${{ github.event_name != 'workflow_dispatch' || inputs.notify }}
           target_commitish: ${{ github.sha }}
 
       # Draft assets are accessible only to repository writers; the main release is untouched.
