@@ -56,23 +56,47 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-// Structure: brand ▸ channel number ▸ quality ▸ server. The brand is one canonical name per family
-// (every "BEIN SPORTS", "BEIN SPORT TOD", "beIN 1 (F)"… fold into one "beIN Sport"), read from the
-// provider category and the channel name together. The number and the resolution come from the
-// channel name; the leaf is each real feed, labelled by its server so all servers sit side by side.
+// Structure: section (رياضة/أخبار/أفلام…) ▸ brand (beIN Sport, ألوان, الثمانية…) ▸ channel number ▸
+// quality ▸ server. Section and brand are canonical names matched by keyword from the provider
+// category and channel name together; the number and resolution come from the name. English/French
+// feeds are filtered out.
 
 private data class Quality(val label: String, val hits: List<LiveHit>)
 private data class ChannelNode(val key: String, val title: String, val number: Int?, val qualities: List<Quality>)
 private data class Brand(val label: String, val channels: List<ChannelNode>)
+private data class Section(val label: String, val brands: List<Brand>)
 
 private val QUALITY_ORDER = listOf("8k", "4k", "fhd", "hd", "sd", "hevc", "raw", "50fps", "60fps", "low")
+private val SECTION_ORDER = listOf("رياضة", "أخبار", "أفلام", "مسلسلات", "أطفال", "دينية", "موسيقى", "وثائقي", "أخرى")
 
 private fun normKey(s: String): String =
     s.lowercase().replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا').replace('ة', 'ه').replace('ى', 'ي')
 
 private fun natKey(s: String): String = Regex("\\d+").replace(s) { it.value.padStart(6, '0') }
 
-/** The resolution of a channel ("beIN 1 (F) - 4K" → "4K"), ignoring the region feed. */
+/** English/French (and other non-Arabic language) feeds the owner does not want listed. */
+private fun isForeign(name: String): Boolean {
+    val n = normKey(name)
+    return listOf("english", "anglais", "french", "francais", "franc", "espanol", "deutsch", "italiano", "portugu").any { it in n }
+}
+
+/** The top section of a channel from its category and name. */
+private fun sectionOf(text: String): String {
+    val t = normKey(text)
+    fun has(vararg k: String) = k.any { it in t }
+    return when {
+        has("news", "اخبار", "jazeera", "الجزير", "alarabiya", "العربيه", "الحدث", "sky news", "cnn", "bbc", "euronews") -> "أخبار"
+        has("kids", "cartoon", "atfal", "اطفال", "spacetoon", "سبيستون", "baraem", "براعم", "jeem", "جيم", "majid", "ماجد", "disney", "nick") -> "أطفال"
+        has("aflam", "افلam", "افلام", "movie", "cinema", "سينما", "film", "box office", "mbc2", "mbc max", "rotana cinema", "osn movies", "action") -> "أفلام"
+        has("series", "drama", "دراما", "مسلسل", "mbc4", "mbc drama", "rotana drama", "osn series", "shahid", "شاهد") -> "مسلسلات"
+        has("quran", "قران", "قرآن", "sunnah", "islam", "اسلام", "اقرا", "المجد", "مكه", "المدينه", "دينيه") -> "دينية"
+        has("documentary", "وثائق", "nat geo", "discovery", "history", "animal planet") -> "وثائقي"
+        has("music", "موسيق", "اغاني", "clip", "كليب", "mtv", "mazzika", "مزيكا") -> "موسيقى"
+        has("sport", "سبورت", "رياض", "bein", "بين", "ssc", "alkass", "الكاس", "kass", "dazn", "koora", "كوره", "كوورة", "football", "nba", "ufc", "wwe", "thmany", "ثماني", "arryadia", "الرياضي", "abu dhabi", "dubai sport", "ad sport") -> "رياضة"
+        else -> "أخرى"
+    }
+}
+
 private fun qualityLabel(name: String): String {
     val tags = qualityTags(name)
     if (tags.isEmpty()) return "عادي"
@@ -82,41 +106,38 @@ private fun qualityLabel(name: String): String {
 private fun qualityRank(label: String): Int =
     QUALITY_ORDER.indexOf(label.lowercase().substringBefore(' ')).let { if (it < 0) 90 else it }
 
-/** One canonical brand for a whole family, from the category name and the channel name together. */
+private val BRAND_DECORATORS = setOf("ar", "en", "eng", "عربي", "عربيه", "vip", "hd", "fhd", "uhd", "sd", "4k", "8k", "hevc", "raw", "h265", "hdr", "tv", "plus", "backup", "new")
+
 private fun canonicalBrand(categoryAndName: String): String {
     val n = normKey(categoryAndName)
     fun has(vararg k: String) = k.any { it in n }
     return when {
         has("bein", "بين") && has("sport", "سبورت", "رياض") -> "beIN Sport"
+        has("bein", "بين") && Regex("\\bbe?in\\b\\s*\\d").containsMatchIn(n) -> "beIN Sport"
         has("bein", "بين") && has("news", "اخبار") -> "beIN News"
-        has("bein", "بين") && Regex("\\bbe?in\\b\\s*\\d").containsMatchIn(n) -> "beIN Sport" // "beIN 1", "beIN 2"…
         has("bein", "بين") -> "beIN"
         has("الوان", "alwan") -> "ألوان"
         has("ثماني", "ثمانيه", "thmany", "thamany", "thamanya") -> "الثمانية"
         has("سولو", "solo") -> "سولو"
         has("ssc") -> "SSC"
+        has("alkass", "الكاس", "kass") -> "الكأس"
         has("relax") -> "Relax"
         else -> cleanBrand(categoryAndName)
     }
 }
 
-private val BRAND_DECORATORS = setOf("ar", "en", "eng", "عربي", "عربيه", "vip", "hd", "fhd", "uhd", "sd", "4k", "8k", "hevc", "raw", "h265", "hdr", "tv", "plus", "backup", "new")
-
-/** Fallback brand for an unknown family: the category/name minus decorators, region letters and numbers. */
 private fun cleanBrand(text: String): String {
     val base = text.replace(Regex("[(\\[{][^)\\]}]*[)\\]}]"), " ").replace("|", " ")
     val tokens = base.split(Regex("[^\\p{L}\\p{Nd}]+")).filter { it.isNotBlank() }
     var sawLetter = false
     val kept = tokens.filter { t ->
-        val keep = normKey(t) !in BRAND_DECORATORS && !(t.length == 1 && t[0].isLetter()) &&
-            !(t.all { it.isDigit() } && sawLetter)
+        val keep = normKey(t) !in BRAND_DECORATORS && !(t.length == 1 && t[0].isLetter()) && !(t.all { it.isDigit() } && sawLetter)
         if (t.any { it.isLetter() }) sawLetter = true
         keep
     }
     return kept.joinToString(" ").trim().ifBlank { text.trim() }
 }
 
-/** The channel number in a name ("beIN 1 (F) - 4K" → 1), ignoring the resolution number. */
 private fun numberOf(name: String): Int? {
     val cleaned = name.replace(Regex("(?i)\\b(4k|8k|uhd|fhd|hd|sd|raw|hevc|h265|hdr|50fps|60fps)\\b"), " ")
     var seenLetter = false
@@ -139,6 +160,7 @@ private fun brandPriority(label: String): Int = when (label) {
     "ألوان" -> 20
     "سولو" -> 30
     "SSC" -> 40
+    "الكأس" -> 50
     "beIN", "beIN News" -> 900
     else -> 500
 }
@@ -151,7 +173,7 @@ private class FolderLiveViewModel(
         private set
     var error by mutableStateOf<String?>(null)
         private set
-    var brands by mutableStateOf<List<Brand>>(emptyList())
+    var sections by mutableStateOf<List<Section>>(emptyList())
         private set
     var allChannels by mutableStateOf<Map<String, ChannelNode>>(emptyMap())
         private set
@@ -164,7 +186,7 @@ private class FolderLiveViewModel(
             error = null
             try {
                 val usable = accounts.filter { it.isComplete }
-                if (usable.isEmpty()) { brands = emptyList(); loading = false; return@launch }
+                if (usable.isEmpty()) { sections = emptyList(); loading = false; return@launch }
                 val loaded = coroutineScope {
                     usable.map { acc ->
                         async {
@@ -175,9 +197,9 @@ private class FolderLiveViewModel(
                     }.awaitAll()
                 }
                 val built = withContext(Dispatchers.Default) { build(loaded) }
-                brands = built.first
+                sections = built.first
                 allChannels = built.second
-                if (brands.isEmpty()) error = "ما وصلت قنوات من الحسابات، تأكد من الاشتراك والإنترنت"
+                if (sections.isEmpty()) error = "ما وصلت قنوات من الحسابات، تأكد من الاشتراك والإنترنت"
             } catch (e: Exception) {
                 error = e.message ?: "تعذّر تحميل القنوات"
             }
@@ -185,42 +207,51 @@ private class FolderLiveViewModel(
         }
     }
 
-    private fun build(loaded: List<Triple<XtreamAccount, Map<String, String>, List<XtreamItem>>>): Pair<List<Brand>, Map<String, ChannelNode>> {
+    private fun build(loaded: List<Triple<XtreamAccount, Map<String, String>, List<XtreamItem>>>): Pair<List<Section>, Map<String, ChannelNode>> {
         class QAcc(val label: String, val hits: MutableList<LiveHit> = mutableListOf())
         class CAcc(val title: String, val num: Int?, val qualities: LinkedHashMap<String, QAcc> = linkedMapOf())
         class BAcc(val label: String, val channels: LinkedHashMap<String, CAcc> = linkedMapOf())
-        val brandMap = linkedMapOf<String, BAcc>()
+        class SAcc(val label: String, val brands: LinkedHashMap<String, BAcc> = linkedMapOf())
+        val sectionMap = linkedMapOf<String, SAcc>()
         for ((acc, cats, chans) in loaded) {
             for (ch in chans) {
+                if (isForeign(ch.name)) continue
                 val catName = ch.categoryId?.let { cats[it] }.orEmpty()
-                val bLabel = canonicalBrand("$catName ${ch.name}")
-                val bKey = bLabel
+                val combined = "$catName ${ch.name}"
+                val section = sectionOf(combined)
+                val bLabel = canonicalBrand(combined)
                 val num = numberOf(ch.name)
                 val qLabel = qualityLabel(ch.name)
                 val chTitle = if (num != null) "$bLabel $num" else cleanTitle(ch.name)
                 val chKey = num?.toString() ?: ("n:" + normKey(chTitle).filter { it.isLetterOrDigit() })
-                val b = brandMap.getOrPut(bKey) { BAcc(bLabel) }
+                val s = sectionMap.getOrPut(section) { SAcc(section) }
+                val b = s.brands.getOrPut(bLabel) { BAcc(bLabel) }
                 val c = b.channels.getOrPut(chKey) { CAcc(chTitle, num) }
                 val q = c.qualities.getOrPut(qLabel) { QAcc(qLabel) }
                 q.hits.add(LiveHit(ch, acc))
             }
         }
         val all = linkedMapOf<String, ChannelNode>()
-        val brands = brandMap.entries
-            .sortedWith(compareBy({ brandPriority(it.key) }, { it.value.label }))
-            .map { (_, b) ->
-                val channels = b.channels.entries
-                    .sortedWith(compareBy({ it.value.num ?: Int.MAX_VALUE }, { natKey(it.value.title) }))
-                    .map { (chKey, c) ->
-                        val qualities = c.qualities.entries.sortedBy { qualityRank(it.value.label) }
-                            .map { (_, q) -> Quality(q.label, q.hits.sortedBy { natKey(it.channel.name) }) }
-                        val node = ChannelNode("${b.label}\u0001$chKey", c.title, c.num, qualities)
-                        all[node.key] = node
-                        node
+        val sections = sectionMap.entries
+            .sortedBy { SECTION_ORDER.indexOf(it.key).let { i -> if (i < 0) 50 else i } }
+            .map { (_, s) ->
+                val brands = s.brands.entries
+                    .sortedWith(compareBy({ brandPriority(it.key) }, { it.value.label }))
+                    .map { (_, b) ->
+                        val channels = b.channels.entries
+                            .sortedWith(compareBy({ it.value.num ?: Int.MAX_VALUE }, { natKey(it.value.title) }))
+                            .map { (_, c) ->
+                                val qualities = c.qualities.entries.sortedBy { qualityRank(it.value.label) }
+                                    .map { (_, q) -> Quality(q.label, q.hits.sortedBy { natKey(it.channel.name) }) }
+                                val node = ChannelNode("${s.label}\u0001${b.label}\u0001${c.title}", c.title, c.num, qualities)
+                                all[node.key] = node
+                                node
+                            }
+                        Brand(b.label, channels)
                     }
-                Brand(b.label, channels)
+                Section(s.label, brands)
             }
-        return brands to all
+        return sections to all
     }
 }
 
@@ -233,7 +264,8 @@ private val SERVER_COLORS = listOf(
 private sealed interface Level {
     data object Root : Level
     data object Favorites : Level
-    data class BrandLevel(val brand: Brand) : Level
+    data class SectionLevel(val section: Section) : Level
+    data class BrandLevel(val section: Section, val brand: Brand) : Level
     data class ChannelLevel(val channel: ChannelNode) : Level
     data class QualityLevel(val channel: ChannelNode, val quality: Quality) : Level
 }
@@ -254,8 +286,8 @@ fun FolderLiveScreen() {
     var stack by remember { mutableStateOf<List<Level>>(listOf(Level.Root)) }
     BackHandler(enabled = stack.size > 1) { stack = stack.dropLast(1) }
 
-    if (vm.loading && vm.brands.isEmpty()) { CenteredLoading(); return }
-    if (vm.error != null && vm.brands.isEmpty()) { MessageBox(vm.error.orEmpty(), actionLabel = "حاول مرة ثانية", onAction = vm::load); return }
+    if (vm.loading && vm.sections.isEmpty()) { CenteredLoading(); return }
+    if (vm.error != null && vm.sections.isEmpty()) { MessageBox(vm.error.orEmpty(), actionLabel = "حاول مرة ثانية", onAction = vm::load); return }
 
     val accent = MaterialTheme.colorScheme.primary
     val cur = stack.last()
@@ -286,6 +318,7 @@ fun FolderLiveScreen() {
                 add(
                     when (it) {
                         Level.Favorites -> "المفضلة"
+                        is Level.SectionLevel -> it.section.label
                         is Level.BrandLevel -> it.brand.label
                         is Level.ChannelLevel -> it.channel.title
                         is Level.QualityLevel -> it.quality.label
@@ -302,8 +335,9 @@ fun FolderLiveScreen() {
             Text(crumbs.joinToString("  ‹  "), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         val prompt = when (cur) {
-            Level.Root -> "اختر المجموعة"
+            Level.Root -> "اختر القسم"
             Level.Favorites -> "المفضلة"
+            is Level.SectionLevel -> "اختر المجموعة"
             is Level.BrandLevel -> "اختر القناة"
             is Level.ChannelLevel -> "اختر الجودة"
             is Level.QualityLevel -> "اختر السيرفر"
@@ -318,19 +352,18 @@ fun FolderLiveScreen() {
             when (cur) {
                 Level.Root -> {
                     if (favorites.isNotEmpty()) item { FolderRow("⭐ المفضلة", "${favorites.size} قناة") { push(Level.Favorites) } }
-                    items(vm.brands) { b -> FolderRow(b.label, "${b.channels.size} قناة") { push(Level.BrandLevel(b)) } }
+                    items(vm.sections) { s -> FolderRow(s.label, "${s.brands.size} مجموعة") { push(Level.SectionLevel(s)) } }
                 }
                 Level.Favorites -> {
                     val favChannels = vm.allChannels.values.filter { it.key in favorites }.sortedBy { natKey(it.title) }
                     if (favChannels.isEmpty()) item { Text("لا توجد قنوات مفضّلة بعد. اضغط مطولاً على أي قناة لإضافتها.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     items(favChannels) { ch -> ChannelRow(ch, colorOf, favorite = true, onClick = { push(Level.ChannelLevel(ch)) }, onLong = { container.settings.toggleFolderFavorite(ch.key) }) }
                 }
+                is Level.SectionLevel -> items(cur.section.brands) { b -> FolderRow(b.label, "${b.channels.size} قناة") { push(Level.BrandLevel(cur.section, b)) } }
                 is Level.BrandLevel -> items(cur.brand.channels) { ch ->
                     ChannelRow(ch, colorOf, favorite = ch.key in favorites, onClick = { push(Level.ChannelLevel(ch)) }, onLong = { container.settings.toggleFolderFavorite(ch.key) })
                 }
-                is Level.ChannelLevel -> items(cur.channel.qualities) { q ->
-                    QualityRow(q, colorOf, accent) { openQuality(cur.channel, q) }
-                }
+                is Level.ChannelLevel -> items(cur.channel.qualities) { q -> QualityRow(q, colorOf, accent) { openQuality(cur.channel, q) } }
                 is Level.QualityLevel -> items(cur.quality.hits) { hit ->
                     ServerRow(hit, colorOf[hit.account.id] ?: accent, accent) { play(hit, cur.quality.hits) }
                 }
