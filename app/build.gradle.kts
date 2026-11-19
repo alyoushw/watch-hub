@@ -20,7 +20,10 @@ android {
         // release to offer updates. Local builds count as 0 (always older).
         val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0
         versionCode = 100 + build
-        versionName = "0.24.$build" + if (privatePreview) "-preview" else ""
+        // The shown version is a clean counter from the VERSION file (1, 2, 3…), bumped per release.
+        // versionCode stays tied to the CI run number so updates always install over older ones.
+        val rel = rootProject.file("VERSION").takeIf { it.exists() }?.readText()?.trim()?.toIntOrNull() ?: 1
+        versionName = "$rel" + if (privatePreview) "-preview" else ""
         buildConfigField("int", "BUILD_NUMBER", "$build")
         buildConfigField("boolean", "IS_PREVIEW", privatePreview.toString())
         val tmdbKey = System.getenv("WATCHHUB_TMDB_KEY").orEmpty().trim()

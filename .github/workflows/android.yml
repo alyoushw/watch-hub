@@ -161,12 +161,16 @@ jobs:
             exit 1
           fi
 
+      - name: Read display version
+        id: ver
+        run: echo "rel=$(cat VERSION 2>/dev/null || echo 1)" >> "$GITHUB_OUTPUT"
+
       - name: Publish release
         if: env.WATCHHUB_PREVIEW != 'true' && ((github.ref == 'refs/heads/main' && github.event_name == 'push') || ((github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ccr-3b14310b-u6y40j') && github.event_name == 'workflow_dispatch' && inputs.distribution == 'stable'))
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: Watch Hub (build ${{ github.run_number }})
+          name: Watch Hub v${{ steps.ver.outputs.rel }}
           files: ${{ env.APK_NAME }}
           make_latest: true
           target_commitish: ${{ github.sha }}
@@ -177,7 +181,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.distribution == 'validation' && 'stable-candidate' || 'smart-preview' }}-${{ github.run_number }}
-          name: Watch Hub - private ${{ inputs.distribution == 'validation' && 'update candidate' || 'smart preview' }} ${{ github.run_number }}
+          name: Watch Hub - private ${{ inputs.distribution == 'validation' && 'update candidate' || 'smart preview' }} v${{ steps.ver.outputs.rel }}
           files: ${{ env.APK_NAME }}
           draft: true
           prerelease: true
