@@ -117,6 +117,7 @@ class WatchHubApp : Application() {
             previous?.uncaughtException(thread, error)
         }
         com.alyoushw.watchhub.data.FourU.initialize(this)
+        com.alyoushw.watchhub.data.FourU.warm()
         container = AppContainer(this)
         com.alyoushw.watchhub.tv.WatchNextPublisher(this, container).start()
         com.alyoushw.watchhub.data.Net.watch(this)

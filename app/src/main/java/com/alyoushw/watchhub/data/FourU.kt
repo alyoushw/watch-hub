@@ -41,6 +41,21 @@ object FourU {
 
     fun initialize(context: Context) { cacheDir = File(context.cacheDir, "fouru-v1") }
 
+    @Volatile private var warmed = false
+
+    /**
+     * Loads the movie and series lists quietly in the background, once per app start, so the first
+     * visit to those sections opens instantly instead of waiting for the ~11–16 MB download. It is
+     * fire-and-forget and shares [cached]'s per-list lock, so it never downloads twice and never
+     * blocks or slows browsing. When the lists are already saved it finds them at once and stops.
+     */
+    fun warm() {
+        if (warmed) return
+        warmed = true
+        scope.launch { runCatching { catalogueRows(true) } }
+        scope.launch { runCatching { catalogueRows(false) } }
+    }
+
     private val refreshing = ConcurrentHashMap.newKeySet<String>()
 
     /** The saved list from memory, else disk, whatever its age (null if never downloaded). */
