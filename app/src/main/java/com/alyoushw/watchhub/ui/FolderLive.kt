@@ -48,7 +48,6 @@ import com.alyoushw.watchhub.data.XtreamItem
 import com.alyoushw.watchhub.data.XtreamKind
 import com.alyoushw.watchhub.player.PlayerActivity
 import com.alyoushw.watchhub.player.QueueItem
-import com.alyoushw.watchhub.player.channelKey
 import com.alyoushw.watchhub.player.qualityTags
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -57,52 +56,55 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** A channel unified across servers: its base key, a display name, and every (server, quality) copy. */
+// Structure: brand (beIN, 8, ألوان, سولو…) ▸ quality (4K, RAW, FHD…) ▸ channel number (1, 2, 3…) ▸
+// server. The brand, number and quality are read from the channel NAME, so the provider's category
+// names are ignored and "AR beIN Sports 1 4K" and "beIN 1 4K RAW" fold together correctly.
+
 private data class FolderChannel(val key: String, val title: String, val hits: List<LiveHit>)
+private data class QualityBlock(val label: String, val channels: List<FolderChannel>)
+private data class Brand(val label: String, val qualities: List<QualityBlock>)
 
-/** A brand folder inside a section (e.g. "ألوان"), with its channels. */
-private data class FolderGroup(val label: String, val channels: List<FolderChannel>)
-
-/** section ("رياضة") -> ordered brand groups. */
-private typealias LiveTree = Map<String, List<FolderGroup>>
-
-private val SECTION_ORDER = listOf("رياضة", "أخبار", "أفلام", "مسلسلات", "أطفال", "دينية", "موسيقى", "وثائقي")
 private val QUALITY_ORDER = listOf("8k", "4k", "fhd", "hd", "sd", "hevc", "raw", "50fps", "60fps", "low")
-
-/** Brand folders shown in this order wherever they appear; others follow, alphabetically. */
-private val GROUP_ORDER = listOf("bein", "bn", "الوان", "alwan", "8", "سولو", "solo", "ssc", "osn", "mbc", "روتانا", "rotana", "تود", "tod")
-
-/** Words stripped from a category name so "AR ألوان", "ألوان VIP"… all fold into one brand "ألوان". */
-private val GROUP_DECORATORS = setOf(
-    "ar", "en", "eng", "عربي", "عربيه", "عربيات", "vip", "hd", "fhd", "uhd", "sd", "4k", "8k",
-    "hevc", "raw", "h265", "50fps", "60fps", "fps", "tv", "plus", "backup", "new",
+private val NAME_DECORATORS = setOf(
+    "ar", "en", "eng", "عربي", "عربيه", "vip", "hd", "fhd", "uhd", "sd", "4k", "8k",
+    "hevc", "raw", "h265", "50fps", "60fps", "fps", "tv", "plus", "backup", "new", "hd2",
 )
 
 private fun normKey(s: String): String =
     s.lowercase().replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا').replace('ة', 'ه').replace('ى', 'ي')
 
-/** The brand name of a category, with its prefixes/suffixes (AR, VIP, HD…) removed. */
-private fun brandLabel(category: String): String {
-    val base = category.replace(Regex("[(\\[{][^)\\]}]*[)\\]}]"), " ").replace("|", " ")
+/** The brand of a channel from its name: quality words, region letters and the channel number removed. */
+private fun brandOf(name: String): String {
+    val base = name.replace(Regex("[(\\[{][^)\\]}]*[)\\]}]"), " ").replace("|", " ")
     val tokens = base.split(Regex("[^\\p{L}\\p{Nd}]+")).filter { it.isNotBlank() }
-    val kept = tokens.filter { normKey(it) !in GROUP_DECORATORS }
-    return kept.joinToString(" ").trim().ifBlank { category.trim() }
+    var sawLetter = false
+    val kept = tokens.filter { t ->
+        val k = normKey(t)
+        val isDigits = t.all { it.isDigit() }
+        val isSingleLetter = t.length == 1 && t[0].isLetter()
+        val keep = when {
+            k in NAME_DECORATORS -> false
+            isSingleLetter -> false
+            isDigits -> !sawLetter // a leading number ("8") is a brand; a later one is a channel number
+            else -> true
+        }
+        if (t.any { it.isLetter() }) sawLetter = true
+        keep
+    }
+    return kept.joinToString(" ").trim().ifBlank { name.trim() }
 }
 
-private fun groupKeyOf(label: String): String = normKey(label).replace(" ", "")
-
-private fun groupPriority(key: String): Int =
-    GROUP_ORDER.indexOfFirst { key.contains(it) }.let { if (it < 0) 500 else it }
-
-/** A sort key that orders numbers naturally ("beIN 2" before "beIN 10"). */
-private fun natKey(s: String): String = Regex("\\d+").replace(s) { it.value.padStart(6, '0') }
-
-/** A readable channel name without brackets or quality words. */
-private fun displayName(name: String): String = name
-    .replace(Regex("[(\\[{][^)\\]}]*[)\\]}]"), " ")
-    .replace(Regex("(?i)\\b(4k|uhd|8k|fhd|hd|sd|raw|hevc|h265|50fps|60fps|low)\\b"), " ")
-    .replace(Regex("^\\s*[A-Za-z]{2,3}\\s*[|:]\\s*"), "")
-    .replace(Regex("\\s+"), " ").trim().ifBlank { name.trim() }
+/** The channel number in a name ("beIN Sports 1 4K" → 1), ignoring quality numbers (4K, H265). */
+private fun numberOf(name: String): Int? {
+    val cleaned = name.replace(Regex("(?i)\\b(4k|uhd|8k|fhd|hd|sd|raw|hevc|h265|50fps|60fps)\\b"), " ")
+    var seenLetter = false
+    var last: Int? = null
+    for (tok in cleaned.split(Regex("[^\\p{L}\\p{Nd}]+")).filter { it.isNotBlank() }) {
+        if (tok.all { it.isDigit() }) { if (seenLetter) last = tok.toIntOrNull() ?: last }
+        else if (tok.any { it.isLetter() }) seenLetter = true
+    }
+    return last
+}
 
 /** A single label for a channel's quality: its tags in order, or "عادي" when it has none. */
 private fun qualityLabel(name: String): String {
@@ -112,6 +114,22 @@ private fun qualityLabel(name: String): String {
         .joinToString(" ") { it.uppercase() }
 }
 
+private fun qualityRank(label: String): Int =
+    QUALITY_ORDER.indexOf(label.lowercase().substringBefore(' ')).let { if (it < 0) 99 else it }
+
+/** Brand order: beIN sports first, then 8, ألوان, سولو, SSC; beIN entertainment and the rest last. */
+private fun brandPriority(brandKey: String): Int = when {
+    (brandKey.contains("bein") || brandKey.contains("بين")) && (brandKey.contains("sport") || brandKey.contains("رياض")) -> 0
+    brandKey.startsWith("8") -> 10
+    brandKey.contains("الوان") || brandKey.contains("alwan") -> 20
+    brandKey.contains("سولو") || brandKey.contains("solo") -> 30
+    brandKey.contains("ssc") -> 40
+    brandKey.contains("bein") || brandKey.contains("بين") -> 900 // beIN movies/series/entertainment
+    else -> 500
+}
+
+private fun natKey(s: String): String = Regex("\\d+").replace(s) { it.value.padStart(6, '0') }
+
 private class FolderLiveViewModel(
     private val api: XtreamApi,
     private val accounts: List<XtreamAccount>,
@@ -120,10 +138,8 @@ private class FolderLiveViewModel(
         private set
     var error by mutableStateOf<String?>(null)
         private set
-    var tree by mutableStateOf<LiveTree>(emptyMap())
+    var brands by mutableStateOf<List<Brand>>(emptyList())
         private set
-
-    /** Every channel by key, merged across all sections/groups — for the favourites view. */
     var allChannels by mutableStateOf<Map<String, FolderChannel>>(emptyMap())
         private set
 
@@ -135,21 +151,14 @@ private class FolderLiveViewModel(
             error = null
             try {
                 val usable = accounts.filter { it.isComplete }
-                if (usable.isEmpty()) { tree = emptyMap(); loading = false; return@launch }
+                if (usable.isEmpty()) { brands = emptyList(); loading = false; return@launch }
                 val loaded = coroutineScope {
-                    usable.map { acc ->
-                        async {
-                            val cats = runCatching { api.categories(XtreamKind.LIVE, acc) }.getOrDefault(emptyList())
-                                .associate { it.id to it.name }
-                            val chans = runCatching { api.all(XtreamKind.LIVE, acc) }.getOrDefault(emptyList())
-                            Triple(acc, cats, chans)
-                        }
-                    }.awaitAll()
+                    usable.map { acc -> async { acc to runCatching { api.all(XtreamKind.LIVE, acc) }.getOrDefault(emptyList()) } }.awaitAll()
                 }
-                val built = withContext(Dispatchers.Default) { buildTree(loaded) }
-                tree = built.first
+                val built = withContext(Dispatchers.Default) { build(loaded) }
+                brands = built.first
                 allChannels = built.second
-                if (tree.isEmpty()) error = "ما وصلت قنوات من الحسابات، تأكد من الاشتراك والإنترنت"
+                if (brands.isEmpty()) error = "ما وصلت قنوات من الحسابات، تأكد من الاشتراك والإنترنت"
             } catch (e: Exception) {
                 error = e.message ?: "تعذّر تحميل القنوات"
             }
@@ -157,46 +166,42 @@ private class FolderLiveViewModel(
         }
     }
 
-    private fun channelTitle(hits: List<LiveHit>): String =
-        hits.map { displayName(it.channel.name) }.filter { it.isNotBlank() }.minByOrNull { it.length }
-            ?: hits.first().channel.name
-
-    private fun buildTree(
-        loaded: List<Triple<XtreamAccount, Map<String, String>, List<XtreamItem>>>,
-    ): Pair<LiveTree, Map<String, FolderChannel>> {
-        data class GroupAcc(val label: String, val channels: LinkedHashMap<String, MutableList<LiveHit>>)
-        // section -> groupKey -> GroupAcc
-        val sections = linkedMapOf<String, LinkedHashMap<String, GroupAcc>>()
-        val all = linkedMapOf<String, MutableList<LiveHit>>()
-        for ((acc, cats, chans) in loaded) {
+    private fun build(loaded: List<Pair<XtreamAccount, List<XtreamItem>>>): Pair<List<Brand>, Map<String, FolderChannel>> {
+        class ChAcc(val title: String, val num: Int?, val hits: MutableList<LiveHit> = mutableListOf())
+        class QAcc(val label: String, val channels: LinkedHashMap<String, ChAcc> = linkedMapOf())
+        class BAcc(val label: String, val qualities: LinkedHashMap<String, QAcc> = linkedMapOf())
+        val brandMap = linkedMapOf<String, BAcc>()
+        for ((acc, chans) in loaded) {
             for (ch in chans) {
-                val catName = ch.categoryId?.let { cats[it] }
-                val section = suggestFolders(ch.name, catName).firstOrNull() ?: "أخرى"
-                val label = brandLabel(catName?.takeIf { it.isNotBlank() } ?: ch.name)
-                val gkey = groupKeyOf(label)
-                val key = channelKey(ch.name).ifBlank { normKey(ch.name).trim() }
-                val hit = LiveHit(ch, acc)
-                sections.getOrPut(section) { linkedMapOf() }
-                    .getOrPut(gkey) { GroupAcc(label, linkedMapOf()) }
-                    .channels.getOrPut(key) { mutableListOf() }.add(hit)
-                all.getOrPut(key) { mutableListOf() }.add(hit)
+                val name = ch.name
+                val bLabel = brandOf(name)
+                val bKey = normKey(bLabel).replace(" ", "")
+                val qLabel = qualityLabel(name)
+                val num = numberOf(name)
+                val chKey = num?.toString() ?: normKey(name).filter { it.isLetterOrDigit() }
+                val b = brandMap.getOrPut(bKey) { BAcc(bLabel) }
+                val q = b.qualities.getOrPut(qLabel) { QAcc(qLabel) }
+                val c = q.channels.getOrPut(chKey) { ChAcc(bLabel + (num?.let { " $it" } ?: ""), num) }
+                c.hits.add(LiveHit(ch, acc))
             }
         }
-        val orderedSections = sections.keys.sortedBy { SECTION_ORDER.indexOf(it).let { i -> if (i < 0) 90 else i } }
-        val tree = linkedMapOf<String, List<FolderGroup>>()
-        for (sec in orderedSections) {
-            val groups = sections[sec] ?: continue
-            val list = groups.entries
-                .sortedWith(compareBy({ groupPriority(it.key) }, { it.value.label }))
-                .map { (_, acc) ->
-                    val channels = acc.channels.map { (key, hits) -> FolderChannel(key, channelTitle(hits), hits.sortedBy { it.channel.name }) }
-                        .sortedBy { natKey(it.title) }
-                    FolderGroup(acc.label, channels)
+        val all = linkedMapOf<String, FolderChannel>()
+        val brands = brandMap.entries
+            .sortedWith(compareBy({ brandPriority(it.key) }, { it.value.label }))
+            .map { (bKey, b) ->
+                val qualities = b.qualities.entries.sortedBy { qualityRank(it.key) }.map { (_, q) ->
+                    val channels = q.channels.entries
+                        .sortedWith(compareBy({ it.value.num ?: Int.MAX_VALUE }, { natKey(it.value.title) }))
+                        .map { (chKey, c) ->
+                            val fc = FolderChannel("$bKey\u0001${q.label}\u0001$chKey", c.title, c.hits.sortedBy { it.account.label })
+                            all[fc.key] = fc
+                            fc
+                        }
+                    QualityBlock(q.label, channels)
                 }
-            tree[sec] = list
-        }
-        val allChannels = all.mapValues { (key, hits) -> FolderChannel(key, channelTitle(hits), hits.sortedBy { it.channel.name }) }
-        return tree to allChannels
+                Brand(b.label, qualities)
+            }
+        return brands to all
     }
 }
 
@@ -206,14 +211,12 @@ private val SERVER_COLORS = listOf(
     Color(0xFFE0863C), Color(0xFFE5894D), Color(0xFF8AA4FF), Color(0xFFD98AC0),
 )
 
-/** Where we are in the folder tree. */
 private sealed interface Level {
     data object Root : Level
     data object Favorites : Level
-    data class Section(val name: String) : Level
-    data class Group(val section: String, val group: FolderGroup) : Level
-    data class Channel(val channel: FolderChannel) : Level
-    data class Quality(val channel: FolderChannel, val quality: String) : Level
+    data class BrandLevel(val brand: Brand) : Level
+    data class QualityLevel(val brand: Brand, val block: QualityBlock) : Level
+    data class ChannelLevel(val channel: FolderChannel) : Level
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -232,11 +235,10 @@ fun FolderLiveScreen() {
     var stack by remember { mutableStateOf<List<Level>>(listOf(Level.Root)) }
     BackHandler(enabled = stack.size > 1) { stack = stack.dropLast(1) }
 
-    if (vm.loading && vm.tree.isEmpty()) { CenteredLoading(); return }
-    if (vm.error != null && vm.tree.isEmpty()) { MessageBox(vm.error.orEmpty(), actionLabel = "حاول مرة ثانية", onAction = vm::load); return }
+    if (vm.loading && vm.brands.isEmpty()) { CenteredLoading(); return }
+    if (vm.error != null && vm.brands.isEmpty()) { MessageBox(vm.error.orEmpty(), actionLabel = "حاول مرة ثانية", onAction = vm::load); return }
 
     val accent = MaterialTheme.colorScheme.primary
-    val tree = vm.tree
     val cur = stack.last()
     fun push(l: Level) { stack = stack + l }
 
@@ -254,18 +256,21 @@ fun FolderLiveScreen() {
         PlayerActivity.start(context, items, siblings.indexOf(hit).coerceAtLeast(0))
     }
 
+    // Tapping a channel: one server plays at once; several open the server picker.
+    fun openChannel(ch: FolderChannel) {
+        if (ch.hits.size <= 1) play(ch.hits.first(), ch.hits) else push(Level.ChannelLevel(ch))
+    }
+
     Column(Modifier.fillMaxSize()) {
-        // Breadcrumb + back
         val crumbs = buildList {
             add("المباشر")
             stack.drop(1).forEach {
                 add(
                     when (it) {
                         Level.Favorites -> "المفضلة"
-                        is Level.Section -> it.name
-                        is Level.Group -> it.group.label
-                        is Level.Channel -> it.channel.title
-                        is Level.Quality -> it.quality
+                        is Level.BrandLevel -> it.brand.label
+                        is Level.QualityLevel -> "${it.brand.label} ${it.block.label}"
+                        is Level.ChannelLevel -> it.channel.title
                         Level.Root -> ""
                     },
                 )
@@ -279,12 +284,11 @@ fun FolderLiveScreen() {
             Text(crumbs.joinToString("  ‹  "), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         val prompt = when (cur) {
-            Level.Root -> "اختر القسم"
+            Level.Root -> "اختر المجموعة"
             Level.Favorites -> "المفضلة"
-            is Level.Section -> "اختر المجموعة"
-            is Level.Group -> "اختر القناة"
-            is Level.Channel -> "اختر الجودة"
-            is Level.Quality -> "اختر السيرفر"
+            is Level.BrandLevel -> "اختر الجودة"
+            is Level.QualityLevel -> "اختر القناة"
+            is Level.ChannelLevel -> "اختر السيرفر"
         }
         Text(prompt, Modifier.padding(horizontal = 16.dp, vertical = 2.dp), fontWeight = FontWeight.Bold)
 
@@ -295,38 +299,29 @@ fun FolderLiveScreen() {
         ) {
             when (cur) {
                 Level.Root -> {
-                    if (favorites.isNotEmpty()) item {
-                        FolderRow("⭐ المفضلة", "${favorites.size} قناة") { push(Level.Favorites) }
-                    }
-                    items(tree.keys.toList()) { sec ->
-                        FolderRow(sec, "${tree[sec]?.size ?: 0} مجموعة") { push(Level.Section(sec)) }
+                    if (favorites.isNotEmpty()) item { FolderRow("⭐ المفضلة", "${favorites.size} قناة") { push(Level.Favorites) } }
+                    items(vm.brands) { b ->
+                        FolderRow(b.label, "${b.qualities.size} جودة") { push(Level.BrandLevel(b)) }
                     }
                 }
                 Level.Favorites -> {
                     val favChannels = vm.allChannels.values.filter { it.key in favorites }.sortedBy { natKey(it.title) }
                     if (favChannels.isEmpty()) item { Text("لا توجد قنوات مفضّلة بعد. اضغط مطولاً على أي قناة لإضافتها.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     items(favChannels) { ch ->
-                        ChannelRow(ch, colorOf, favorite = true, onClick = { push(Level.Channel(ch)) }, onLong = { container.settings.toggleFolderFavorite(ch.key) })
+                        ChannelRow(ch, colorOf, favorite = true, onClick = { openChannel(ch) }, onLong = { container.settings.toggleFolderFavorite(ch.key) })
                     }
                 }
-                is Level.Section -> items(tree[cur.name].orEmpty()) { grp ->
-                    FolderRow(grp.label, "${grp.channels.size} قناة") { push(Level.Group(cur.name, grp)) }
-                }
-                is Level.Group -> items(cur.group.channels) { ch ->
-                    ChannelRow(ch, colorOf, favorite = ch.key in favorites, onClick = { push(Level.Channel(ch)) }, onLong = { container.settings.toggleFolderFavorite(ch.key) })
-                }
-                is Level.Channel -> {
-                    val byQuality = cur.channel.hits.groupBy { qualityLabel(it.channel.name) }.entries
-                        .sortedBy { QUALITY_ORDER.indexOf(it.key.lowercase().substringBefore(' ')).let { i -> if (i < 0) 99 else i } }
-                    items(byQuality) { (qual, hits) ->
-                        QualityRow(qual, hits, colorOf, accent) { push(Level.Quality(cur.channel, qual)) }
+                is Level.BrandLevel -> items(cur.brand.qualities) { qb ->
+                    val chans = qb.channels.size
+                    QualityFolderRow("${cur.brand.label} ${qb.label}", "$chans قناة", qb.channels.flatMap { it.hits }, colorOf, accent) {
+                        push(Level.QualityLevel(cur.brand, qb))
                     }
                 }
-                is Level.Quality -> {
-                    val hits = cur.channel.hits.filter { qualityLabel(it.channel.name) == cur.quality }
-                    items(hits) { hit ->
-                        ServerRow(cur.quality, hit, colorOf[hit.account.id] ?: accent, accent) { play(hit, hits) }
-                    }
+                is Level.QualityLevel -> items(cur.block.channels) { ch ->
+                    ChannelRow(ch, colorOf, favorite = ch.key in favorites, onClick = { openChannel(ch) }, onLong = { container.settings.toggleFolderFavorite(ch.key) })
+                }
+                is Level.ChannelLevel -> items(cur.channel.hits) { hit ->
+                    ServerRow(hit, colorOf[hit.account.id] ?: accent, accent) { play(hit, cur.channel.hits) }
                 }
             }
         }
@@ -344,7 +339,6 @@ private fun RowCard(onClick: () -> Unit, onLong: (() -> Unit)? = null, content: 
             .focusFrame(RoundedCornerShape(12.dp))
             .combinedClickable(onClick = onClick, onLongClick = onLong),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(11.dp),
     ) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(11.dp), content = content)
     }
@@ -371,16 +365,16 @@ private fun ServerDots(hits: List<LiveHit>, colorOf: Map<String, Color>) {
 }
 
 @Composable
-private fun ChannelRow(ch: FolderChannel, colorOf: Map<String, Color>, favorite: Boolean, onClick: () -> Unit, onLong: () -> Unit) {
-    val servers = ch.hits.map { it.account.id }.distinct().size
-    val quals = ch.hits.map { qualityLabel(it.channel.name) }.distinct().size
-    RowCard(onClick, onLong) {
-        if (favorite) Text("⭐", fontSize = 13.sp)
+private fun QualityFolderRow(title: String, subtitle: String, hits: List<LiveHit>, colorOf: Map<String, Color>, accent: Color, onClick: () -> Unit) {
+    RowCard(onClick) {
+        Box(Modifier.clip(RoundedCornerShape(7.dp)).background(accent).padding(horizontal = 9.dp, vertical = 3.dp)) {
+            Text(title.substringAfterLast(' '), color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+        }
         Column(Modifier.weight(1f)) {
-            Text(ch.title, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                Text("$quals جودة · $servers سيرفر", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                ServerDots(ch.hits, colorOf)
+                Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                ServerDots(hits, colorOf)
             }
         }
         Text("‹", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -388,9 +382,18 @@ private fun ChannelRow(ch: FolderChannel, colorOf: Map<String, Color>, favorite:
 }
 
 @Composable
-private fun QualityBadge(text: String, accent: Color) {
-    Box(Modifier.clip(RoundedCornerShape(7.dp)).background(accent).padding(horizontal = 9.dp, vertical = 3.dp)) {
-        Text(text, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+private fun ChannelRow(ch: FolderChannel, colorOf: Map<String, Color>, favorite: Boolean, onClick: () -> Unit, onLong: () -> Unit) {
+    val servers = ch.hits.map { it.account.id }.distinct().size
+    RowCard(onClick, onLong) {
+        if (favorite) Text("⭐", fontSize = 13.sp)
+        Column(Modifier.weight(1f)) {
+            Text(ch.title, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                Text(if (servers > 1) "$servers سيرفر" else "سيرفر واحد", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                ServerDots(ch.hits, colorOf)
+            }
+        }
+        Text(if (servers > 1) "‹" else "▶", color = if (servers > 1) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary)
     }
 }
 
@@ -402,24 +405,8 @@ private fun ServerTag(name: String, color: Color) {
 }
 
 @Composable
-private fun QualityRow(quality: String, hits: List<LiveHit>, colorOf: Map<String, Color>, accent: Color, onClick: () -> Unit) {
+private fun ServerRow(hit: LiveHit, color: Color, accent: Color, onClick: () -> Unit) {
     RowCard(onClick) {
-        QualityBadge(quality, accent)
-        Column(Modifier.weight(1f)) {
-            Text("جودة $quality", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                Text("${hits.map { it.account.id }.distinct().size} سيرفر", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                ServerDots(hits, colorOf)
-            }
-        }
-        Text("‹", color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-private fun ServerRow(quality: String, hit: LiveHit, color: Color, accent: Color, onClick: () -> Unit) {
-    RowCard(onClick) {
-        QualityBadge(quality, accent)
         Column(Modifier.weight(1f)) { ServerTag(hit.account.label, color) }
         Text("▶", color = accent)
     }
