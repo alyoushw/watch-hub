@@ -179,6 +179,17 @@ fun PlayerScreen(
     var controls by remember { mutableStateOf(true) }
     var locked by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf<Menu?>(null) }
+    // "تخطي المقدمة" is not kept on screen the whole intro: it shows for 5 seconds, then hides, and
+    // comes back whenever the controls appear (a tap on the screen or a seek).
+    var showSkip by remember { mutableStateOf(false) }
+    LaunchedEffect(session.skipIntroLabel != null, controls) {
+        if (session.skipIntroLabel == null) {
+            showSkip = false
+        } else {
+            showSkip = true
+            if (!controls) { delay(5_000); showSkip = false }
+        }
+    }
     // Picture size, shape, zoom and stretch: kept on this device (a car screen keeps its own).
     val picPrefs = remember { context.getSharedPreferences("player", Context.MODE_PRIVATE) }
     var resize by remember { mutableIntStateOf(picPrefs.getInt("picture", 0).coerceIn(0, PictureModes.lastIndex)) }
@@ -457,7 +468,7 @@ fun PlayerScreen(
                         KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> if (!controls && menu == null) {
                             when {
                                 session.upNext != null -> onNext()
-                                session.skipIntroLabel != null -> onSkipIntro()
+                                showSkip -> onSkipIntro()
                                 else -> controls = true
                             }
                             true
@@ -642,7 +653,7 @@ fun PlayerScreen(
             }
 
             session.skipIntroLabel?.let { label ->
-                if (!locked && session.upNext == null) {
+                if (showSkip && !locked && session.upNext == null) {
                     PillButton(
                         label + if (tv && !controls) "  (OK)" else "",
                         Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = if (controls) 110.dp else 32.dp),
