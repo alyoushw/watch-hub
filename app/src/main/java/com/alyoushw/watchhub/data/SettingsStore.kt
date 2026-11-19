@@ -241,6 +241,20 @@ class SettingsStore(context: Context) {
         _liveFolderUi.value = on
     }
 
+    private val _folderFavorites = MutableStateFlow(
+        prefs.getString(KEY_FOLDER_FAV, "").orEmpty().split('\n').filter { it.isNotBlank() }.toSet(),
+    )
+
+    /** Channel keys (channelKey) the user starred in the folder live view; they show at the top. */
+    val folderFavorites: StateFlow<Set<String>> = _folderFavorites.asStateFlow()
+
+    fun toggleFolderFavorite(key: String) {
+        if (key.isBlank()) return
+        val now = _folderFavorites.value.let { if (key in it) it - key else it + key }
+        prefs.edit().putString(KEY_FOLDER_FAV, now.joinToString("\n")).apply()
+        _folderFavorites.value = now
+    }
+
     // ---------- channel folders ("رياضة", "أخبار", …) ----------
 
     private val foldersSerializer = kotlinx.serialization.serializer<Map<String, List<String>>>()
@@ -284,7 +298,7 @@ class SettingsStore(context: Context) {
     // ---------- profiles (guest / signed-in account) ----------
 
     /** The settings that belong to a person (not to the device): kept apart for the guest and each account. */
-    private val profileStringKeys = listOf(KEY_XTREAM_ACCOUNTS, KEY_XTREAM_ACTIVE, KEY_XTREAM_FAV, KEY_XTREAM_RECENT, KEY_XTREAM_FOLDERS)
+    private val profileStringKeys = listOf(KEY_XTREAM_ACCOUNTS, KEY_XTREAM_ACTIVE, KEY_XTREAM_FAV, KEY_XTREAM_RECENT, KEY_XTREAM_FOLDERS, KEY_FOLDER_FAV)
 
     /**
      * Puts [from]'s personal settings aside (or drops them when [discard]) and brings back [to]'s
@@ -310,7 +324,7 @@ class SettingsStore(context: Context) {
     /** Forgets this profile's Xtream accounts, favourite and recent channels. */
     fun clearProfile() {
         prefs.edit().putString(KEY_XTREAM_ACCOUNTS, "[]").remove(KEY_XTREAM_ACTIVE).remove(KEY_XTREAM_FAV)
-            .remove(KEY_XTREAM_RECENT).remove(KEY_XTREAM_FOLDERS).putLong(KEY_XTREAM_UPDATED, 0).commit()
+            .remove(KEY_XTREAM_RECENT).remove(KEY_XTREAM_FOLDERS).remove(KEY_FOLDER_FAV).putLong(KEY_XTREAM_UPDATED, 0).commit()
         reloadProfile()
     }
 
@@ -320,6 +334,7 @@ class SettingsStore(context: Context) {
         _xtreamFavorites.value = prefs.getString(KEY_XTREAM_FAV, "").orEmpty().split(',').filter { it.isNotBlank() }.toSet()
         _xtreamRecent.value = prefs.getString(KEY_XTREAM_RECENT, "").orEmpty().split(',').filter { it.isNotBlank() }
         _xtreamFolders.value = loadFolders()
+        _folderFavorites.value = prefs.getString(KEY_FOLDER_FAV, "").orEmpty().split('\n').filter { it.isNotBlank() }.toSet()
     }
 
     fun setApiKey(value: String) {
@@ -402,5 +417,6 @@ class SettingsStore(context: Context) {
         const val KEY_YOUTUBE = "youtube_enabled"
         const val KEY_SEEDED = "accounts_seeded"
         const val KEY_LIVE_FOLDER_UI = "live_folder_ui"
+        const val KEY_FOLDER_FAV = "folder_favorites"
     }
 }
