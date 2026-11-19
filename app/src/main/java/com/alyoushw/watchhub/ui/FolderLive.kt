@@ -56,69 +56,90 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-// Structure: brand (beIN, 8, ألوان, سولو…) ▸ channel number (beIN 1, 2, 3…) ▸ version/quality
-// (4K, RAW, NM, SS…) ▸ server. Brand, number and version are read from the channel NAME, so the
-// provider's category names are ignored and every "beIN Sports 1" variant folds under one channel.
+// Structure: brand ▸ channel number ▸ quality ▸ server. The brand is one canonical name per family
+// (every "BEIN SPORTS", "BEIN SPORT TOD", "beIN 1 (F)"… fold into one "beIN Sport"), read from the
+// provider category and the channel name together. The number and the resolution come from the
+// channel name; the leaf is each real feed, labelled by its server so all servers sit side by side.
 
-private data class Variant(val label: String, val hits: List<LiveHit>)
-private data class ChannelNode(val key: String, val title: String, val number: Int?, val variants: List<Variant>)
+private data class Quality(val label: String, val hits: List<LiveHit>)
+private data class ChannelNode(val key: String, val title: String, val number: Int?, val qualities: List<Quality>)
 private data class Brand(val label: String, val channels: List<ChannelNode>)
 
 private val QUALITY_ORDER = listOf("8k", "4k", "fhd", "hd", "sd", "hevc", "raw", "50fps", "60fps", "low")
-private val PREFIXES = setOf("ar", "en", "eng", "عربي", "عربيه", "عربى")
-private val NAME_DECORATORS = setOf(
-    "ar", "en", "eng", "عربي", "عربيه", "vip", "hd", "fhd", "uhd", "sd", "4k", "8k",
-    "hevc", "raw", "h265", "50fps", "60fps", "fps", "tv", "plus", "backup", "new",
-)
 
 private fun normKey(s: String): String =
     s.lowercase().replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا').replace('ة', 'ه').replace('ى', 'ي')
 
 private fun natKey(s: String): String = Regex("\\d+").replace(s) { it.value.padStart(6, '0') }
 
+/** The resolution of a channel ("beIN 1 (F) - 4K" → "4K"), ignoring the region feed. */
 private fun qualityLabel(name: String): String {
     val tags = qualityTags(name)
     if (tags.isEmpty()) return "عادي"
     return tags.sortedBy { QUALITY_ORDER.indexOf(it).let { i -> if (i < 0) 99 else i } }.joinToString(" ") { it.uppercase() }
 }
 
-private fun variantRank(label: String): Int =
+private fun qualityRank(label: String): Int =
     QUALITY_ORDER.indexOf(label.lowercase().substringBefore(' ')).let { if (it < 0) 90 else it }
 
-/** Splits a channel name into (brand, channel number, version/quality). */
-private fun parseChannel(name: String): Triple<String, Int?, String> {
-    val cleaned = name.replace(Regex("[(\\[{][^)\\]}]*[)\\]}]"), " ")
-    val tokens = cleaned.split(Regex("[^\\p{L}\\p{Nd}]+")).filter { it.isNotBlank() }
-    var start = 0
-    while (start < tokens.size && (normKey(tokens[start]) in PREFIXES || (tokens[start].length == 1 && tokens[start][0].isLetter()))) start++
-    val rest = tokens.drop(start)
-    var numIdx = -1
-    var sawLetter = false
-    for ((idx, t) in rest.withIndex()) {
-        if (t.all { it.isDigit() }) { if (sawLetter) { numIdx = idx; break } }
-        else if (t.any { it.isLetter() }) sawLetter = true
-    }
-    return if (numIdx >= 0) {
-        val brand = rest.take(numIdx).filter { normKey(it) !in NAME_DECORATORS && it.length > 1 }.joinToString(" ").trim()
-        val num = rest[numIdx].toIntOrNull()
-        val variant = rest.drop(numIdx + 1)
-            .filter { normKey(it) !in PREFIXES && it.lowercase() != "tv" && it.lowercase() != "backup" }
-            .joinToString(" ").uppercase().trim().ifBlank { "عادي" }
-        Triple(brand.ifBlank { name.trim() }, num, variant)
-    } else {
-        val brand = rest.filter { normKey(it) !in NAME_DECORATORS && it.length > 1 && !it.all { c -> c.isDigit() } }.joinToString(" ").trim()
-        Triple(brand.ifBlank { name.trim() }, null, qualityLabel(name))
+/** One canonical brand for a whole family, from the category name and the channel name together. */
+private fun canonicalBrand(categoryAndName: String): String {
+    val n = normKey(categoryAndName)
+    fun has(vararg k: String) = k.any { it in n }
+    return when {
+        has("bein", "بين") && has("sport", "سبورت", "رياض") -> "beIN Sport"
+        has("bein", "بين") && has("news", "اخبار") -> "beIN News"
+        has("bein", "بين") && Regex("\\bbe?in\\b\\s*\\d").containsMatchIn(n) -> "beIN Sport" // "beIN 1", "beIN 2"…
+        has("bein", "بين") -> "beIN"
+        has("الوان", "alwan") -> "ألوان"
+        has("ثماني", "ثمانيه", "thmany", "thamany", "thamanya") -> "الثمانية"
+        has("سولو", "solo") -> "سولو"
+        has("ssc") -> "SSC"
+        has("relax") -> "Relax"
+        else -> cleanBrand(categoryAndName)
     }
 }
 
-/** Brand order: beIN sports first, then 8, ألوان, سولو, SSC; beIN entertainment and the rest last. */
-private fun brandPriority(brandKey: String): Int = when {
-    (brandKey.contains("bein") || brandKey.contains("بين")) && (brandKey.contains("sport") || brandKey.contains("رياض")) -> 0
-    brandKey.startsWith("8") -> 10
-    brandKey.contains("الوان") || brandKey.contains("alwan") -> 20
-    brandKey.contains("سولو") || brandKey.contains("solo") -> 30
-    brandKey.contains("ssc") -> 40
-    brandKey.contains("bein") || brandKey.contains("بين") -> 900
+private val BRAND_DECORATORS = setOf("ar", "en", "eng", "عربي", "عربيه", "vip", "hd", "fhd", "uhd", "sd", "4k", "8k", "hevc", "raw", "h265", "hdr", "tv", "plus", "backup", "new")
+
+/** Fallback brand for an unknown family: the category/name minus decorators, region letters and numbers. */
+private fun cleanBrand(text: String): String {
+    val base = text.replace(Regex("[(\\[{][^)\\]}]*[)\\]}]"), " ").replace("|", " ")
+    val tokens = base.split(Regex("[^\\p{L}\\p{Nd}]+")).filter { it.isNotBlank() }
+    var sawLetter = false
+    val kept = tokens.filter { t ->
+        val keep = normKey(t) !in BRAND_DECORATORS && !(t.length == 1 && t[0].isLetter()) &&
+            !(t.all { it.isDigit() } && sawLetter)
+        if (t.any { it.isLetter() }) sawLetter = true
+        keep
+    }
+    return kept.joinToString(" ").trim().ifBlank { text.trim() }
+}
+
+/** The channel number in a name ("beIN 1 (F) - 4K" → 1), ignoring the resolution number. */
+private fun numberOf(name: String): Int? {
+    val cleaned = name.replace(Regex("(?i)\\b(4k|8k|uhd|fhd|hd|sd|raw|hevc|h265|hdr|50fps|60fps)\\b"), " ")
+    var seenLetter = false
+    var last: Int? = null
+    for (tok in cleaned.split(Regex("[^\\p{L}\\p{Nd}]+")).filter { it.isNotBlank() }) {
+        if (tok.all { it.isDigit() }) { if (seenLetter) last = tok.toIntOrNull() ?: last }
+        else if (tok.any { it.isLetter() }) seenLetter = true
+    }
+    return last
+}
+
+private fun cleanTitle(name: String): String = name
+    .replace(Regex("[(\\[{][^)\\]}]*[)\\]}]"), " ")
+    .replace(Regex("(?i)\\b(4k|8k|uhd|fhd|hd|sd|raw|hevc|h265|hdr)\\b"), " ")
+    .replace(Regex("\\s+"), " ").trim().ifBlank { name.trim() }
+
+private fun brandPriority(label: String): Int = when (label) {
+    "beIN Sport" -> 0
+    "الثمانية" -> 10
+    "ألوان" -> 20
+    "سولو" -> 30
+    "SSC" -> 40
+    "beIN", "beIN News" -> 900
     else -> 500
 }
 
@@ -145,7 +166,13 @@ private class FolderLiveViewModel(
                 val usable = accounts.filter { it.isComplete }
                 if (usable.isEmpty()) { brands = emptyList(); loading = false; return@launch }
                 val loaded = coroutineScope {
-                    usable.map { acc -> async { acc to runCatching { api.all(XtreamKind.LIVE, acc) }.getOrDefault(emptyList()) } }.awaitAll()
+                    usable.map { acc ->
+                        async {
+                            val cats = runCatching { api.categories(XtreamKind.LIVE, acc) }.getOrDefault(emptyList()).associate { it.id to it.name }
+                            val chans = runCatching { api.all(XtreamKind.LIVE, acc) }.getOrDefault(emptyList())
+                            Triple(acc, cats, chans)
+                        }
+                    }.awaitAll()
                 }
                 val built = withContext(Dispatchers.Default) { build(loaded) }
                 brands = built.first
@@ -158,33 +185,36 @@ private class FolderLiveViewModel(
         }
     }
 
-    private fun build(loaded: List<Pair<XtreamAccount, List<XtreamItem>>>): Pair<List<Brand>, Map<String, ChannelNode>> {
-        class VAcc(val label: String, val hits: MutableList<LiveHit> = mutableListOf())
-        class CAcc(val title: String, val num: Int?, val variants: LinkedHashMap<String, VAcc> = linkedMapOf())
+    private fun build(loaded: List<Triple<XtreamAccount, Map<String, String>, List<XtreamItem>>>): Pair<List<Brand>, Map<String, ChannelNode>> {
+        class QAcc(val label: String, val hits: MutableList<LiveHit> = mutableListOf())
+        class CAcc(val title: String, val num: Int?, val qualities: LinkedHashMap<String, QAcc> = linkedMapOf())
         class BAcc(val label: String, val channels: LinkedHashMap<String, CAcc> = linkedMapOf())
         val brandMap = linkedMapOf<String, BAcc>()
-        for ((acc, chans) in loaded) {
+        for ((acc, cats, chans) in loaded) {
             for (ch in chans) {
-                val (bLabel, num, variant) = parseChannel(ch.name)
-                val bKey = normKey(bLabel).replace(" ", "")
-                val chKey = num?.toString() ?: ("b" + bKey)
-                val vKey = normKey(variant)
+                val catName = ch.categoryId?.let { cats[it] }.orEmpty()
+                val bLabel = canonicalBrand("$catName ${ch.name}")
+                val bKey = bLabel
+                val num = numberOf(ch.name)
+                val qLabel = qualityLabel(ch.name)
+                val chTitle = if (num != null) "$bLabel $num" else cleanTitle(ch.name)
+                val chKey = num?.toString() ?: ("n:" + normKey(chTitle).filter { it.isLetterOrDigit() })
                 val b = brandMap.getOrPut(bKey) { BAcc(bLabel) }
-                val c = b.channels.getOrPut(chKey) { CAcc(bLabel + (num?.let { " $it" } ?: ""), num) }
-                val v = c.variants.getOrPut(vKey) { VAcc(variant) }
-                v.hits.add(LiveHit(ch, acc))
+                val c = b.channels.getOrPut(chKey) { CAcc(chTitle, num) }
+                val q = c.qualities.getOrPut(qLabel) { QAcc(qLabel) }
+                q.hits.add(LiveHit(ch, acc))
             }
         }
         val all = linkedMapOf<String, ChannelNode>()
         val brands = brandMap.entries
             .sortedWith(compareBy({ brandPriority(it.key) }, { it.value.label }))
-            .map { (bKey, b) ->
+            .map { (_, b) ->
                 val channels = b.channels.entries
                     .sortedWith(compareBy({ it.value.num ?: Int.MAX_VALUE }, { natKey(it.value.title) }))
                     .map { (chKey, c) ->
-                        val variants = c.variants.entries.sortedBy { variantRank(it.value.label) }
-                            .map { (_, v) -> Variant(v.label, v.hits.sortedBy { it.account.label }) }
-                        val node = ChannelNode("$bKey\u0001$chKey", c.title, c.num, variants)
+                        val qualities = c.qualities.entries.sortedBy { qualityRank(it.value.label) }
+                            .map { (_, q) -> Quality(q.label, q.hits.sortedBy { natKey(it.channel.name) }) }
+                        val node = ChannelNode("${b.label}\u0001$chKey", c.title, c.num, qualities)
                         all[node.key] = node
                         node
                     }
@@ -205,7 +235,7 @@ private sealed interface Level {
     data object Favorites : Level
     data class BrandLevel(val brand: Brand) : Level
     data class ChannelLevel(val channel: ChannelNode) : Level
-    data class VariantLevel(val channel: ChannelNode, val variant: Variant) : Level
+    data class QualityLevel(val channel: ChannelNode, val quality: Quality) : Level
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -245,8 +275,8 @@ fun FolderLiveScreen() {
         PlayerActivity.start(context, items, siblings.indexOf(hit).coerceAtLeast(0))
     }
 
-    fun openVariant(ch: ChannelNode, v: Variant) {
-        if (v.hits.size <= 1) play(v.hits.first(), v.hits) else push(Level.VariantLevel(ch, v))
+    fun openQuality(ch: ChannelNode, q: Quality) {
+        if (q.hits.size <= 1) play(q.hits.first(), q.hits) else push(Level.QualityLevel(ch, q))
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -258,7 +288,7 @@ fun FolderLiveScreen() {
                         Level.Favorites -> "المفضلة"
                         is Level.BrandLevel -> it.brand.label
                         is Level.ChannelLevel -> it.channel.title
-                        is Level.VariantLevel -> it.variant.label
+                        is Level.QualityLevel -> it.quality.label
                         Level.Root -> ""
                     },
                 )
@@ -276,7 +306,7 @@ fun FolderLiveScreen() {
             Level.Favorites -> "المفضلة"
             is Level.BrandLevel -> "اختر القناة"
             is Level.ChannelLevel -> "اختر الجودة"
-            is Level.VariantLevel -> "اختر السيرفر"
+            is Level.QualityLevel -> "اختر السيرفر"
         }
         Text(prompt, Modifier.padding(horizontal = 16.dp, vertical = 2.dp), fontWeight = FontWeight.Bold)
 
@@ -298,11 +328,11 @@ fun FolderLiveScreen() {
                 is Level.BrandLevel -> items(cur.brand.channels) { ch ->
                     ChannelRow(ch, colorOf, favorite = ch.key in favorites, onClick = { push(Level.ChannelLevel(ch)) }, onLong = { container.settings.toggleFolderFavorite(ch.key) })
                 }
-                is Level.ChannelLevel -> items(cur.channel.variants) { v ->
-                    VariantRow(v, colorOf, accent) { openVariant(cur.channel, v) }
+                is Level.ChannelLevel -> items(cur.channel.qualities) { q ->
+                    QualityRow(q, colorOf, accent) { openQuality(cur.channel, q) }
                 }
-                is Level.VariantLevel -> items(cur.variant.hits) { hit ->
-                    ServerRow(hit, colorOf[hit.account.id] ?: accent, accent) { play(hit, cur.variant.hits) }
+                is Level.QualityLevel -> items(cur.quality.hits) { hit ->
+                    ServerRow(hit, colorOf[hit.account.id] ?: accent, accent) { play(hit, cur.quality.hits) }
                 }
             }
         }
@@ -347,13 +377,13 @@ private fun ServerDots(hits: List<LiveHit>, colorOf: Map<String, Color>) {
 
 @Composable
 private fun ChannelRow(ch: ChannelNode, colorOf: Map<String, Color>, favorite: Boolean, onClick: () -> Unit, onLong: () -> Unit) {
-    val hits = ch.variants.flatMap { it.hits }
+    val hits = ch.qualities.flatMap { it.hits }
     RowCard(onClick, onLong) {
         if (favorite) Text("⭐", fontSize = 13.sp)
         Column(Modifier.weight(1f)) {
             Text(ch.title, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                Text("${ch.variants.size} جودة", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                Text("${ch.qualities.size} جودة", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                 ServerDots(hits, colorOf)
             }
         }
@@ -362,17 +392,17 @@ private fun ChannelRow(ch: ChannelNode, colorOf: Map<String, Color>, favorite: B
 }
 
 @Composable
-private fun VariantRow(v: Variant, colorOf: Map<String, Color>, accent: Color, onClick: () -> Unit) {
-    val single = v.hits.size <= 1
+private fun QualityRow(q: Quality, colorOf: Map<String, Color>, accent: Color, onClick: () -> Unit) {
+    val single = q.hits.size <= 1
     RowCard(onClick) {
         Box(Modifier.clip(RoundedCornerShape(7.dp)).background(accent).padding(horizontal = 9.dp, vertical = 3.dp)) {
-            Text(v.label, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            Text(q.label, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
         }
         Column(Modifier.weight(1f)) {
-            Text("جودة ${v.label}", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text("جودة ${q.label}", fontWeight = FontWeight.Bold, fontSize = 15.sp)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                Text(if (single) "سيرفر واحد" else "${v.hits.map { it.account.id }.distinct().size} سيرفر", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                ServerDots(v.hits, colorOf)
+                Text(if (single) "سيرفر واحد" else "${q.hits.size} تغذية", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                ServerDots(q.hits, colorOf)
             }
         }
         Text(if (single) "▶" else "‹", color = if (single) accent else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -380,16 +410,14 @@ private fun VariantRow(v: Variant, colorOf: Map<String, Color>, accent: Color, o
 }
 
 @Composable
-private fun ServerTag(name: String, color: Color) {
-    Box(Modifier.clip(RoundedCornerShape(50)).background(color.copy(alpha = 0.18f)).padding(horizontal = 10.dp, vertical = 3.dp)) {
-        Text(name, color = color, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-    }
-}
-
-@Composable
 private fun ServerRow(hit: LiveHit, color: Color, accent: Color, onClick: () -> Unit) {
     RowCard(onClick) {
-        Column(Modifier.weight(1f)) { ServerTag(hit.account.label, color) }
+        Box(Modifier.clip(RoundedCornerShape(50)).background(color.copy(alpha = 0.18f)).padding(horizontal = 10.dp, vertical = 3.dp)) {
+            Text(hit.account.label, color = color, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+        }
+        Column(Modifier.weight(1f)) {
+            Text(hit.channel.name, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
         Text("▶", color = accent)
     }
 }
