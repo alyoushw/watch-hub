@@ -212,7 +212,7 @@ fun RatingChip(value: Double?, modifier: Modifier = Modifier) {
 /** Poster with title; [rank] draws a large "top 10" number on it. */
 @Composable
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
-fun PosterCard(item: SearchResult, rank: Int? = null, width: Dp = 120.dp, onClick: () -> Unit) {
+fun PosterCard(item: SearchResult, rank: Int? = null, width: Dp = if (isTv()) 120.dp else 104.dp, onClick: () -> Unit) {
     val context = LocalContext.current
     Column(
         // Long press: share it.
@@ -250,9 +250,9 @@ fun PosterCard(item: SearchResult, rank: Int? = null, width: Dp = 120.dp, onClic
         Text(
             item.displayTitle,
             style = MaterialTheme.typography.bodySmall,
-            // Always two lines high: a row's height must not change while moving along it.
-            minLines = 2,
-            maxLines = 2,
+            // Always one line high: a row's height must not change while moving along it.
+            minLines = 1,
+            maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
     }
@@ -260,7 +260,7 @@ fun PosterCard(item: SearchResult, rank: Int? = null, width: Dp = 120.dp, onClic
 
 /** Wide card with the backdrop image and the title over it. */
 @Composable
-fun BackdropCard(item: SearchResult, width: Dp = 280.dp, onClick: () -> Unit) {
+fun BackdropCard(item: SearchResult, width: Dp = if (isTv()) 280.dp else 232.dp, onClick: () -> Unit) {
     Box(
         Modifier
             .width(width)
@@ -327,8 +327,8 @@ fun TitleRow(
             }
         }
         LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             itemsIndexed(items, key = { _, it -> "${it.mediaType}:${it.id}" }) { index, item ->
                 if (wide) {

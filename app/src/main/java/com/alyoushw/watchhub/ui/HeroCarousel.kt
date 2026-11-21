@@ -145,7 +145,7 @@ fun HeroCarousel(
     val height = when {
         tv -> screenHeight * 0.66f
         wideShort -> screenHeight * 0.92f
-        else -> (screenHeight * 0.58f).coerceAtMost(520.dp)
+        else -> (screenHeight * 0.5f).coerceAtMost(460.dp)
     }
 
     // Advance by itself every 7 seconds; not while the remote is on the banner (moving the page
