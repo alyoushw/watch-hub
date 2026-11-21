@@ -386,6 +386,8 @@ fun LiveChannels(showAccounts: Boolean = true, accountOverride: XtreamAccount? =
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 720.dp
+        val boxWidth = maxWidth
+        val boxHeight = maxHeight
         val channelList: @Composable (Modifier) -> Unit = { mod ->
             Pane(mod) {
                 when {
@@ -487,7 +489,7 @@ fun LiveChannels(showAccounts: Boolean = true, accountOverride: XtreamAccount? =
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 previewing?.let { hit ->
                     Column {
-                        LivePicture(hit = hit, idle = hit, onLease = { previewLease = it }, generation = previewGeneration, onOpen = { openFull(hit) }, modifier = Modifier.fillMaxWidth().height(minOf(maxWidth * 9f / 16f, maxHeight * 0.4f)), rounded = false)
+                        LivePicture(hit = hit, idle = hit, onLease = { previewLease = it }, generation = previewGeneration, onOpen = { openFull(hit) }, modifier = Modifier.fillMaxWidth().height(minOf(boxWidth * 9f / 16f, boxHeight * 0.4f)), rounded = false)
                         Row(
                             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -532,7 +534,7 @@ fun LiveChannels(showAccounts: Boolean = true, accountOverride: XtreamAccount? =
                                 query = ""
                                 vm.category = it
                             },
-                            modifier = Modifier.width((maxWidth * 0.34f).coerceIn(118.dp, 220.dp)).fillMaxHeight(),
+                            modifier = Modifier.width((boxWidth * 0.34f).coerceIn(118.dp, 220.dp)).fillMaxHeight(),
                         )
                     }
                 }
