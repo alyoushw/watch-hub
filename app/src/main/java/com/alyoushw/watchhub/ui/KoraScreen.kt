@@ -531,7 +531,7 @@ fun KoraScreen(
     }
 }
 
-private const val KORA_HOME = "https://majed-koora.live/"
+private const val KORA_HOME = "http://majed-kooora.com/"
 
 internal data class WebLinkItem(val label: String, val url: String, val download: Boolean)
 

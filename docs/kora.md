@@ -1,6 +1,6 @@
 # Kora website page
 
-The **كوره** navigation entry opens https://majed-koora.live/ inside Watch Hub.
+The **كوره** navigation entry opens http://majed-kooora.com/ inside Watch Hub.
 It uses the public website and its normal match/watch navigation, not the
 separately installed Majed Sport APK. The website retains its normal watch flow,
 access rules, advertising flow and server-side updates. No API key or native-app

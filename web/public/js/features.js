@@ -279,6 +279,6 @@ export async function downloadsPage(id) {
 }
 
 export async function websitePage(_id, kind) {
-  const kora = kind === "kora", title = kora ? "كوره" : "يوتيوب", url = kora ? "https://majed-koora.live/" : "https://www.youtube.com/";
+  const kora = kind === "kora", title = kora ? "كوره" : "يوتيوب", url = kora ? "http://majed-kooora.com/" : "https://www.youtube.com/";
   view.innerHTML = `<h1>${title}</h1><section class="card-box"><p class="muted">${kora ? "تابع المباريات والبث في موقع كورة. يفتح في تبويب جديد، وتبقى صفحة Watch Hub محفوظة هنا." : "افتح يوتيوب في تبويب جديد لمتابعة محتواه ومشغّله."}</p><a class="btn" href="${url}" target="_blank" rel="noopener noreferrer">${kora ? "افتح كورة والبث المباشر ↗" : "افتح يوتيوب ↗"}</a></section>`;
 }
