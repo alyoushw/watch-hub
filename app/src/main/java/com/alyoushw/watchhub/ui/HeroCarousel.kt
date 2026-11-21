@@ -6,7 +6,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -73,12 +75,13 @@ fun HeroTabs(
     live: Boolean = false,
     onLive: (() -> Unit)? = null,
 ) {
+    val narrow = LocalConfiguration.current.screenWidthDp < 600
     Row(
-        Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp),
+        Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = if (narrow) 12.dp else 20.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text("Watch Hub", color = Gold, fontWeight = FontWeight.Black, fontSize = 22.sp)
+        if (!narrow) Text("Watch Hub", color = Gold, fontWeight = FontWeight.Black, fontSize = 22.sp, maxLines = 1, softWrap = false)
         // "مباشر" (the Xtream Codes live channels) comes first, before series and films.
         val entries = buildList<Pair<MediaType?, String>> {
             if (onLive != null) add(null to "مباشر")
@@ -86,27 +89,33 @@ fun HeroTabs(
             add(MediaType.MOVIE to "أفلام")
             add(MediaType.ANIME to "أنمي")
         }
-        entries.forEach { (type, label) ->
-            val on = if (type == null) live else !live && type == selected
-            Column(
-                Modifier.focusFrame(RoundedCornerShape(8.dp))
-                    .clickable { if (type == null) onLive?.invoke() else onSelect(type) }
-                    .padding(horizontal = 4.dp, vertical = 2.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(
-                    label,
-                    color = if (on) Color.White else Color.White.copy(alpha = 0.65f),
-                    fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
-                    fontSize = 17.sp,
-                )
-                Box(
-                    Modifier.padding(top = 4.dp).width(if (on) 22.dp else 0.dp).height(3.dp)
-                        .clip(RoundedCornerShape(2.dp)).background(Gold),
-                )
+        Row(
+            Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(if (narrow) 8.dp else 16.dp),
+        ) {
+            entries.forEach { (type, label) ->
+                val on = if (type == null) live else !live && type == selected
+                Column(
+                    Modifier.focusFrame(RoundedCornerShape(8.dp))
+                        .clickable { if (type == null) onLive?.invoke() else onSelect(type) }
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        label,
+                        color = if (on) Color.White else Color.White.copy(alpha = 0.65f),
+                        fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
+                        fontSize = if (narrow) 16.sp else 17.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                    )
+                    Box(
+                        Modifier.padding(top = 4.dp).width(if (on) 22.dp else 0.dp).height(3.dp)
+                            .clip(RoundedCornerShape(2.dp)).background(Gold),
+                    )
+                }
             }
         }
-        Spacer(Modifier.weight(1f))
         // Only while there are downloads (with their progress).
         DownloadsButton()
         IconButton(modifier = Modifier.focusFrame(), onClick = onRefresh) {

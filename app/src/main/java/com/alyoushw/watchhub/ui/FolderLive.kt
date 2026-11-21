@@ -192,6 +192,9 @@ private fun brandPriority(label: String): Int = when (label) {
     else -> 500
 }
 
+private class FolderCache(val key: String, val at: Long, val sections: List<Section>, val all: Map<String, ChannelNode>)
+private var folderCache: FolderCache? = null
+
 private class FolderLiveViewModel(
     private val api: XtreamApi,
     private val accounts: List<XtreamAccount>,
@@ -205,7 +208,13 @@ private class FolderLiveViewModel(
     var allChannels by mutableStateOf<Map<String, ChannelNode>>(emptyMap())
         private set
 
-    init { load() }
+    init {
+        val key = accounts.filter { it.isComplete }.joinToString { it.id }
+        val hit = folderCache
+        if (hit != null && hit.key == key && System.currentTimeMillis() - hit.at < 10 * 60_000L) {
+            sections = hit.sections; allChannels = hit.all; loading = false
+        } else load()
+    }
 
     fun load() {
         viewModelScope.launch {
@@ -217,15 +226,16 @@ private class FolderLiveViewModel(
                 val loaded = coroutineScope {
                     usable.map { acc ->
                         async {
-                            val cats = runCatching { api.categories(XtreamKind.LIVE, acc) }.getOrDefault(emptyList()).associate { it.id to it.name }
-                            val chans = runCatching { api.all(XtreamKind.LIVE, acc) }.getOrDefault(emptyList())
-                            Triple(acc, cats, chans)
+                            val catsJob = async { runCatching { api.categories(XtreamKind.LIVE, acc) }.getOrDefault(emptyList()).associate { it.id to it.name } }
+                            val chansJob = async { runCatching { api.all(XtreamKind.LIVE, acc) }.getOrDefault(emptyList()) }
+                            Triple(acc, catsJob.await(), chansJob.await())
                         }
                     }.awaitAll()
                 }
                 val built = withContext(Dispatchers.Default) { build(loaded) }
                 sections = built.first
                 allChannels = built.second
+                if (sections.isNotEmpty()) folderCache = FolderCache(usable.joinToString { it.id }, System.currentTimeMillis(), built.first, built.second)
                 if (sections.isEmpty()) error = "ما وصلت قنوات من الحسابات، تأكد من الاشتراك والإنترنت"
             } catch (e: Exception) {
                 error = e.message ?: "تعذّر تحميل القنوات"
