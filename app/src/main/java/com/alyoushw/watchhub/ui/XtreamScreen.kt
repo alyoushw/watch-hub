@@ -168,8 +168,11 @@ fun XtreamScreen(onOpenSeries: (String) -> Unit, onOpenSettings: () -> Unit) {
     Scaffold(
         contentWindowInsets = WindowInsets(0),
         topBar = {
+            // Phones: a slim bar, so the lists keep the height (it matters most when held sideways).
+            val slim = !isTv()
             TopAppBar(
-                title = { Text("قنواتي") },
+                title = { Text("قنواتي", style = if (slim) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge) },
+                expandedHeight = if (slim) 44.dp else androidx.compose.material3.TopAppBarDefaults.TopAppBarExpandedHeight,
                 actions = {
                     androidx.compose.material3.TextButton(modifier = Modifier.focusFrame(), onClick = { showDownloads = true }) { Text("📥 التنزيلات") }
                 },
