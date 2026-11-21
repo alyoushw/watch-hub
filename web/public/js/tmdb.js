@@ -3,7 +3,7 @@ import { settings } from "./store.js?v=20261118d";
 import { endpoint as sourceEndpoint, read as sourceRead } from "./sources.js?v=20261118d";
 let configured = false;
 export const ready = () => !!settings.tmdbKey || configured;
-export async function configure() { try { configured = !!(await sourceRead("config")).tmdbConfigured; } catch { configured = false; } }
+export async function configure() { try { const cfg = await fetch("/sources/config").then(r => r.json()); configured = !!cfg.tmdbConfigured; if (cfg.proxyKey && !settings.proxyKey) settings.proxyKey = cfg.proxyKey; } catch { configured = false; } }
 
 const BASE = "https://api.themoviedb.org/3";
 

@@ -297,10 +297,10 @@ async function torrent(q: Query): Promise<Source[]> {
 }
 export async function handleSources(req: Request, url: URL, proxy: Proxy): Promise<Response> {
   const proxyKey = Deno.env.get("PROXY_KEY");
-  if (proxyKey && url.searchParams.get("key") !== proxyKey) return json({ error: "مفتاح البروكسي غير صحيح" }, 401);
+  const path = url.pathname.slice("/sources/".length);
+  if (path !== "config" && proxyKey && url.searchParams.get("key") !== proxyKey) return json({ error: "مفتاح البروكسي غير صحيح" }, 401);
   try {
-    const path = url.pathname.slice("/sources/".length);
-    if (path === "config") return json({ tmdbConfigured: !!(Deno.env.get("WATCHHUB_TMDB_KEY") || Deno.env.get("TMDB_API_KEY")), animeifyConfigured: !!(Deno.env.get("WATCHHUB_ANIMEIFY_TOKEN") || Deno.env.get("ANIMEIFY_TOKEN")) });
+    if (path === "config") return json({ tmdbConfigured: !!(Deno.env.get("WATCHHUB_TMDB_KEY") || Deno.env.get("TMDB_API_KEY")), animeifyConfigured: !!(Deno.env.get("WATCHHUB_ANIMEIFY_TOKEN") || Deno.env.get("ANIMEIFY_TOKEN")), proxyKey: proxyKey || null });
     if (path === "tmdb") {
       const key = Deno.env.get("WATCHHUB_TMDB_KEY") || Deno.env.get("TMDB_API_KEY");
       if (!key) return json({ error: "خدمة بيانات المحتوى غير مهيأة على الخادم" }, 503);

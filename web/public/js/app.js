@@ -1,5 +1,5 @@
 // Watch Hub on the web: the same hub as the Android app, for iPhone, iPad and computers.
-import * as tmdb from "./tmdb.js?v=20261118d";
+import * as tmdb from "./tmdb.js?v=20261121a";
 import * as foryou from "./foryou.js?v=20261118d";
 import * as xt from "./xtream.js?v=20261118d";
 import * as fouru from "./fouru.js?v=20261118d";
@@ -1772,15 +1772,6 @@ async function settingsPage() {
   view.innerHTML = `<div class="settings">
     <h2 class="section-title" style="margin-bottom:0">الإعدادات</h2>
 
-    <section class="card-box">
-      <h3>مفتاح TMDB</h3>
-      <p class="muted" style="margin:0;line-height:1.8">قاعدة بيانات مجانية للأفلام والمسلسلات، ومنها نعرف وين متوفر كل عمل.
-        <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener" style="color:var(--gold)">افتح صفحة المفاتيح</a></p>
-      <input class="input" id="tmdb" type="password" placeholder="API Key أو Read Access Token" value="${esc(settings.tmdbKey || "")}" autocomplete="off">
-      <div><button class="btn" id="tmdb-save">احفظ وجرّب</button></div>
-      <pre class="msg" id="tmdb-msg"></pre>
-    </section>
-
     <section class="card-box" id="account-box"></section>
 
     <section class="card-box">
@@ -1814,18 +1805,10 @@ async function settingsPage() {
     </section>
 
     <section class="card-box">
-      <h3>مصادر المشاهدة</h3>
-      <p class="muted">المصادر جاهزة من صفحة العمل. يمكنك إضافة رابط كتالوج خاص بك، واستخدام روابط تورنت عبر تطبيق تورنت على جهازك.</p>
-      <label>رابط كتالوج إضافي<input class="input" id="source-catalogue" type="url" dir="ltr" value="${esc(settings.sourceCatalogue || "")}" placeholder="https://example.com/catalogue.json"></label>
-      <button class="btn ghost" id="save-source-catalogue">احفظ</button>
-    </section>
-
-    <section class="card-box">
       <h3>البروكسي</h3>
       <p class="muted" style="margin:0;line-height:1.8">المتصفح ما يقدر يوصل لسيرفرات Xtream مباشرة، فنمرّر الطلبات عن طريق البروكسي اللي مع الموقع.
         خلّه <code dir="ltr">/proxy</code> إذا الموقع شغال على سيرفر Watch Hub، أو حط رابط بروكسي ثاني.</p>
       <div class="field"><label>رابط البروكسي (خلّه /proxy)</label><input class="input" id="px" value="${esc(settings.proxy || "")}" dir="ltr" placeholder="/proxy"></div>
-      <div class="field"><label>مفتاح البروكسي (إذا حطيت PROXY_KEY في السيرفر)</label><input class="input" id="pk" type="password" value="${esc(settings.proxyKey || "")}" dir="ltr" autocomplete="off"></div>
       <div><button class="btn ghost" id="p-save">احفظ</button></div>
     </section>
 
@@ -1837,23 +1820,6 @@ async function settingsPage() {
       <p class="muted" style="margin:0;font-size:12px">This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
     </section>
   </div>`;
-
-  $("#save-source-catalogue").onclick = () => { settings.sourceCatalogue = $("#source-catalogue").value.trim(); toast("تم الحفظ"); };
-
-  $("#tmdb-save").addEventListener("click", async () => {
-    settings.tmdbKey = $("#tmdb").value.trim();
-    const msg = $("#tmdb-msg");
-    msg.className = "msg muted";
-    msg.textContent = "جاري التحقق…";
-    try {
-      await tmdb.get("configuration");
-      msg.className = "msg ok";
-      msg.textContent = "✓ تم الحفظ والمفتاح شغّال";
-    } catch (e) {
-      msg.className = "msg err";
-      msg.textContent = e.message;
-    }
-  });
 
   view.querySelectorAll("[data-mode]").forEach((b) => b.addEventListener("click", () => {
     settings.themeMode = b.dataset.mode;
@@ -1884,7 +1850,6 @@ async function settingsPage() {
     // Only a path ("/proxy") or a full link belongs here; anything else falls back to the built-in proxy.
     settings.proxy = !px || px.startsWith("/") || /^https?:\/\//i.test(px) ? px : "/proxy";
     $("#px").value = settings.proxy;
-    settings.proxyKey = $("#pk").value;
     xt.clearCache();
     await tmdb.configure();
     toast("تم الحفظ");
