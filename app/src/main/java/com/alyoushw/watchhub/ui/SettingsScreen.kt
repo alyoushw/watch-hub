@@ -1229,14 +1229,14 @@ private fun VpnAutoLaunchSection() {
     val container = appContainer()
     val on by container.settings.vpnAutoLaunch.collectAsStateWithLifecycle()
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        SectionTitle("自动开启VPN")
+        SectionTitle("تشغيل VPN تلقائياً")
         Text(
-            "开启后，每次打开APP时会自动启动VPN，无需手动操作。",
+            "فعّل هذا الخيار لفتح تطبيق VPN المفضل عند بدء تشغيل التطبيق تلقائياً.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("自动开启VPN", modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
+            Text("تشغيل VPN تلقائياً", modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
             androidx.compose.material3.Switch(
                 checked = on,
                 onCheckedChange = container.settings::setVpnAutoLaunch,
