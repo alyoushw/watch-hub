@@ -161,7 +161,33 @@ class LiveViewModel(private val api: XtreamApi, private val account: XtreamAccou
         private set
 
     /** A channel ready to search: its lower-case name and its name without prefixes or quality words. */
-    private class Indexed(val hit: LiveHit, val name: String, val key: String)
+    private class Indexed(val hit: LiveHit, val name: String, val key: String) {
+        val compact = name.replace(" ", "")
+    }
+
+    /** Plain text for matching: superscripts to ASCII, ⚽ as «o» (SP⚽RTS), Arabic letter forms unified, symbols to spaces. */
+    private fun searchText(s: String): String {
+        val t = deSuper(s).lowercase().replace("⚽", "o")
+            .replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا').replace('ة', 'ه').replace('ى', 'ي')
+        return " " + t.map { if (it.isLetterOrDigit()) it else ' ' }.joinToString("").split(' ').filter { it.isNotEmpty() }.joinToString(" ") + " "
+    }
+
+    private val qualityGroups = listOf(
+        setOf("4k", "uhd", "2160p", "3840p", "2160", "3840"),
+        setOf("8k", "4320p", "4320"),
+        setOf("fhd", "1080p", "1080"),
+        setOf("hd", "720p", "720"),
+        setOf("sd", "480p", "576p"),
+        setOf("hevc", "h265", "265"),
+    )
+
+    /** A typed word is found as part of the name, joined up («bein4k»), or as any of its quality synonyms. */
+    private fun wordMatches(word: String, ch: Indexed): Boolean {
+        val name = ch.name
+        if (name.contains(word)) return true
+        if (ch.compact.contains(word)) return true
+        return qualityGroups.firstOrNull { word in it }?.any { name.contains(" $it ") } == true
+    }
 
     private var pool: List<Indexed> = emptyList()
     private var poolFor: List<String> = emptyList()
@@ -179,18 +205,17 @@ class LiveViewModel(private val api: XtreamApi, private val account: XtreamAccou
         searchJob = viewModelScope.launch {
             delay(300)
             val all = indexFor(if (accounts.size > 1) accounts else listOf(active))
-            // Superscript quality marks (³⁸⁴⁰ᵖ, ⁴ᴷ) match what the user types (3840p, 4K).
-            val lower = deSuper(q).lowercase()
+            val words = searchText(q).split(' ').filter { it.isNotBlank() }
             val key = channelKey(deSuper(q))
-            val words = lower.split(' ').filter { it.isNotBlank() }
             results = withContext(Dispatchers.Default) {
                 all.asSequence()
-                    // Every word, in any order: «bein 4k» finds «beIN 2 ⁴ᴷ».
-                    .filter { ch -> words.all { ch.name.contains(it) } || (key.isNotEmpty() && ch.key.contains(key)) }
+                    // Every word, in any order, each also by its quality synonyms: «bein 4k 3840p»
+                    // finds «beIN SP⚽RTS 1 ᵁᴴᴰ ³⁸⁴⁰ᵖ».
+                    .filter { ch -> words.all { w -> wordMatches(w, ch) } || (key.isNotEmpty() && ch.key.contains(key)) }
                     .map { it.hit }
                     .distinctBy { it.key }
                     .sortedBy { if (it.account.id == active.id) 0 else 1 }
-                    .take(500)
+                    .take(3000)
                     .toList()
             }
         }
@@ -210,7 +235,7 @@ class LiveViewModel(private val api: XtreamApi, private val account: XtreamAccou
                 }
             }.awaitAll().flatten()
         }
-        pool = withContext(Dispatchers.Default) { hits.map { val n = deSuper(it.channel.name); Indexed(it, n.lowercase(), channelKey(n)) } }
+        pool = withContext(Dispatchers.Default) { hits.map { Indexed(it, searchText(it.channel.name), channelKey(deSuper(it.channel.name))) } }
         poolFor = ids
         return pool
     }
