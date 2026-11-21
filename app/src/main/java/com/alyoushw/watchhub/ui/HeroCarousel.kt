@@ -145,7 +145,8 @@ fun HeroCarousel(
     val height = when {
         tv -> screenHeight * 0.66f
         wideShort -> screenHeight * 0.92f
-        else -> (screenHeight * 0.5f).coerceAtMost(460.dp)
+        // screenHeightDp is in unscaled units; phones draw ~12% smaller, so this is about half the screen.
+        else -> (screenHeight * 0.62f).coerceAtMost(560.dp)
     }
 
     // Advance by itself every 7 seconds; not while the remote is on the banner (moving the page
@@ -269,8 +270,8 @@ private fun HeroText(
         Text(
             item.displayTitle,
             color = Color.White,
-            fontSize = if (compact) 26.sp else 34.sp,
-            lineHeight = if (compact) 30.sp else 40.sp,
+            fontSize = if (compact) 26.sp else 30.sp,
+            lineHeight = if (compact) 30.sp else 36.sp,
             fontWeight = FontWeight.ExtraBold,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
@@ -287,7 +288,7 @@ private fun HeroText(
                 item.overview,
                 color = Color.White.copy(alpha = 0.78f),
                 style = MaterialTheme.typography.bodyMedium,
-                maxLines = if (compact) 2 else 3,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }

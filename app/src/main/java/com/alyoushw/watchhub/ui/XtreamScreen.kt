@@ -271,7 +271,7 @@ private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind
             LiveChannels(showAccounts = false)
         } else {
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-                val folderWidth = (maxWidth * 0.3f).coerceIn(120.dp, 240.dp)
+                val folderWidth = if (isTv()) (maxWidth * 0.3f).coerceIn(160.dp, 260.dp) else (maxWidth * 0.28f).coerceIn(108.dp, 190.dp)
                 // Right-to-left layout: the first child sits on the right, so the folders end up on the left.
                 Row(Modifier.fillMaxSize()) {
                     Column(Modifier.weight(1f).fillMaxHeight()) {
@@ -296,7 +296,7 @@ private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind
                             else -> {
                             val xtreamGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
                             LazyVerticalGrid(
-                                columns = GridCells.Adaptive(if (vm.kind == XtreamKind.LIVE) 120.dp else 112.dp),
+                                columns = GridCells.Adaptive(if (isTv()) 112.dp else 88.dp),
                                 modifier = Modifier.tvScrollAssist(xtreamGridState),
                                 state = xtreamGridState,
                                 contentPadding = PaddingValues(12.dp),
@@ -337,7 +337,7 @@ private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind
                                     c.name,
                                     maxLines = 2,
                                     overflow = TextOverflow.Ellipsis,
-                                    fontSize = 14.sp,
+                                    fontSize = 13.sp,
                                     fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
                                     color = if (on) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.fillMaxWidth()
@@ -345,7 +345,7 @@ private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind
                                         .clip(RoundedCornerShape(8.dp))
                                         .background(if (on) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
                                         .clickable { vm.selectCategory(c.id) }
-                                        .padding(horizontal = 10.dp, vertical = 10.dp),
+                                        .padding(horizontal = 8.dp, vertical = 8.dp),
                                 )
                             }
                         }

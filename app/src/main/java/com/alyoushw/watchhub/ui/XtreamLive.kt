@@ -431,8 +431,8 @@ fun LiveChannels(showAccounts: Boolean = true, accountOverride: XtreamAccount? =
             PillSearch(query, { query = it }, if (multi) "ابحث عن قناة في كل الحسابات" else "البحث في القنوات", mod)
         }
 
-        if (wide) {
-            // Big screens: categories | channels | live picture and guide, edge to edge.
+        if (wide && isTv()) {
+            // TVs: categories | channels | live picture and guide, edge to edge.
             Row(Modifier.fillMaxSize().padding(start = 12.dp, end = 12.dp, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Column(Modifier.weight(1.15f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     val hit = previewing ?: vm.selected
@@ -482,11 +482,12 @@ fun LiveChannels(showAccounts: Boolean = true, accountOverride: XtreamAccount? =
                 )
             }
         } else {
-            // Phones: the live picture on top while a channel plays, categories as chips, the list below.
+            // Phones (any orientation): the live picture on top while a channel plays; folders on the
+            // left and channels on the right, filling the rest of the screen.
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 previewing?.let { hit ->
                     Column {
-                        LivePicture(hit = hit, idle = hit, onLease = { previewLease = it }, generation = previewGeneration, onOpen = { openFull(hit) }, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f), rounded = false)
+                        LivePicture(hit = hit, idle = hit, onLease = { previewLease = it }, generation = previewGeneration, onOpen = { openFull(hit) }, modifier = Modifier.fillMaxWidth().height(minOf(maxWidth * 9f / 16f, maxHeight * 0.4f)), rounded = false)
                         Row(
                             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -513,20 +514,27 @@ fun LiveChannels(showAccounts: Boolean = true, accountOverride: XtreamAccount? =
                         }
                     }
                 }
-                Column(Modifier.weight(1f).padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.weight(1f).padding(horizontal = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (showAccounts) AccountSwitcher()
                     search(Modifier.fillMaxWidth())
-                    if (!searching) {
-                        CategoryChips(
+                    // Right-to-left: the first child sits on the right, so the folders end up on the left.
+                    Row(Modifier.fillMaxWidth().weight(1f).padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        channelList(Modifier.weight(1f).fillMaxHeight())
+                        CategoryPane(
                             categories = vm.categories,
+                            counts = vm.counts,
+                            total = vm.channels.size,
                             favorites = favorites.count { it in byId },
                             recent = recent.count { it in byId },
-                            folders = folders.keys.toList(),
-                            selected = vm.category,
-                            onSelect = { vm.category = it },
+                            folders = folders.map { (name, ids) -> name to ids.count { it in byId } },
+                            selected = if (query.isBlank()) vm.category else null,
+                            onSelect = {
+                                query = ""
+                                vm.category = it
+                            },
+                            modifier = Modifier.width((maxWidth * 0.34f).coerceIn(118.dp, 220.dp)).fillMaxHeight(),
                         )
                     }
-                    channelList(Modifier.fillMaxWidth().weight(1f).padding(bottom = 8.dp))
                 }
             }
         }
@@ -884,12 +892,13 @@ private fun CategoryRow(name: String, count: Int, selected: Boolean, onClick: ()
             .clip(RoundedCornerShape(10.dp))
             .background(if (selected) Gold.copy(alpha = 0.16f) else Color.Transparent)
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 12.dp),
+            .padding(horizontal = 10.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             name,
             modifier = Modifier.weight(1f),
+            fontSize = 14.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             color = if (selected) Gold else MaterialTheme.colorScheme.onSurface,

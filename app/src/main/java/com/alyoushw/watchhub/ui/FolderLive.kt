@@ -17,6 +17,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -341,7 +344,6 @@ fun FolderLiveScreen() {
     if (vm.error != null && vm.sections.isEmpty()) { MessageBox(vm.error.orEmpty(), actionLabel = "حاول مرة ثانية", onAction = vm::load); return }
 
     val accent = MaterialTheme.colorScheme.primary
-    val cur = stack.last()
     fun push(l: Level) { stack = stack + l }
     fun fav(k: String) = container.settings.toggleFolderFavorite(k)
 
@@ -359,8 +361,8 @@ fun FolderLiveScreen() {
         PlayerActivity.start(context, items, siblings.indexOf(hit).coerceAtLeast(0))
     }
 
-    fun openQuality(ch: ChannelNode, q: Quality) {
-        if (q.hits.size <= 1) play(q.hits.first(), q.hits) else push(Level.QualityLevel(ch, q))
+    fun openQuality(ch: ChannelNode, q: Quality, go: (Level) -> Unit) {
+        if (q.hits.size <= 1) play(q.hits.first(), q.hits) else go(Level.QualityLevel(ch, q))
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -386,25 +388,18 @@ fun FolderLiveScreen() {
             }
             Text(crumbs.joinToString("  ‹  "), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        val prompt = when (cur) {
-            Level.Root -> "اختر القسم"
-            Level.Favorites -> "المفضلة"
-            is Level.SectionLevel -> "اختر المجموعة"
-            is Level.BrandLevel -> "اختر القناة"
-            is Level.ChannelLevel -> "اختر الجودة"
-            is Level.QualityLevel -> "اختر السيرفر"
-        }
-        Text(prompt, Modifier.padding(horizontal = 16.dp, vertical = 2.dp), fontWeight = FontWeight.Bold)
+        fun isFolder(l: Level) = l is Level.Root || l is Level.Favorites || l is Level.SectionLevel
+        val left = stack.last { isFolder(it) }
+        val right = stack.lastOrNull { !isFolder(it) }
+        // From the folder pane a folder opens inside it; a group or channel opens in the right pane.
+        fun fromLeft(l: Level) { stack = stack.filter { isFolder(it) } + l }
+        fun fromRight(l: Level) { stack = stack + l }
 
-        LazyColumn(
-            Modifier.fillMaxSize().readableWidth(900.dp),
-            contentPadding = PaddingValues(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            when (cur) {
+        fun LazyListScope.levelItems(level: Level, go: (Level) -> Unit) {
+            when (level) {
                 Level.Root -> {
-                    if (favorites.isNotEmpty()) item { FolderRow("⭐ المفضلة", "${favorites.size} مفضّلة") { push(Level.Favorites) } }
-                    items(vm.sections) { s -> FolderRow(s.label, "${s.brands.size} مجموعة") { push(Level.SectionLevel(s)) } }
+                    if (favorites.isNotEmpty()) item { FolderRow("⭐ المفضلة", "${favorites.size} مفضّلة") { go(Level.Favorites) } }
+                    items(vm.sections) { s -> FolderRow(s.label, "${s.brands.size} مجموعة") { go(Level.SectionLevel(s)) } }
                 }
                 Level.Favorites -> {
                     if (favorites.isEmpty()) item { Text("لا توجد مفضّلة بعد. اضغط مطولاً على أي مجموعة أو قناة أو جودة لإضافتها.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -412,33 +407,56 @@ fun FolderLiveScreen() {
                     vm.sections.forEach { s ->
                         s.brands.forEach { b ->
                             val bk = brandFav(s, b)
-                            if (bk in favorites) item(key = bk) { FolderRow(b.label, "${b.channels.size} قناة · ${s.label}", favorite = true, onLong = { fav(bk) }) { push(Level.BrandLevel(s, b)) } }
+                            if (bk in favorites) item(key = bk) { FolderRow(b.label, "${b.channels.size} قناة · ${s.label}", favorite = true, onLong = { fav(bk) }) { go(Level.BrandLevel(s, b)) } }
                             b.channels.forEach { ch ->
                                 val ck = channelFav(ch)
-                                if (ck in favorites) item(key = ck) { ChannelRow(ch, colorOf, favorite = true, onClick = { push(Level.ChannelLevel(ch)) }, onLong = { fav(ck) }) }
+                                if (ck in favorites) item(key = ck) { ChannelRow(ch, colorOf, favorite = true, onClick = { go(Level.ChannelLevel(ch)) }, onLong = { fav(ck) }) }
                                 ch.qualities.forEach { q ->
                                     val qk = qualityFav(ch, q)
-                                    if (qk in favorites) item(key = qk) { QualityRow(q, colorOf, accent, favorite = true, onLong = { fav(qk) }) { openQuality(ch, q) } }
+                                    if (qk in favorites) item(key = qk) { QualityRow(q, colorOf, accent, favorite = true, onLong = { fav(qk) }) { openQuality(ch, q, go) } }
                                 }
                             }
                         }
                     }
                 }
-                is Level.SectionLevel -> items(cur.section.brands) { b ->
-                    val bk = brandFav(cur.section, b)
-                    FolderRow(b.label, "${b.channels.size} قناة", favorite = bk in favorites, onLong = { fav(bk) }) { push(Level.BrandLevel(cur.section, b)) }
+                is Level.SectionLevel -> items(level.section.brands) { b ->
+                    val bk = brandFav(level.section, b)
+                    FolderRow(b.label, "${b.channels.size} قناة", favorite = bk in favorites, onLong = { fav(bk) }) { go(Level.BrandLevel(level.section, b)) }
                 }
-                is Level.BrandLevel -> items(cur.brand.channels) { ch ->
+                is Level.BrandLevel -> items(level.brand.channels) { ch ->
                     val ck = channelFav(ch)
-                    ChannelRow(ch, colorOf, favorite = ck in favorites, onClick = { push(Level.ChannelLevel(ch)) }, onLong = { fav(ck) })
+                    ChannelRow(ch, colorOf, favorite = ck in favorites, onClick = { go(Level.ChannelLevel(ch)) }, onLong = { fav(ck) })
                 }
-                is Level.ChannelLevel -> items(cur.channel.qualities) { q ->
-                    val qk = qualityFav(cur.channel, q)
-                    QualityRow(q, colorOf, accent, favorite = qk in favorites, onLong = { fav(qk) }) { openQuality(cur.channel, q) }
+                is Level.ChannelLevel -> items(level.channel.qualities) { q ->
+                    val qk = qualityFav(level.channel, q)
+                    QualityRow(q, colorOf, accent, favorite = qk in favorites, onLong = { fav(qk) }) { openQuality(level.channel, q, go) }
                 }
-                is Level.QualityLevel -> items(cur.quality.hits) { hit ->
-                    ServerRow(hit, colorOf[hit.account.id] ?: accent, accent) { play(hit, cur.quality.hits) }
+                is Level.QualityLevel -> items(level.quality.hits) { hit ->
+                    ServerRow(hit, colorOf[hit.account.id] ?: accent, accent) { play(hit, level.quality.hits) }
                 }
+            }
+        }
+
+        val folderWidth = (LocalConfiguration.current.screenWidthDp.dp * 0.36f).coerceIn(130.dp, 260.dp)
+        // Right-to-left: the first child sits on the right, so the folders end up on the left.
+        Row(Modifier.fillMaxSize().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            LazyColumn(
+                Modifier.weight(1f).fillMaxHeight(),
+                contentPadding = PaddingValues(vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                if (right == null) {
+                    item { Text("اختر مجموعة من اليسار", Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                } else {
+                    levelItems(right, ::fromRight)
+                }
+            }
+            LazyColumn(
+                Modifier.width(folderWidth).fillMaxHeight(),
+                contentPadding = PaddingValues(vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                levelItems(left, ::fromLeft)
             }
         }
     }
@@ -456,7 +474,7 @@ private fun RowCard(onClick: () -> Unit, onLong: (() -> Unit)? = null, content: 
             .combinedClickable(onClick = onClick, onLongClick = onLong),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(11.dp), content = content)
+        Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(11.dp), content = content)
     }
 }
 
@@ -465,7 +483,7 @@ private fun FolderRow(title: String, subtitle: String, favorite: Boolean = false
     RowCard(onClick, onLong) {
         if (favorite) Text("⭐", fontSize = 13.sp)
         Column(Modifier.weight(1f)) {
-            Text(title, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
         }
         Text("‹", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -487,7 +505,7 @@ private fun ChannelRow(ch: ChannelNode, colorOf: Map<String, Color>, favorite: B
     RowCard(onClick, onLong) {
         if (favorite) Text("⭐", fontSize = 13.sp)
         Column(Modifier.weight(1f)) {
-            Text(ch.title, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(ch.title, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 Text("${ch.qualities.size} جودة", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                 ServerDots(hits, colorOf)
