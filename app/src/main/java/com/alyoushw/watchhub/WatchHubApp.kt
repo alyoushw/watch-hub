@@ -2,6 +2,7 @@ package com.alyoushw.watchhub
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import com.alyoushw.watchhub.data.ClaudeAssistant
 import com.alyoushw.watchhub.data.DirectLinks
 import com.alyoushw.watchhub.data.JikanApi
@@ -124,5 +125,13 @@ class WatchHubApp : Application() {
         container.cloud.start()
         runCatching { container.updater.scheduleBackgroundChecks() }
         runCatching { com.alyoushw.watchhub.data.NewEpisodesWorker.schedule(this) }
+        if (container.settings.vpnAutoLaunch.value) {
+            runCatching {
+                val intent = packageManager.getLaunchIntentForPackage("com.hma.android")
+                    ?: packageManager.getLaunchIntentForPackage("org.openvpn.android")
+                    ?: return@runCatching
+                startActivity(intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+        }
     }
 }

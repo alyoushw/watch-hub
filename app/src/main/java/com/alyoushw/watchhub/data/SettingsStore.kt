@@ -229,6 +229,14 @@ class SettingsStore(context: Context) {
         _youtube.value = on
     }
 
+    // ---------- VPN auto launch (this device) ----------
+    private val _vpnAutoLaunch = MutableStateFlow(prefs.getBoolean(KEY_VPN_AUTO_LAUNCH, false))
+    val vpnAutoLaunch: StateFlow<Boolean> = _vpnAutoLaunch.asStateFlow()
+    fun setVpnAutoLaunch(on: Boolean) {
+        prefs.edit().putBoolean(KEY_VPN_AUTO_LAUNCH, on).apply()
+        _vpnAutoLaunch.value = on
+    }
+
     // ---------- live screen look: folder navigator vs the classic list ----------
 
     private val _liveFolderUi = MutableStateFlow(prefs.getBoolean(KEY_LIVE_FOLDER_UI, false))
@@ -418,5 +426,6 @@ class SettingsStore(context: Context) {
         const val KEY_SEEDED = "accounts_seeded"
         const val KEY_LIVE_FOLDER_UI = "live_folder_ui"
         const val KEY_FOLDER_FAV = "folder_favorites"
+        const val KEY_VPN_AUTO_LAUNCH = "vpn_auto_launch"
     }
 }

@@ -167,6 +167,10 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}) {
 
             HorizontalDivider()
 
+            VpnAutoLaunchSection()
+
+            HorizontalDivider()
+
             YouTubeSection()
 
             HorizontalDivider()
@@ -1216,5 +1220,28 @@ private fun StatsSection() {
             }
         }
         if (genres.isNotEmpty()) Text("🎭 ذوقك: " + genres.joinToString("، "), style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+/** Auto-launch VPN when app opens */
+@Composable
+private fun VpnAutoLaunchSection() {
+    val container = appContainer()
+    val on by container.settings.vpnAutoLaunch.collectAsStateWithLifecycle()
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionTitle("自动开启VPN")
+        Text(
+            "开启后，每次打开APP时会自动启动VPN，无需手动操作。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("自动开启VPN", modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
+            androidx.compose.material3.Switch(
+                checked = on,
+                onCheckedChange = container.settings::setVpnAutoLaunch,
+                modifier = Modifier.focusFrame(),
+            )
+        }
     }
 }
