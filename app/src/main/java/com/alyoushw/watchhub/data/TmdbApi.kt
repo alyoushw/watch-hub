@@ -318,12 +318,57 @@ class TmdbApi(private val settings: SettingsStore) {
     ).results.firstOrNull()?.also { personCache[name] = it }
 
     suspend fun searchPage(query: String, page: Int = 1): SearchResponse {
-        val response = get(
+        suspend fun one(q: String) = get(
             "search/multi",
-            mapOf("query" to query, "language" to "ar", "include_adult" to "false", "page" to "${page.coerceIn(1, 500)}"),
+            mapOf("query" to q, "language" to "ar", "include_adult" to "false", "page" to "${page.coerceIn(1, 500)}"),
             SearchResponse.serializer(),
         )
-        return response.copy(results = response.results.filter { it.type != null })
+        val response = one(query)
+        // TMDB matches Arabic letters exactly, so «الحشاشين» typed with ه/ة, ا/أ or ي/ى differently
+        // misses. On the first page also try the usual spelling variants and merge them in.
+        val variants = if (page == 1 && query.any { it in '\u0600'..'\u06FF' }) arabicVariants(query) - query else emptyList()
+        val extra = variants.take(3).flatMap { v -> runCatching { one(v).results }.getOrDefault(emptyList()) }
+        var merged = (response.results + extra).filter { it.type != null }.distinctBy { "${it.type}:${it.id}" }
+        // Still little for an Arabic name: TMDB may not have its Arabic title. Arabic Wikipedia
+        // gives the English name of the film or series, which TMDB knows.
+        if (variants.isNotEmpty() && merged.size < 3) {
+            val english = runCatching { englishNameFromWikipedia(query) }.getOrNull()
+            if (!english.isNullOrBlank()) {
+                val found = runCatching { one(english).results }.getOrDefault(emptyList()).filter { it.type != null }
+                merged = (found + merged).distinctBy { "${it.type}:${it.id}" }
+            }
+        }
+        return response.copy(results = merged, totalResults = maxOf(response.totalResults, merged.size))
+    }
+
+    private suspend fun englishNameFromWikipedia(arabic: String): String? = withContext(Dispatchers.IO) {
+        val url = okhttp3.HttpUrl.Builder().scheme("https").host("ar.wikipedia.org").addPathSegments("w/api.php")
+            .addQueryParameter("action", "query").addQueryParameter("format", "json")
+            .addQueryParameter("generator", "search").addQueryParameter("gsrsearch", arabic).addQueryParameter("gsrlimit", "1")
+            .addQueryParameter("prop", "langlinks").addQueryParameter("lllang", "en")
+            .build()
+        val body = Net.streams.newCall(Request.Builder().url(url).header("User-Agent", "WatchHub/1.0").build()).execute()
+            .use { if (it.isSuccessful) it.body?.string() else null } ?: return@withContext null
+        val pages = (json.parseToJsonElement(body) as? kotlinx.serialization.json.JsonObject)
+            ?.get("query")?.let { it as? kotlinx.serialization.json.JsonObject }
+            ?.get("pages") as? kotlinx.serialization.json.JsonObject ?: return@withContext null
+        val links = pages.values.firstOrNull()?.let { it as? kotlinx.serialization.json.JsonObject }?.get("langlinks") as? kotlinx.serialization.json.JsonArray
+        val title = (links?.firstOrNull() as? kotlinx.serialization.json.JsonObject)?.get("*")
+            ?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+        // «Inception (film)» → «Inception».
+        title?.replace(Regex("""\s*\([^)]*\)\s*$"""), "")?.trim()
+    }
+
+    private fun arabicVariants(q: String): List<String> {
+        val words = q.trim().split(Regex("\\s+"))
+        fun map(f: (String) -> String) = words.joinToString(" ") { f(it) }
+        val plain = q.replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا').replace('ى', 'ي').replace('ة', 'ه')
+        return listOf(
+            plain,
+            map { w -> if (w.endsWith("ه")) w.dropLast(1) + "ة" else w },
+            map { w -> if (w.endsWith("ي")) w.dropLast(1) + "ى" else w },
+            map { w -> if (w.startsWith("ا") && w.length > 2 && !w.startsWith("ال")) "أ" + w.drop(1) else w },
+        ).filter { it.isNotBlank() }.distinct()
     }
 
     /** Animeify/MAL IDs cannot be used here: resolve names against TMDB's own catalogue. */
