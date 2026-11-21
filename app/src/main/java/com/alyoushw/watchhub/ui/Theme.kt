@@ -138,10 +138,16 @@ fun WatchHubTheme(forceDark: Boolean = false, content: @Composable () -> Unit) {
                 pressedAlpha = 0.25f,
             ),
         )
+        // Regular phones: draw everything ~12% smaller so screens hold more, Netflix-like
+        // (text, icons and spacing alike). Foldables, tablets and TVs keep the normal size.
+        val base = androidx.compose.ui.platform.LocalDensity.current
+        val phone = !isTv() && androidx.compose.ui.platform.LocalConfiguration.current.smallestScreenWidthDp < 600
+        val density = if (phone) androidx.compose.ui.unit.Density(base.density * 0.88f, base.fontScale) else base
         // The interface is Arabic, so keep it right-to-left whatever the phone language is.
         CompositionLocalProvider(
             LocalLayoutDirection provides LayoutDirection.Rtl,
             LocalRippleConfiguration provides ripple,
+            androidx.compose.ui.platform.LocalDensity provides density,
         ) {
             content()
         }

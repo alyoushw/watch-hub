@@ -212,7 +212,7 @@ fun RatingChip(value: Double?, modifier: Modifier = Modifier) {
 /** Poster with title; [rank] draws a large "top 10" number on it. */
 @Composable
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
-fun PosterCard(item: SearchResult, rank: Int? = null, width: Dp = if (isTv()) 120.dp else 104.dp, onClick: () -> Unit) {
+fun PosterCard(item: SearchResult, rank: Int? = null, width: Dp = if (isTv()) 120.dp else 112.dp, onClick: () -> Unit) {
     val context = LocalContext.current
     Column(
         // Long press: share it.
