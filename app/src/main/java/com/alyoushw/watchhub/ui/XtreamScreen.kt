@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -168,9 +169,9 @@ fun XtreamScreen(onOpenSeries: (String) -> Unit, onOpenSettings: () -> Unit) {
     Scaffold(
         contentWindowInsets = WindowInsets(0),
         topBar = {
-            // Phones: a slim bar, so the lists keep the height (it matters most when held sideways).
+            // Phones: a slim bar; held sideways there is none at all (the tabs row carries downloads).
             val slim = !isTv()
-            TopAppBar(
+            if (!isWideShort()) TopAppBar(
                 title = { Text("قنواتي", style = if (slim) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge) },
                 expandedHeight = if (slim) 44.dp else androidx.compose.material3.TopAppBarDefaults.TopAppBarExpandedHeight,
                 actions = {
@@ -188,7 +189,7 @@ fun XtreamScreen(onOpenSeries: (String) -> Unit, onOpenSettings: () -> Unit) {
                     onAction = onOpenSettings,
                 )
             } else {
-                XtreamContent(onOpenSeries)
+                XtreamContent(onOpenSeries, onDownloads = if (isWideShort()) ({ showDownloads = true }) else null)
             }
         }
     }
@@ -203,7 +204,7 @@ fun XtreamLiveChannels(onOpenSettings: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind> = XtreamKind.entries) {
+private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind> = XtreamKind.entries, onDownloads: (() -> Unit)? = null) {
     val container = appContainer()
     val context = LocalContext.current
     val account by container.settings.xtream.collectAsStateWithLifecycle()
@@ -257,9 +258,8 @@ private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind
     }
 
     Column(Modifier.fillMaxSize()) {
-        AccountSwitcher(Modifier.padding(vertical = 6.dp))
-        if (kinds.size > 1) {
-            ScrollableTabRow(selectedTabIndex = kinds.indexOf(vm.kind).coerceAtLeast(0)) {
+        val tabs: @Composable (Modifier) -> Unit = { mod ->
+            ScrollableTabRow(selectedTabIndex = kinds.indexOf(vm.kind).coerceAtLeast(0), modifier = mod) {
                 kinds.forEach { k ->
                     Tab(
                         modifier = Modifier.focusFrame(RoundedCornerShape(8.dp)),
@@ -269,6 +269,17 @@ private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind
                     )
                 }
             }
+        }
+        if (onDownloads != null) {
+            // Held sideways: tabs, accounts and downloads share one line so the lists keep the height.
+            Row(Modifier.fillMaxWidth().padding(end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (kinds.size > 1) tabs(Modifier.weight(1f)) else Spacer(Modifier.weight(1f))
+                AccountSwitcher(Modifier.widthIn(max = 280.dp))
+                androidx.compose.material3.TextButton(modifier = Modifier.focusFrame(), onClick = onDownloads) { Text("📥") }
+            }
+        } else {
+            AccountSwitcher(Modifier.padding(vertical = 6.dp))
+            if (kinds.size > 1) tabs(Modifier)
         }
         if (vm.kind == XtreamKind.LIVE) {
             LiveChannels(showAccounts = false)

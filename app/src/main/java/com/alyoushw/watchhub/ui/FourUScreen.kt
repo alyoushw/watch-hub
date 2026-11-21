@@ -29,8 +29,14 @@ fun FourULiveChannels() {
     val active by settings.xtream.collectAsStateWithLifecycle()
     val usable = accounts.filter { it.isComplete }
     var fourU by rememberSaveable { mutableStateOf(!active.isComplete) }
-    Column(Modifier.fillMaxSize()) {
-        LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    // Held sideways the account chips sit beside the search, so the lists keep the height.
+    val sideways = isWideShort()
+    val chips: @Composable () -> Unit = {
+        LazyRow(
+            if (sideways) Modifier.widthIn(max = 300.dp) else Modifier,
+            contentPadding = PaddingValues(horizontal = if (sideways) 0.dp else 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             items(usable, key = { it.id }) { acc ->
                 FilterChip(selected = !fourU && active.id == acc.id,
                     onClick = { fourU = false; settings.setActiveXtream(acc.id) },
@@ -38,8 +44,11 @@ fun FourULiveChannels() {
             }
             item { FilterChip(selected = fourU || usable.isEmpty(), onClick = { fourU = true }, label = { Text("4U") }, modifier = Modifier.focusFrame()) }
         }
+    }
+    Column(Modifier.fillMaxSize()) {
+        if (!sideways) chips()
         Box(Modifier.weight(1f)) {
-            LiveChannels(showAccounts = false, accountOverride = FourU.account.takeIf { fourU || usable.isEmpty() })
+            LiveChannels(showAccounts = false, accountOverride = FourU.account.takeIf { fourU || usable.isEmpty() }, leading = if (sideways) chips else null)
         }
     }
 }

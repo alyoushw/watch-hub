@@ -3,6 +3,7 @@ package com.alyoushw.watchhub.ui
 import com.alyoushw.watchhub.data.WatchEntry
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -476,8 +477,9 @@ fun HomeScreen(
         }),
     ) {
         when {
-            live -> Column {
-                header()
+            // Phones: «مباشر» fills the screen alone; Back brings the tabs again. TVs keep the tabs.
+            live -> Column(if (tv) Modifier else Modifier.statusBarsPadding()) {
+                if (tv) header()
                 XtreamLiveChannels(onOpenSettings)
             }
 

@@ -97,6 +97,17 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
     var homeLive by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     // Live channels fill the screen: no bottom bar or side rail (TVs keep the rail for the remote).
     val fullLive = homeLive && currentRoute == Tab.HOME.route
+    // Phones held sideways: no status bar inside the app, so every screen gets the full height.
+    val activity = LocalContext.current as? android.app.Activity
+    val sideways = !tv && androidx.compose.ui.platform.LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    androidx.compose.runtime.LaunchedEffect(sideways) {
+        activity?.window?.let { w ->
+            val c = androidx.core.view.WindowCompat.getInsetsController(w, w.decorView)
+            c.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            if (sideways) c.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+            else c.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+        }
+    }
     val tabs = Tab.entries.filter { (it != Tab.XTREAM || xtream.isComplete) && (it != Tab.YOUTUBE || youtube) }
     Scaffold(
         contentWindowInsets = WindowInsets(0),

@@ -264,7 +264,7 @@ class LiveViewModel(private val api: XtreamApi, private val account: XtreamAccou
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun LiveChannels(showAccounts: Boolean = true, accountOverride: XtreamAccount? = null) {
+fun LiveChannels(showAccounts: Boolean = true, accountOverride: XtreamAccount? = null, leading: (@Composable () -> Unit)? = null) {
     val container = appContainer()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -518,7 +518,14 @@ fun LiveChannels(showAccounts: Boolean = true, accountOverride: XtreamAccount? =
                 }
                 Column(Modifier.weight(1f).padding(horizontal = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (showAccounts) AccountSwitcher()
-                    search(Modifier.fillMaxWidth())
+                    if (leading != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            search(Modifier.weight(1f))
+                            leading()
+                        }
+                    } else {
+                        search(Modifier.fillMaxWidth())
+                    }
                     // Right-to-left: the first child sits on the right, so the folders end up on the left.
                     Row(Modifier.fillMaxWidth().weight(1f).padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         channelList(Modifier.weight(1f).fillMaxHeight())
