@@ -94,7 +94,7 @@ private val SUPER = mapOf(
     '⁶' to '6', '⁷' to '7', '⁸' to '8', '⁹' to '9',
 )
 
-private fun deSuper(s: String): String = if (s.none { it in SUPER }) s else buildString { for (c in s) append(SUPER[c] ?: c) }
+internal fun deSuper(s: String): String = if (s.none { it in SUPER }) s else buildString { for (c in s) append(SUPER[c] ?: c) }
 
 private fun natKey(s: String): String = Regex("\\d+").replace(s) { it.value.padStart(6, '0') }
 

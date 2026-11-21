@@ -179,11 +179,14 @@ class LiveViewModel(private val api: XtreamApi, private val account: XtreamAccou
         searchJob = viewModelScope.launch {
             delay(300)
             val all = indexFor(if (accounts.size > 1) accounts else listOf(active))
-            val lower = q.lowercase()
-            val key = channelKey(q)
+            // Superscript quality marks (³⁸⁴⁰ᵖ, ⁴ᴷ) match what the user types (3840p, 4K).
+            val lower = deSuper(q).lowercase()
+            val key = channelKey(deSuper(q))
+            val words = lower.split(' ').filter { it.isNotBlank() }
             results = withContext(Dispatchers.Default) {
                 all.asSequence()
-                    .filter { it.name.contains(lower) || (key.isNotEmpty() && it.key.contains(key)) }
+                    // Every word, in any order: «bein 4k» finds «beIN 2 ⁴ᴷ».
+                    .filter { ch -> words.all { ch.name.contains(it) } || (key.isNotEmpty() && ch.key.contains(key)) }
                     .map { it.hit }
                     .distinctBy { it.key }
                     .sortedBy { if (it.account.id == active.id) 0 else 1 }
@@ -207,7 +210,7 @@ class LiveViewModel(private val api: XtreamApi, private val account: XtreamAccou
                 }
             }.awaitAll().flatten()
         }
-        pool = withContext(Dispatchers.Default) { hits.map { Indexed(it, it.channel.name.lowercase(), channelKey(it.channel.name)) } }
+        pool = withContext(Dispatchers.Default) { hits.map { val n = deSuper(it.channel.name); Indexed(it, n.lowercase(), channelKey(n)) } }
         poolFor = ids
         return pool
     }
@@ -872,8 +875,8 @@ private fun CategoryPane(
         Triple(FAVORITES, "⭐ المفضلة", favorites),
     ) + folders.map { (name, count) -> Triple(FOLDER + name, "📁 $name", count) }
     val rest = remember(categories, filter) {
-        val q = filter.trim()
-        categories.filter { q.isEmpty() || it.name.contains(q, ignoreCase = true) }
+        val q = deSuper(filter.trim())
+        categories.filter { q.isEmpty() || deSuper(it.name).contains(q, ignoreCase = true) }
     }
     Pane(modifier) {
         Column {
