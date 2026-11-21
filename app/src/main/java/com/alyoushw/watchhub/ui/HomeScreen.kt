@@ -399,6 +399,7 @@ fun HomeScreen(
     onSeeAll: (HomeSection) -> Unit,
     onOpenXtreamSeries: (String) -> Unit = {},
     onOpenAnime: (AnimeLookup) -> Unit = {},
+    onLiveChange: (Boolean) -> Unit = {},
 ) {
     val container = appContainer()
     val vm: HomeViewModel = viewModel { HomeViewModel(container) }
@@ -416,6 +417,9 @@ fun HomeScreen(
     }
 
     var live by rememberSaveable { mutableStateOf(false) }
+    // «مباشر» takes the whole screen (no bottom bar); Back returns to the series tab.
+    LaunchedEffect(live) { onLiveChange(live) }
+    androidx.activity.compose.BackHandler(enabled = live) { live = false }
     val updatesScope = rememberCoroutineScope()
     LifecycleResumeEffect(vm.type, live) {
         val updatesJob = if (vm.type == MediaType.ANIME && !live) updatesScope.launch {

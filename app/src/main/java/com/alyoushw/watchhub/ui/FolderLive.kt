@@ -192,6 +192,15 @@ private fun brandPriority(label: String): Int = when (label) {
     else -> 500
 }
 
+private suspend fun <T> twice(block: suspend () -> List<T>): List<T>? {
+    repeat(2) { attempt ->
+        val r = try { block() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
+        if (!r.isNullOrEmpty()) return r
+        if (attempt == 0) kotlinx.coroutines.delay(700)
+    }
+    return null
+}
+
 private class FolderCache(val key: String, val at: Long, val sections: List<Section>, val all: Map<String, ChannelNode>)
 private var folderCache: FolderCache? = null
 
@@ -223,19 +232,22 @@ private class FolderLiveViewModel(
             try {
                 val usable = accounts.filter { it.isComplete }
                 if (usable.isEmpty()) { sections = emptyList(); loading = false; return@launch }
+                // Accounts side by side; within one account the two calls go one after the other,
+                // since many IPTV servers refuse a second connection at the same moment.
                 val loaded = coroutineScope {
                     usable.map { acc ->
                         async {
-                            val catsJob = async { runCatching { api.categories(XtreamKind.LIVE, acc) }.getOrDefault(emptyList()).associate { it.id to it.name } }
-                            val chansJob = async { runCatching { api.all(XtreamKind.LIVE, acc) }.getOrDefault(emptyList()) }
-                            Triple(acc, catsJob.await(), chansJob.await())
+                            val cats = twice { api.categories(XtreamKind.LIVE, acc) }.orEmpty().associate { it.id to it.name }
+                            val chans = twice { api.all(XtreamKind.LIVE, acc) }.orEmpty()
+                            Triple(acc, cats, chans)
                         }
                     }.awaitAll()
                 }
+                val whole = loaded.all { (_, cats, chans) -> cats.isNotEmpty() && chans.isNotEmpty() }
                 val built = withContext(Dispatchers.Default) { build(loaded) }
                 sections = built.first
                 allChannels = built.second
-                if (sections.isNotEmpty()) folderCache = FolderCache(usable.joinToString { it.id }, System.currentTimeMillis(), built.first, built.second)
+                if (whole) folderCache = FolderCache(usable.joinToString { it.id }, System.currentTimeMillis(), built.first, built.second)
                 if (sections.isEmpty()) error = "ما وصلت قنوات من الحسابات، تأكد من الاشتراك والإنترنت"
             } catch (e: Exception) {
                 error = e.message ?: "تعذّر تحميل القنوات"

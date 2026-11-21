@@ -26,6 +26,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -93,11 +94,14 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
     val xtream by appContainer().settings.xtream.collectAsStateWithLifecycle()
     // The YouTube tab once it is switched on (Settings › يوتيوب).
     val youtube by appContainer().settings.youtubeEnabled.collectAsStateWithLifecycle()
+    var homeLive by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    // Live channels fill the screen: no bottom bar or side rail (TVs keep the rail for the remote).
+    val fullLive = homeLive && currentRoute == Tab.HOME.route
     val tabs = Tab.entries.filter { (it != Tab.XTREAM || xtream.isComplete) && (it != Tab.YOUTUBE || youtube) }
     Scaffold(
         contentWindowInsets = WindowInsets(0),
         bottomBar = {
-            if (!rail) {
+            if (!rail && !fullLive) {
                 NavigationBar {
                     tabs.forEach { tab ->
                         NavigationBarItem(
@@ -117,7 +121,7 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
           Modifier.fillMaxSize().padding(padding)
               .windowInsetsPadding(WindowInsets.safeDrawing.only(androidx.compose.foundation.layout.WindowInsetsSides.Horizontal)),
       ) {
-        if (rail) {
+        if (rail && !(fullLive && !tv)) {
             // On TV the tabs sit in a rail on the side, easy to reach with the remote.
             NavigationRail(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 tabs.forEach { tab ->
@@ -143,6 +147,7 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
                     onOpenSettings = { nav.switchTab(Tab.SETTINGS.route) },
                     onOpenXtreamSeries = { sid -> nav.navigate("xtream/series/${Uri.encode(sid)}") },
                     onOpenAnime = { lookup -> nav.navigate(lookup.route()) },
+                    onLiveChange = { homeLive = it },
                     onSeeAll = { section ->
                         val source = section.source
                         if (source != null) {

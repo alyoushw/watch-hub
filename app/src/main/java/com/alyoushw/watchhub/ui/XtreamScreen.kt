@@ -27,6 +27,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -268,66 +270,85 @@ private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind
         if (vm.kind == XtreamKind.LIVE) {
             LiveChannels(showAccounts = false)
         } else {
-            if (vm.categories.isNotEmpty()) {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    items(vm.categories, key = { it.id }) { c ->
-                        FilterChip(
-                            modifier = Modifier.focusFrame(),
-                            selected = vm.selected == c.id,
-                            onClick = { vm.selectCategory(c.id) },
-                            label = { Text(c.name, maxLines = 1) },
-                        )
-                    }
-                }
-            }
-            if (vm.items.isNotEmpty()) {
-                OutlinedTextField(
-                    value = filter,
-                    onValueChange = { filter = it },
-                    placeholder = { Text("ابحث في هذا القسم") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).tvTextField(), keyboardOptions = tvKeyboard(),
-                )
-            }
-            Box(Modifier.weight(1f).fillMaxWidth()) {
-                val shown = remember(vm.items, filter) {
-                    val q = filter.trim()
-                    if (q.isEmpty()) vm.items else vm.items.filter { it.name.contains(q, ignoreCase = true) }
-                }
-                when {
-                    vm.loading -> CenteredLoading()
-                    vm.error != null -> MessageBox(vm.error.orEmpty(), actionLabel = "حاول مرة ثانية", onAction = vm::retry)
-                    vm.items.isEmpty() -> MessageBox("ما فيه شي في هذا القسم")
-                    else -> {
-                    val xtreamGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
-                    LazyVerticalGrid(
-                        columns = GridCells.Adaptive(if (vm.kind == XtreamKind.LIVE) 120.dp else 112.dp),
-                        modifier = Modifier.tvScrollAssist(xtreamGridState),
-                        state = xtreamGridState,
-                        contentPadding = PaddingValues(12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
-                    ) {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            Text(
-                                "${shown.size} ${if (vm.kind == XtreamKind.LIVE) "قناة" else "عمل"}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                val folderWidth = (maxWidth * 0.3f).coerceIn(120.dp, 240.dp)
+                // Right-to-left layout: the first child sits on the right, so the folders end up on the left.
+                Row(Modifier.fillMaxSize()) {
+                    Column(Modifier.weight(1f).fillMaxHeight()) {
+                        if (vm.items.isNotEmpty()) {
+                            OutlinedTextField(
+                                value = filter,
+                                onValueChange = { filter = it },
+                                placeholder = { Text("ابحث في هذا القسم") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).tvTextField(), keyboardOptions = tvKeyboard(),
                             )
                         }
-                        items(shown, key = { "${it.kind}:${it.id}" }) { item ->
-                            XtreamCard(item, onLongClick = { if (item.kind != XtreamKind.LIVE) itemMenu = item }) {
-                                if (item.kind == XtreamKind.SERIES) {
-                                    onOpenSeries(item.id)
-                                } else {
-                                    PlayerActivity.start(context, container.xtream.playUrls(item, account), WatchEntry.movie(item, account))
+                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                        val shown = remember(vm.items, filter) {
+                            val q = filter.trim()
+                            if (q.isEmpty()) vm.items else vm.items.filter { it.name.contains(q, ignoreCase = true) }
+                        }
+                        when {
+                            vm.loading -> CenteredLoading()
+                            vm.error != null -> MessageBox(vm.error.orEmpty(), actionLabel = "حاول مرة ثانية", onAction = vm::retry)
+                            vm.items.isEmpty() -> MessageBox("ما فيه شي في هذا القسم")
+                            else -> {
+                            val xtreamGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+                            LazyVerticalGrid(
+                                columns = GridCells.Adaptive(if (vm.kind == XtreamKind.LIVE) 120.dp else 112.dp),
+                                modifier = Modifier.tvScrollAssist(xtreamGridState),
+                                state = xtreamGridState,
+                                contentPadding = PaddingValues(12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(14.dp),
+                            ) {
+                                item(span = { GridItemSpan(maxLineSpan) }) {
+                                    Text(
+                                        "${shown.size} ${if (vm.kind == XtreamKind.LIVE) "قناة" else "عمل"}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
                                 }
+                                items(shown, key = { "${it.kind}:${it.id}" }) { item ->
+                                    XtreamCard(item, onLongClick = { if (item.kind != XtreamKind.LIVE) itemMenu = item }) {
+                                        if (item.kind == XtreamKind.SERIES) {
+                                            onOpenSeries(item.id)
+                                        } else {
+                                            PlayerActivity.start(context, container.xtream.playUrls(item, account), WatchEntry.movie(item, account))
+                                        }
+                                    }
+                                }
+                            }
                             }
                         }
                     }
+                    }
+                    if (vm.categories.isNotEmpty()) {
+                        LazyColumn(
+                            Modifier.width(folderWidth).fillMaxHeight()
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+                            contentPadding = PaddingValues(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            items(vm.categories, key = { it.id }) { c ->
+                                val on = vm.selected == c.id
+                                Text(
+                                    c.name,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontSize = 14.sp,
+                                    fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (on) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.fillMaxWidth()
+                                        .focusFrame(RoundedCornerShape(8.dp))
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (on) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+                                        .clickable { vm.selectCategory(c.id) }
+                                        .padding(horizontal = 10.dp, vertical = 10.dp),
+                                )
+                            }
+                        }
                     }
                 }
             }

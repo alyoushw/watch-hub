@@ -243,14 +243,23 @@ class XtreamApi(private val settings: SettingsStore) {
     private val cache = mutableMapOf<String, List<XtreamItem>>()
     private val cacheLock = Mutex()
 
-    /** Every item of [kind] in the account, loaded once per login and kept in memory. */
+    private val keyLocks = mutableMapOf<String, Mutex>()
+
+    /**
+     * Every item of [kind] in the account, loaded once per login and kept in memory. One lock per
+     * account, so several accounts load side by side instead of one after another.
+     */
     suspend fun all(kind: XtreamKind, account: XtreamAccount = active): List<XtreamItem> {
         val key = "${account.host}|${account.username}|$kind"
-        cacheLock.withLock {
+        val lock = cacheLock.withLock {
             cache[key]?.let { return it }
+            keyLocks.getOrPut(key) { Mutex() }
+        }
+        return lock.withLock {
+            cacheLock.withLock { cache[key] }?.let { return it }
             val list = items(kind, null, account)
-            cache[key] = list
-            return list
+            if (list.isNotEmpty()) cacheLock.withLock { cache[key] = list }
+            list
         }
     }
 
