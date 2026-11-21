@@ -78,7 +78,7 @@ private val Regions = listOf(
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun SettingsScreen(onOpenXtream: () -> Unit = {}) {
+fun SettingsScreen(onOpenXtream: () -> Unit = {}, onOpenHistory: () -> Unit = {}) {
     val container = appContainer()
     val region by container.settings.region.collectAsStateWithLifecycle()
     val watchNext by container.settings.watchNext.collectAsStateWithLifecycle()
@@ -122,10 +122,7 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}) {
 
             HorizontalDivider()
 
-            StatsSection()
-
-            HorizontalDivider()
-            SourceSettingsSection()
+            StatsSection(onOpenHistory = onOpenHistory)
 
             HorizontalDivider()
 
@@ -314,64 +311,82 @@ private fun ClaudeSection() {
     val scope = rememberCoroutineScope()
     val savedKey by container.settings.claudeKey.collectAsStateWithLifecycle()
     val enabled by container.settings.useClaude.collectAsStateWithLifecycle()
-    var key by remember(savedKey) { mutableStateOf(savedKey) }
-    var show by remember { mutableStateOf(false) }
+    var showDialog by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<String?>(null) }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SectionTitle("البحث الذكي بـ Claude")
-        Text(
-            "مع مفتاح Claude، البحث بالصوت والكتابة يفهم أي طلب بكلامك العادي. " +
-                "المفتاح من Claude Console (حساب API، غير اشتراك Claude العادي) والاستخدام يُحسب من رصيدك هناك. " +
-                "إذا خلص الحد أو الرصيد، التطبيق يرجع للبحث العادي تلقائياً.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        TextButton(modifier = Modifier.focusFrame(), onClick = { context.openUrl("https://platform.claude.com/settings/keys") }) {
-            Text("افتح صفحة مفاتيح Claude")
-        }
-        OutlinedTextField(
-            value = key,
-            onValueChange = {
-                key = it
-                result = null
-            },
-            label = { Text("مفتاح Claude API") },
-            singleLine = true,
-            visualTransformation = if (show) VisualTransformation.None else PasswordVisualTransformation(),
-            trailingIcon = { TextButton(modifier = Modifier.focusFrame(), onClick = { show = !show }) { Text(if (show) "إخفاء" else "إظهار") } },
-            modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(),
-        )
-        // TV: the remote cannot reach a button inside the box; this one is below it.
-        if (isTv()) TextButton(modifier = Modifier.focusFrame(), onClick = { show = !show }) { Text(if (show) "إخفاء" else "إظهار") }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(
+        if (savedKey.isBlank()) {
+            Text(
+                "مع مفتاح Claude، البحث يفهم أي طلب بكلامك العادي.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(modifier = Modifier.focusFrame(), onClick = { showDialog = true }) { Text("+ أضف مفتاح Claude API") }
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Claude API", modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold)
+                androidx.compose.material3.Switch(
+                    checked = enabled,
+                    onCheckedChange = { container.settings.setUseClaude(it) },
                     modifier = Modifier.focusFrame(),
-                enabled = !testing && key.isNotBlank(),
-                onClick = {
-                    container.settings.setClaudeKey(key)
-                    container.settings.setUseClaude(true)
-                    testing = true
-                    result = null
-                    scope.launch {
-                        result = container.assistant.test()
-                        testing = false
-                    }
-                },
-            ) { Text(if (testing) "جاري التحقق…" else "احفظ وجرّب") }
-            if (savedKey.isNotBlank()) {
-                FilterChip(
-                    modifier = Modifier.focusFrame(),
-                    selected = enabled,
-                    onClick = { container.settings.setUseClaude(!enabled) },
-                    label = { Text(if (enabled) "مفعّل" else "متوقف") },
                 )
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(modifier = Modifier.focusFrame(), onClick = { showDialog = true }) { Text("تعديل المفتاح") }
+                if (enabled) {
+                    OutlinedButton(
+                        modifier = Modifier.focusFrame(),
+                        enabled = !testing,
+                        onClick = {
+                            testing = true
+                            result = null
+                            scope.launch {
+                                result = container.assistant.test()
+                                testing = false
+                            }
+                        },
+                    ) { Text(if (testing) "جاري التحقق…" else "جرّب") }
+                }
+            }
+            result?.let {
+                Text(it, color = if (it.startsWith("✓")) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
         }
-        result?.let {
-            Text(it, color = if (it.startsWith("✓")) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error)
-        }
+    }
+
+    if (showDialog) {
+        var key by remember { mutableStateOf(savedKey) }
+        var show by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { showDialog = false },
+            title = { Text("مفتاح Claude API") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("من Claude Console (platform.claude.com).", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedTextField(
+                        value = key,
+                        onValueChange = { key = it },
+                        label = { Text("API Key") },
+                        singleLine = true,
+                        visualTransformation = if (show) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = { TextButton(modifier = Modifier.focusFrame(), onClick = { show = !show }) { Text(if (show) "إخفاء" else "إظهار") } },
+                        modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(),
+                    )
+                    if (isTv()) TextButton(modifier = Modifier.focusFrame(), onClick = { show = !show }) { Text(if (show) "إخفاء" else "إظهار") }
+                    TextButton(modifier = Modifier.focusFrame(), onClick = { context.openUrl("https://platform.claude.com/settings/keys") }) { Text("افتح صفحة المفاتيح") }
+                }
+            },
+            confirmButton = {
+                TextButton(modifier = Modifier.focusFrame(), onClick = {
+                    container.settings.setClaudeKey(key.trim())
+                    if (key.isNotBlank()) container.settings.setUseClaude(true)
+                    showDialog = false
+                }) { Text("حفظ") }
+            },
+            dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = { showDialog = false }) { Text("إلغاء") } },
+        )
     }
 }
 
@@ -1191,7 +1206,7 @@ private fun AppVersionRow() {
 
 /** "📊 ملخص مشاهداتك": this month's watch time, what was finished, favourite genres. */
 @Composable
-private fun StatsSection() {
+private fun StatsSection(onOpenHistory: () -> Unit = {}) {
     val container = appContainer()
     val st = remember { container.stats.thisMonth() }
     val genres = container.recommender.topGenres
@@ -1218,5 +1233,6 @@ private fun StatsSection() {
             }
         }
         if (genres.isNotEmpty()) Text("🎭 ذوقك: " + genres.joinToString("، "), style = MaterialTheme.typography.bodySmall)
+        TextButton(modifier = Modifier.focusFrame(), onClick = onOpenHistory) { Text("📋 عرض ملخص التفاصيل") }
     }
 }

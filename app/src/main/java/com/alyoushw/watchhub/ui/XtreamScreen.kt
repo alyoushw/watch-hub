@@ -56,7 +56,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
@@ -254,7 +254,7 @@ private fun XtreamContent(onOpenSeries: (String) -> Unit, kinds: List<XtreamKind
     Column(Modifier.fillMaxSize()) {
         AccountSwitcher(Modifier.padding(vertical = 6.dp))
         if (kinds.size > 1) {
-            PrimaryTabRow(selectedTabIndex = kinds.indexOf(vm.kind).coerceAtLeast(0)) {
+            ScrollableTabRow(selectedTabIndex = kinds.indexOf(vm.kind).coerceAtLeast(0)) {
                 kinds.forEach { k ->
                     Tab(
                         modifier = Modifier.focusFrame(RoundedCornerShape(8.dp)),
