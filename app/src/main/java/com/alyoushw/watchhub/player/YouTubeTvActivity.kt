@@ -104,7 +104,10 @@ class YouTubeTvActivity : ComponentActivity() {
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
         prefs = getSharedPreferences("youtube", Context.MODE_PRIVATE)
-        ui.intValue = prefs.getInt("ui2", 0).coerceIn(0, Interfaces.lastIndex)
+        // Phones open YouTube's own mobile look (like the app); TVs its TV look. Still switchable.
+        val tv = packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) ||
+            !packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN)
+        ui.intValue = prefs.getInt("ui3", if (tv) 1 else 2).coerceIn(0, Interfaces.lastIndex)
         pageFactor.value = prefs.getFloat("page", 0.75f)
 
         val frame = FrameLayout(this).apply {
@@ -198,7 +201,7 @@ class YouTubeTvActivity : ComponentActivity() {
     private val pageFactor = androidx.compose.runtime.mutableFloatStateOf(0.75f)
 
     private fun switchTo(i: Int) {
-        prefs.edit().putInt("ui2", i).apply()
+        prefs.edit().putInt("ui3", i).apply()
         ui.intValue = i
         web?.let { load(it) }
     }
