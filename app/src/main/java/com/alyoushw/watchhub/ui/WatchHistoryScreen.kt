@@ -1,6 +1,7 @@
 package com.alyoushw.watchhub.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -114,6 +115,8 @@ fun WatchHistoryScreen(onBack: () -> Unit) {
                     Row(
                         Modifier
                             .fillMaxWidth()
+                            .focusFrame(RoundedCornerShape(10.dp))
+                            .focusable()
                             .clip(RoundedCornerShape(10.dp))
                             .background(MaterialTheme.colorScheme.surfaceVariant)
                             .padding(horizontal = 12.dp, vertical = 10.dp),
@@ -132,6 +135,8 @@ fun WatchHistoryScreen(onBack: () -> Unit) {
                     genres.forEach { g ->
                         Box(
                             Modifier
+                                .focusFrame(RoundedCornerShape(20.dp))
+                                .focusable()
                                 .clip(RoundedCornerShape(20.dp))
                                 .background(MaterialTheme.colorScheme.primaryContainer)
                                 .padding(horizontal = 14.dp, vertical = 6.dp),
@@ -149,6 +154,8 @@ fun WatchHistoryScreen(onBack: () -> Unit) {
                     Row(
                         Modifier
                             .fillMaxWidth()
+                            .focusFrame(RoundedCornerShape(10.dp))
+                            .focusable()
                             .clip(RoundedCornerShape(10.dp))
                             .background(MaterialTheme.colorScheme.surfaceVariant)
                             .padding(8.dp),
@@ -208,6 +215,8 @@ fun WatchHistoryScreen(onBack: () -> Unit) {
 private fun WatchStatCard(label: String, value: String, modifier: Modifier = Modifier) {
     Column(
         modifier
+            .focusFrame(RoundedCornerShape(12.dp))
+            .focusable()
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .padding(12.dp),

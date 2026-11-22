@@ -184,6 +184,24 @@ private fun SettingsHome(onOpen: (SettingsPage) -> Unit, onOpenHistory: () -> Un
         SettingsRow("⚽", "رابط كوره", android.net.Uri.parse(kora.ifBlank { KORA_HOME }).host.orEmpty()) { onOpen(SettingsPage.KORA) }
         SettingsRow("🧩", "تطبيقاتي الإضافية", if (apps.isEmpty()) "ما فيه" else "${apps.size} تطبيقات") { onOpen(SettingsPage.APPS) }
     }
+    val context = LocalContext.current
+    SettingsGroup {
+        SettingsRow("📤", "مشاركة التطبيق", "أرسل رابط التحميل لأصحابك") { shareApp(context) }
+    }
+}
+
+/** The download link always serves the newest official release. */
+private const val APP_DOWNLOAD = "https://github.com/alyoushw/watch-hub/releases/latest/download/WatchHub.apk"
+
+private fun shareApp(context: android.content.Context) {
+    val text = "جرّب Watch Hub: أفلام ومسلسلات وأنمي وقنوات في مكان واحد.\nحمّله من هنا: $APP_DOWNLOAD"
+    val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain").putExtra(android.content.Intent.EXTRA_TEXT, text)
+    runCatching { context.startActivity(android.content.Intent.createChooser(send, "مشاركة Watch Hub")) }.onFailure {
+        // TVs often have nothing to share with: copy the link instead.
+        val cm = context.getSystemService(android.content.ClipboardManager::class.java)
+        cm?.setPrimaryClip(android.content.ClipData.newPlainText("Watch Hub", APP_DOWNLOAD))
+        android.widget.Toast.makeText(context, "نسخنا رابط التحميل: $APP_DOWNLOAD", android.widget.Toast.LENGTH_LONG).show()
+    }
 }
 
 /** The Google account this device is signed in with (or an invitation to sign in). */
