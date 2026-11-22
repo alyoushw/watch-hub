@@ -569,7 +569,7 @@ fun LiveChannels(showAccounts: Boolean = true, accountOverride: XtreamAccount? =
                                 query = ""
                                 vm.category = it
                             },
-                            modifier = Modifier.width((boxWidth * 0.34f).coerceIn(118.dp, 220.dp)).fillMaxHeight(),
+                            modifier = Modifier.width((boxWidth * if (boxWidth > boxHeight) 0.40f else 0.45f).coerceIn(140.dp, 360.dp)).fillMaxHeight(),
                         )
                     }
                 }
@@ -936,7 +936,7 @@ private fun CategoryRow(name: String, count: Int, selected: Boolean, onClick: ()
             name,
             modifier = Modifier.weight(1f),
             fontSize = 14.sp,
-            maxLines = 1,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             color = if (selected) Gold else MaterialTheme.colorScheme.onSurface,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
@@ -974,19 +974,19 @@ private fun ChannelRow(
             .background(if (selected) MaterialTheme.colorScheme.surfaceContainerHighest else Color.Transparent)
             .remoteLongPress(onLongClick, onClick)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .padding(horizontal = 10.dp, vertical = 8.dp),
+            .padding(horizontal = 8.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
             number.toString(),
-            modifier = Modifier.width(44.dp),
+            modifier = Modifier.width(30.dp),
             style = MaterialTheme.typography.labelLarge,
             color = if (selected) Gold else MaterialTheme.colorScheme.onSurfaceVariant,
             fontWeight = FontWeight.Bold,
         )
         Box(
-            Modifier.size(width = 54.dp, height = 40.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF1E1B18)),
+            Modifier.size(width = 40.dp, height = 30.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xFF1E1B18)),
             contentAlignment = Alignment.Center,
         ) {
             if (channel.image != null) {

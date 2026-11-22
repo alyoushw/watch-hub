@@ -83,7 +83,7 @@ private val Regions = listOf(
 
 private enum class SettingsPage(val title: String) {
     ACCOUNT("حسابك"), IPTV("حسابات IPTV"), TV_ROW("متابعة المشاهدة على التلفزيون"), APPEARANCE("المظهر"),
-    YOUTUBE("يوتيوب واشتراكاتي"), ABOUT("التحديثات وعن التطبيق"), CLAUDE("البحث الذكي بـ Claude"),
+    YOUTUBE("اشتراكاتي"), ABOUT("التحديثات وعن التطبيق"), CLAUDE("البحث الذكي بـ Claude"),
     KORA("رابط كوره"), APPS("تطبيقاتي الإضافية"),
 }
 
@@ -176,7 +176,7 @@ private fun SettingsHome(onOpen: (SettingsPage) -> Unit, onOpenHistory: () -> Un
     SettingsGroup {
         if (isTv()) SettingsRow("📺", "متابعة المشاهدة على التلفزيون", if (watchNext) "مفعّلة" else "مطفية") { onOpen(SettingsPage.TV_ROW) }
         SettingsRow("🎨", "المظهر", when (mode) { "light" -> "فاتح"; "dark" -> "داكن"; else -> "حسب الجهاز" }) { onOpen(SettingsPage.APPEARANCE) }
-        SettingsRow("▶️", "يوتيوب واشتراكاتي", listOfNotNull("يوتيوب".takeIf { youtube }, "اشتراكاتي".takeIf { subs }).joinToString(" · ").ifEmpty { "مخفية" }) { onOpen(SettingsPage.YOUTUBE) }
+        SettingsRow("📅", "اشتراكاتي", if (subs) "ظاهر في الشريط" else "مخفي") { onOpen(SettingsPage.YOUTUBE) }
         SettingsRow("⬆️", "التحديثات وعن التطبيق", "النسخة ${com.alyoushw.watchhub.BuildConfig.VERSION_NAME}") { onOpen(SettingsPage.ABOUT) }
     }
     SettingsGroup {
@@ -1269,18 +1269,7 @@ private fun LiveLookSection() {
 @Composable
 private fun YouTubeSection() {
     val settings = appContainer().settings
-    val on by settings.youtubeEnabled.collectAsStateWithLifecycle()
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            "يطلع لك تبويب «يوتيوب»: واجهة يوتيوب نفسها بحسابك (واشتراك بريميوم يشتغل)، وعلى اليسار أدوات حجم الصورة. " +
-                "أول مرة سجّل دخولك من داخل يوتيوب: يطلع لك رمز، افتح youtube.com/activate من جوالك واكتبه.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("تفعيل يوتيوب", modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
-            androidx.compose.material3.Switch(checked = on, onCheckedChange = settings::setYoutubeEnabled, modifier = Modifier.focusFrame())
-        }
         val subs by settings.subscriptionsTab.collectAsStateWithLifecycle()
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("إظهار تبويب «اشتراكاتي»", modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)

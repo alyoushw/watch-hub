@@ -117,7 +117,7 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
     // «اشتراكاتي» only once it is switched on (Settings › اشتراكاتي).
     val subscriptions by appContainer().settings.subscriptionsTab.collectAsStateWithLifecycle()
     val tabs = Tab.entries.filter {
-        (it != Tab.XTREAM || xtream.isComplete) && (it != Tab.YOUTUBE || youtube) && (it != Tab.SUBSCRIPTIONS || subscriptions)
+        (it != Tab.XTREAM || xtream.isComplete) && it != Tab.YOUTUBE && (it != Tab.SUBSCRIPTIONS || subscriptions)
     }
     Scaffold(
         contentWindowInsets = WindowInsets(0),

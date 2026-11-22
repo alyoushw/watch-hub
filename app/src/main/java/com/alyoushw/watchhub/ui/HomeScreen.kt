@@ -478,8 +478,9 @@ fun HomeScreen(
     ) {
         when {
             // Phones: «مباشر» fills the screen alone; Back brings the tabs again. TVs keep the tabs.
-            live -> Column(if (tv) Modifier else Modifier.statusBarsPadding()) {
-                if (tv) header()
+            // «مباشر» keeps the home tabs on top (one tap to series/films); held sideways the lists take the full height.
+            live -> Column(if (tv || !isWideShort()) Modifier else Modifier.statusBarsPadding()) {
+                if (tv || !isWideShort()) header()
                 XtreamLiveChannels(onOpenSettings)
             }
 

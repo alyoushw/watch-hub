@@ -437,7 +437,7 @@ fun FolderLiveScreen() {
             }
         }
 
-        val folderWidth = (LocalConfiguration.current.screenWidthDp.dp * 0.36f).coerceIn(130.dp, 260.dp)
+        val folderWidth = (LocalConfiguration.current.screenWidthDp.dp * 0.45f).coerceIn(140.dp, 360.dp)
         // Right-to-left: the first child sits on the right, so the folders end up on the left.
         Row(Modifier.fillMaxSize().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             LazyColumn(
