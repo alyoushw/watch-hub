@@ -59,6 +59,11 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.layout.ColumnScope
 import com.alyoushw.watchhub.data.XtreamAccount
 import com.alyoushw.watchhub.data.XtreamApi
 import com.alyoushw.watchhub.data.XtreamException
@@ -76,18 +81,37 @@ private val Regions = listOf(
     "US" to "أمريكا",
 )
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+private enum class SettingsPage(val title: String) {
+    ACCOUNT("حسابك"), IPTV("حسابات IPTV"), TV_ROW("متابعة المشاهدة على التلفزيون"), APPEARANCE("المظهر"),
+    YOUTUBE("يوتيوب واشتراكاتي"), ABOUT("التحديثات وعن التطبيق"), CLAUDE("البحث الذكي بـ Claude"),
+    KORA("رابط كوره"), APPS("تطبيقاتي الإضافية"),
+}
+
+/**
+ * A clean list: the signed-in Google account on top, then one line per area; each opens its own page
+ * (Back returns to the list). The watch summary opens its screen directly.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(onOpenXtream: () -> Unit = {}, onOpenHistory: () -> Unit = {}) {
     val container = appContainer()
-    val region by container.settings.region.collectAsStateWithLifecycle()
-    val watchNext by container.settings.watchNext.collectAsStateWithLifecycle()
+    var page by rememberSaveable { mutableStateOf<SettingsPage?>(null) }
+    androidx.activity.compose.BackHandler(enabled = page != null) { page = null }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
-        topBar = { TopAppBar(title = { Text("الإعدادات") }) },
+        topBar = {
+            TopAppBar(
+                title = { Text(page?.title ?: "الإعدادات") },
+                navigationIcon = {
+                    if (page != null) IconButton(modifier = Modifier.focusFrame(), onClick = { page = null }) {
+                        androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع")
+                    }
+                },
+            )
+        },
     ) { padding ->
-        val settingsScroll = rememberScrollState()
+        val settingsScroll = remember(page) { androidx.compose.foundation.ScrollState(0) }
         Column(
             Modifier
                 .fillMaxSize()
@@ -98,93 +122,148 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}, onOpenHistory: () -> Unit = {}
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (isTv()) {
-                SectionTitle("متابعة المشاهدة على التلفزيون")
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("عرض أعمالي على شاشة التلفزيون الرئيسية", Modifier.weight(1f))
-                    androidx.compose.material3.Switch(
-                        checked = watchNext,
-                        onCheckedChange = container.settings::setWatchNext,
-                        modifier = Modifier.focusFrame(),
+            when (page) {
+                null -> SettingsHome(onOpen = { page = it }, onOpenHistory = onOpenHistory)
+                SettingsPage.ACCOUNT -> AccountSection()
+                SettingsPage.IPTV -> {
+                    XtreamSection(onOpenXtream)
+                    ChannelFoldersSection()
+                    HorizontalDivider()
+                    LiveLookSection()
+                }
+                SettingsPage.TV_ROW -> TvRowSection()
+                SettingsPage.APPEARANCE -> AppearanceSection()
+                SettingsPage.YOUTUBE -> YouTubeSection()
+                SettingsPage.ABOUT -> {
+                    AppVersionRow()
+                    Text(
+                        "Watch Hub يشغّل حلقات Animeify ومحتوى حسابات IPTV بالمشغل المدمج ويجمع لك المحتوى في مكان واحد، " +
+                            "ولما تضغط «شاهد» يفتح العمل في تطبيق المنصة الرسمي.\n\n" +
+                            "This product uses the TMDB API but is not endorsed or certified by TMDB. " +
+                            "Streaming availability data is provided by JustWatch.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                if (watchNext) {
-                    val homeContext = androidx.compose.ui.platform.LocalContext.current
-                    OutlinedButton(onClick = { com.alyoushw.watchhub.tv.WatchNextPublisher.requestChannel(homeContext) }, modifier = Modifier.focusFrame()) {
-                        Text("إظهار صف Watch Hub")
-                    }
-                }
-                Text("يعرض أعمال أشاهد حاليًا وما توقفت عنده؛ بطاقة المتابعة تستأنف المشغّل من موضع التوقف. ظهور الصفوف يعتمد على واجهة التلفزيون؛ متابعة المشاهدة في Google TV تحتاج اعتماد Google.",
-                    style = MaterialTheme.typography.bodySmall)
-                HorizontalDivider()
+                SettingsPage.CLAUDE -> ClaudeSection()
+                SettingsPage.KORA -> KoraLinkSection()
+                SettingsPage.APPS -> CustomAppsSection()
             }
-            AccountSection()
+        }
+    }
+}
 
-            HorizontalDivider()
+@Composable
+private fun SettingsHome(onOpen: (SettingsPage) -> Unit, onOpenHistory: () -> Unit) {
+    val container = appContainer()
+    val s = container.settings
+    val accounts by s.xtreamAccounts.collectAsStateWithLifecycle()
+    val mode by s.themeMode.collectAsStateWithLifecycle()
+    val youtube by s.youtubeEnabled.collectAsStateWithLifecycle()
+    val subs by s.subscriptionsTab.collectAsStateWithLifecycle()
+    val claudeKey by s.claudeKey.collectAsStateWithLifecycle()
+    val useClaude by s.useClaude.collectAsStateWithLifecycle()
+    val kora by s.koraUrl.collectAsStateWithLifecycle()
+    val apps by s.customApps.collectAsStateWithLifecycle()
+    val watchNext by s.watchNext.collectAsStateWithLifecycle()
+    val month = remember { container.stats.thisMonth().totalMs / 60_000 }
 
-            StatsSection(onOpenHistory = onOpenHistory)
+    AccountCard { onOpen(SettingsPage.ACCOUNT) }
+    SettingsGroup {
+        SettingsRow("📊", "ملخص المشاهدات", if (month >= 60) "${month / 60} س ${month % 60} د هالشهر" else "$month د هالشهر", onOpenHistory)
+        SettingsRow("📡", "حسابات IPTV", "${accounts.count { it.isComplete }} حسابات · المجلدات وشكل المباشر") { onOpen(SettingsPage.IPTV) }
+    }
+    SettingsGroup {
+        if (isTv()) SettingsRow("📺", "متابعة المشاهدة على التلفزيون", if (watchNext) "مفعّلة" else "مطفية") { onOpen(SettingsPage.TV_ROW) }
+        SettingsRow("🎨", "المظهر", when (mode) { "light" -> "فاتح"; "dark" -> "داكن"; else -> "حسب الجهاز" }) { onOpen(SettingsPage.APPEARANCE) }
+        SettingsRow("▶️", "يوتيوب واشتراكاتي", listOfNotNull("يوتيوب".takeIf { youtube }, "اشتراكاتي".takeIf { subs }).joinToString(" · ").ifEmpty { "مخفية" }) { onOpen(SettingsPage.YOUTUBE) }
+        SettingsRow("⬆️", "التحديثات وعن التطبيق", "النسخة ${com.alyoushw.watchhub.BuildConfig.VERSION_NAME}") { onOpen(SettingsPage.ABOUT) }
+    }
+    SettingsGroup {
+        SettingsRow("✨", "البحث الذكي بـ Claude", if (claudeKey.isNotBlank() && useClaude) "مفعّل" else "مطفي") { onOpen(SettingsPage.CLAUDE) }
+        SettingsRow("⚽", "رابط كوره", android.net.Uri.parse(kora.ifBlank { KORA_HOME }).host.orEmpty()) { onOpen(SettingsPage.KORA) }
+        SettingsRow("🧩", "تطبيقاتي الإضافية", if (apps.isEmpty()) "ما فيه" else "${apps.size} تطبيقات") { onOpen(SettingsPage.APPS) }
+    }
+}
 
-            HorizontalDivider()
-
-            AppearanceSection()
-
-            HorizontalDivider()
-
-            SectionTitle("منطقتك")
-            Text(
-                "التوفر يختلف من دولة لدولة، اختر الدولة اللي حسابك فيها.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Regions.forEach { (code, label) ->
-                    FilterChip(
-                    modifier = Modifier.focusFrame(),
-                        selected = region == code,
-                        onClick = { container.settings.setRegion(code) },
-                        label = { Text(label) },
-                    )
-                }
+/** The Google account this device is signed in with (or an invitation to sign in). */
+@Composable
+private fun AccountCard(onClick: () -> Unit) {
+    val state by appContainer().cloud.state.collectAsStateWithLifecycle()
+    val signed = state as? com.alyoushw.watchhub.data.CloudSync.State.SignedIn
+    Row(
+        Modifier.fillMaxWidth().focusFrame(RoundedCornerShape(16.dp)).clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainer).clickable(onClick = onClick).padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Box(Modifier.size(52.dp).clip(CircleShape).background(Gold), contentAlignment = Alignment.Center) {
+            if (signed?.photo != null) {
+                coil.compose.AsyncImage(model = signed.photo, contentDescription = null, modifier = Modifier.fillMaxSize())
+            } else {
+                Text((signed?.name ?: signed?.email ?: "G").take(1), fontWeight = FontWeight.Bold, color = Color(0xFF1C1206), fontSize = 20.sp)
             }
-
-            HorizontalDivider()
-
-            ClaudeSection()
-
-            HorizontalDivider()
-            KoraLinkSection()
-
-            HorizontalDivider()
-
-            CustomAppsSection()
-
-            HorizontalDivider()
-
-            XtreamSection(onOpenXtream)
-            ChannelFoldersSection()
-
-            HorizontalDivider()
-
-            LiveLookSection()
-
-            HorizontalDivider()
-
-            YouTubeSection()
-
-            HorizontalDivider()
-
-            SectionTitle("عن التطبيق")
-            AppVersionRow()
+        }
+        Column(Modifier.weight(1f)) {
+            Text(signed?.name ?: if (signed != null) "حسابك" else "سجّل دخولك بحساب Google", fontWeight = FontWeight.Bold, fontSize = 16.sp)
             Text(
-                "Watch Hub يشغّل حلقات Animeify ومحتوى حساب Xtream Codes بالمشغل المدمج ويجمع لك المحتوى في مكان واحد، " +
-                    "ولما تضغط «شاهد» يفتح العمل في تطبيق المنصة الرسمي.\n\n" +
-                    "كل بياناتك (المفضلة واشتراكاتك) محفوظة على جوالك بس.\n\n" +
-                    "This product uses the TMDB API but is not endorsed or certified by TMDB. " +
-                    "Streaming availability data is provided by JustWatch.",
+                signed?.email ?: "عشان تتزامن المفضلة وتابع المشاهدة بين أجهزتك",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
             )
         }
+        Text("‹", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 20.sp)
+    }
+}
+
+@Composable
+private fun SettingsGroup(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceContainer),
+        content = content,
+    )
+}
+
+@Composable
+private fun SettingsRow(icon: String, title: String, subtitle: String, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().focusFrame(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+            Text(icon, fontSize = 17.sp)
+        }
+        Column(Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+            if (subtitle.isNotBlank()) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+        }
+        Text("‹", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 20.sp)
+    }
+}
+
+/** TV only: Watch Hub's row on the TV home screen. */
+@Composable
+private fun TvRowSection() {
+    val container = appContainer()
+    val watchNext by container.settings.watchNext.collectAsStateWithLifecycle()
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("عرض أعمالي على شاشة التلفزيون الرئيسية", Modifier.weight(1f))
+            androidx.compose.material3.Switch(checked = watchNext, onCheckedChange = container.settings::setWatchNext, modifier = Modifier.focusFrame())
+        }
+        if (watchNext) {
+            val homeContext = LocalContext.current
+            OutlinedButton(onClick = { com.alyoushw.watchhub.tv.WatchNextPublisher.requestChannel(homeContext) }, modifier = Modifier.focusFrame()) {
+                Text("إظهار صف Watch Hub")
+            }
+        }
+        Text(
+            "يعرض أعمال أشاهد حاليًا وما توقفت عنده؛ بطاقة المتابعة تستأنف المشغّل من موضع التوقف. ظهور الصفوف يعتمد على واجهة التلفزيون.",
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 }
 
@@ -199,7 +278,6 @@ private fun CustomAppsSection() {
     var picking by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        SectionTitle("تطبيقاتي الإضافية")
         Text(
             "اختار التطبيقات اللي تبيها مرة وحدة، وبيطلع لك زر لكل واحد في صفحة أي فيلم أو مسلسل. " +
                 "لما تضغطه ننسخ اسم العمل ونفتح التطبيق، وتلصق الاسم في البحث.",
@@ -314,7 +392,6 @@ private fun KoraLinkSection() {
     var editing by remember { mutableStateOf(false) }
     var text by remember(saved, editing) { mutableStateOf(saved.ifBlank { KORA_HOME }) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        SectionTitle("رابط كوره")
         Text(saved.ifBlank { KORA_HOME }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (!editing) {
             OutlinedButton(modifier = Modifier.focusFrame(), onClick = { editing = true }) { Text("تغيير رابط كوره") }
@@ -350,7 +427,6 @@ private fun ClaudeSection() {
     var result by remember { mutableStateOf<String?>(null) }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        SectionTitle("البحث الذكي بـ Claude")
         if (savedKey.isBlank()) {
             Text(
                 "مع مفتاح Claude، البحث يفهم أي طلب بكلامك العادي.",
@@ -483,7 +559,6 @@ private fun XtreamSection(onOpen: () -> Unit) {
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        SectionTitle("حسابات Xtream Codes")
         Text(
             "أضف حساب أو أكثر من مزوّدين رسميين، وسمّ كل واحد باسم تعرفه. القنوات والأفلام والمسلسلات تطلع في «IPTV»، " +
                 "وزر «مشاهدة» في صفحة أي عمل يبحث في كل حساباتك. البيانات محفوظة على جهازك بس.",
@@ -670,7 +745,6 @@ private fun AppearanceSection() {
     val mode by container.settings.themeMode.collectAsStateWithLifecycle()
     val accent by container.settings.accent.collectAsStateWithLifecycle()
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SectionTitle("المظهر")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("dark" to "🌙 داكن", "light" to "☀️ نهاري", "system" to "حسب الجهاز").forEach { (key, label) ->
                 FilterChip(
@@ -726,7 +800,6 @@ private fun AccountSection() {
     var showUrl by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        SectionTitle("حسابك")
         when (val st = state) {
             is com.alyoushw.watchhub.data.CloudSync.State.SignedIn -> {
                 Row(
@@ -1198,7 +1271,6 @@ private fun YouTubeSection() {
     val settings = appContainer().settings
     val on by settings.youtubeEnabled.collectAsStateWithLifecycle()
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        SectionTitle("يوتيوب")
         Text(
             "يطلع لك تبويب «يوتيوب»: واجهة يوتيوب نفسها بحسابك (واشتراك بريميوم يشتغل)، وعلى اليسار أدوات حجم الصورة. " +
                 "أول مرة سجّل دخولك من داخل يوتيوب: يطلع لك رمز، افتح youtube.com/activate من جوالك واكتبه.",

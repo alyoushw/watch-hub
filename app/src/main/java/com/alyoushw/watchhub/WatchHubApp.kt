@@ -22,7 +22,8 @@ import java.io.File
 class AppContainer(context: Context) {
     // One pending request from a Watch Next card; consumed after navigation.
     val watchNextRequest = kotlinx.coroutines.flow.MutableStateFlow<Pair<MediaType, Int>?>(null)
-    val settings = SettingsStore(context)
+    // Saudi Arabia always: the region choice was removed from Settings.
+    val settings = SettingsStore(context).also { if (it.region.value != "SA") it.setRegion("SA") }
     val store = LocalStore(File(context.filesDir, "watchhub.json"))
     val api = TmdbApi(settings)
     val links = DirectLinks()
