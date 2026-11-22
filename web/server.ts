@@ -8,6 +8,7 @@
 //   PROXY_KEY    a password the page must send (set it in the app's settings too)
 //   PROXY_HOSTS  comma-separated hosts the proxy may reach, e.g. "example.com:8080"
 import { handleSources, type MediaSession } from "./sources.ts";
+import { handleRemux } from "./remux.ts";
 import { serveDir } from "jsr:@std/http@1.0.10/file-server";
 
 const PROXY_KEY = Deno.env.get("PROXY_KEY") ?? "";
@@ -548,6 +549,7 @@ Deno.serve({ port }, (req) => {
   if (url.pathname.startsWith("/sources/")) return handleSources(req, url, proxy);
   if (url.pathname.startsWith("/fouru/")) return fourU(req, url);
   if (url.pathname === "/proxy") return proxy(req, url);
+  if (url.pathname.startsWith("/remux/")) return handleRemux(req, url);
   if (req.method === "OPTIONS" && url.pathname.startsWith("/auth/")) return new Response(null, { status: 204, headers: CORS });
   if (url.pathname === "/config.json") return config();
   if (url.pathname === "/.well-known/assetlinks.json") return assetLinks();

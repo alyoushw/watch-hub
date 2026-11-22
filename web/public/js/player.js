@@ -176,6 +176,49 @@ function waitForStart(timeoutMs) {
   });
 }
 
+// ---------- MKV/AVI on Apple: the server rewraps the film as HLS (see web/remux.ts) ----------
+// The HLS stream starts where it was opened ([offset]); the timeline still shows the whole film.
+let remux = null; // { src, duration, offset, retries }
+const total = () => (remux && remux.duration > 0 ? remux.duration : video.duration);
+const posNow = () => (remux ? remux.offset : 0) + video.currentTime;
+const appleSafari = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1
+  || /Version\/[\d.]+.*Safari/.test(navigator.userAgent) && !/Chrome|Chromium|Edg\//.test(navigator.userAgent);
+const needsRemux = (url) => appleSafari() && /\.(mkv|avi|wmv|flv)$/i.test(new URL(url, location.href).pathname);
+
+async function openRemux(src, t) {
+  const key = settings.proxyKey ? `&key=${encodeURIComponent(settings.proxyKey)}` : "";
+  const r = await fetch(`/remux/open?url=${encodeURIComponent(src)}&t=${Math.floor(t)}${key}`);
+  if (!r.ok) throw new Error("remux");
+  const j = await r.json();
+  return { playlist: new URL(j.playlist, location.href).href, duration: j.duration || 0 };
+}
+
+/** A jump past what the server has prepared (or before where it started) reopens it there. */
+async function restartRemux(t) {
+  const r0 = remux;
+  if (!r0) return;
+  const mine = session;
+  ui.spin.hidden = false;
+  try {
+    const r = await openRemux(r0.src, t);
+    if (mine !== session || remux !== r0) return;
+    r0.offset = t;
+    if (r.duration) r0.duration = r.duration;
+    video.src = r.playlist;
+    video.play().catch(() => {});
+  } catch {
+    if (mine === session) { ui.spin.hidden = true; showFailure(r0.src, false); }
+  }
+}
+
+function seekTo(t) {
+  if (!remux) { video.currentTime = t; return; }
+  const local = t - remux.offset;
+  const end = video.seekable.length ? video.seekable.end(video.seekable.length - 1) : 0;
+  if (local >= 0 && local < end - 3) video.currentTime = local;
+  else restartRemux(Math.max(0, Math.floor(t)));
+}
+
 const nativeHls = () => video.canPlayType("application/vnd.apple.mpegurl") !== "";
 
 async function tryOne(url, startAt, mine, direct = false) {
@@ -232,9 +275,9 @@ function openOverlay(entry, live) {
 
 function saveProgress(important = false) {
   if (!current || current.live || !current.started) return;
-  const d = video.duration;
+  const d = total();
   if (!isFinite(d) || d <= 0) return;
-  history.save({ ...current.entry, positionMs: Math.round(video.currentTime * 1000), durationMs: Math.round(d * 1000) }, important);
+  history.save({ ...current.entry, positionMs: Math.round(posNow() * 1000), durationMs: Math.round(d * 1000) }, important);
 }
 
 /**
@@ -401,8 +444,8 @@ setInterval(() => {
   }
   // Sleep timer.
   if (sleep) {
-    const d0 = video.duration;
-    const due = sleep.at ? Date.now() >= sleep.at : isFinite(d0) && d0 - video.currentTime < 1.5;
+    const d0 = total();
+    const due = sleep.at ? Date.now() >= sleep.at : isFinite(d0) && d0 - posNow() < 1.5;
     if (sleep.atEnd && !ui.upnext.hidden) upNextDismissed = current.entry.key;
     if (due) {
       sleep = null;
@@ -414,8 +457,8 @@ setInterval(() => {
   }
 
   const e = current.entry;
-  const d = video.duration;
-  const t = video.currentTime;
+  const d = total();
+  const t = posNow();
   if (current.live || !["episode", "anime_episode"].includes(e.kind) || !current.started || !isFinite(d) || d <= 0) {
     ui.skip.hidden = true;
     ui.upnext.hidden = true;
@@ -441,8 +484,8 @@ setInterval(() => {
 }, 500);
 
 ui.skip.addEventListener("click", () => {
-  if (!isFinite(video.duration)) return;
-  video.currentTime = Math.min(video.duration - 1, video.currentTime + 85);
+  if (!isFinite(total())) return;
+  seekTo(Math.min(total() - 1, posNow() + 85));
   ui.skip.hidden = true;
 });
 $("pl-upnext-go").addEventListener("click", () => step(1));
@@ -457,6 +500,7 @@ async function playHere(urls, entry) {
   if (current?.entry.key !== entry.key) clearExternalCaptions();
   const live = entry.kind === "live";
   const mine = ++session;
+  remux = null;
   reset();
   current = { urls, entry, live, started: false };
   openOverlay(entry, live);
@@ -482,9 +526,20 @@ async function playHere(urls, entry) {
     const secure = !downloaded && secureDirectUrl(entry, url);
     return [...(secure ? [{ url: secure, direct: true }] : []), { url, direct: false }];
   });
-  for (const { url, direct } of candidates) {
+  // Apple cannot open MKV/AVI: first try the server's rewrapped stream of the same film.
+  const film = !live && !downloaded && urls.find(needsRemux);
+  if (film) candidates.unshift({ url: film, direct: false, remux: true });
+  for (const { url, direct, remux: viaRemux } of candidates) {
     try {
-      await tryOne(url, startAt, mine, direct);
+      remux = null;
+      if (viaRemux) {
+        const r = await openRemux(url, startAt);
+        if (mine !== session) return;
+        remux = { src: url, duration: r.duration, offset: startAt, retries: 0 };
+        await tryOne(r.playlist, 0, mine, true);
+      } else {
+        await tryOne(url, startAt, mine, direct);
+      }
       if (mine !== session) return;
       current.started = true;
       current.playbackUrl = url; current.direct = direct;
@@ -494,6 +549,7 @@ async function playHere(urls, entry) {
       saveTimer = setInterval(saveProgress, 5000);
       return;
     } catch {
+      remux = null;
       if (mine !== session) return;
     }
   }
@@ -644,8 +700,8 @@ function togglePlay() {
 }
 
 function seekBy(sec) {
-  if (!current || current.live || !isFinite(video.duration)) return;
-  video.currentTime = Math.max(0, Math.min(video.duration - 1, video.currentTime + sec));
+  if (!current || current.live || !isFinite(total())) return;
+  seekTo(Math.max(0, Math.min(total() - 1, posNow() + sec)));
   flash(`${sec < 0 ? "↺ -" : "↻ +"}${Math.abs(sec)} ث`);
   wake();
 }
@@ -694,8 +750,8 @@ let scrubbing = false;
 function render() {
   ui.play.textContent = video.paused ? "▶" : "❚❚";
   if (current?.live) return;
-  const d = video.duration;
-  const t = video.currentTime;
+  const d = total();
+  const t = posNow();
   ui.cur.textContent = fmt(t);
   ui.dur.textContent = isFinite(d) ? `-${fmt(d - t)}` : "--:--";
   const f = isFinite(d) && d > 0 ? t / d : 0;
@@ -709,6 +765,8 @@ function render() {
 ["timeupdate", "play", "pause", "durationchange", "progress"].forEach((e) => video.addEventListener(e, render));
 video.addEventListener("waiting", () => (ui.spin.hidden = false));
 video.addEventListener("error", () => {
+  // The rewrapped stream dropped: reopen it where the viewer is (twice at most).
+  if (current?.started && remux && remux.retries < 2) { remux.retries++; restartRemux(Math.floor(posNow())); return; }
   if (current?.started) { ui.spin.hidden = true; showFailure(current.playbackUrl || fileUrl(current.urls), current.direct || false); }
 });
 video.addEventListener("playing", () => {
@@ -735,10 +793,10 @@ function barFraction(e) {
 function showTip(f) {
   ui.tip.hidden = false;
   ui.tip.style.left = `${f * 100}%`;
-  ui.tip.textContent = fmt(f * video.duration);
+  ui.tip.textContent = fmt(f * total());
 }
 ui.bar.addEventListener("pointerdown", (e) => {
-  if (!isFinite(video.duration)) return;
+  if (!isFinite(total())) return;
   scrubbing = true;
   ui.bar.setPointerCapture(e.pointerId);
   const f = barFraction(e);
@@ -748,7 +806,7 @@ ui.bar.addEventListener("pointerdown", (e) => {
   wake();
 });
 ui.bar.addEventListener("pointermove", (e) => {
-  if (!isFinite(video.duration)) return;
+  if (!isFinite(total())) return;
   const f = barFraction(e);
   if (scrubbing) {
     ui.fill.style.width = `${f * 100}%`;
@@ -764,7 +822,7 @@ ui.bar.addEventListener("pointerup", (e) => {
   if (!scrubbing) return;
   scrubbing = false;
   ui.tip.hidden = true;
-  video.currentTime = barFraction(e) * video.duration;
+  seekTo(barFraction(e) * total());
 });
 
 ui.play.addEventListener("click", togglePlay);
@@ -1015,7 +1073,7 @@ ui.gest.addEventListener("pointerdown", (e) => {
     const [a, b] = [...pointers.values()];
     gesture = { mode: "pinch", dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, zoom };
   } else if (pointers.size === 1) {
-    gesture = { mode: null, x: e.clientX, y: e.clientY, t: video.currentTime, vol: video.volume, bright: brightness, type: e.pointerType };
+    gesture = { mode: null, x: e.clientX, y: e.clientY, t: posNow(), vol: video.volume, bright: brightness, type: e.pointerType };
   }
 });
 
@@ -1037,9 +1095,9 @@ ui.gest.addEventListener("pointermove", (e) => {
   if (!gesture.mode && Math.hypot(dx, dy) > 12) {
     gesture.mode = Math.abs(dx) > Math.abs(dy) ? (current?.live ? "channel" : "seek") : gesture.x < w / 2 ? "bright" : "volume";
   }
-  if (gesture.mode === "seek" && isFinite(video.duration)) {
-    const span = Math.min(video.duration, 180);
-    gesture.target = Math.max(0, Math.min(video.duration - 1, gesture.t + (dx / w) * span));
+  if (gesture.mode === "seek" && isFinite(total())) {
+    const span = Math.min(total(), 180);
+    gesture.target = Math.max(0, Math.min(total() - 1, gesture.t + (dx / w) * span));
     const delta = gesture.target - gesture.t;
     flash(`${delta < 0 ? "↺ -" : "↻ +"}${fmt(Math.abs(delta))} · ${fmt(gesture.target)}`);
   } else if (gesture.mode === "bright") {
@@ -1065,7 +1123,7 @@ function endPointer(e) {
     return;
   }
   if (g.mode === "seek" && g.target !== undefined) {
-    video.currentTime = g.target;
+    seekTo(g.target);
     return;
   }
   if (g.mode) return;
