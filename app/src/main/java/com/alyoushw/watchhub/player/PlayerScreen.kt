@@ -198,6 +198,22 @@ fun PlayerScreen(
     fun savePicture() {
         picPrefs.edit().putInt("picture", resize).putFloat("zoom", zoom).putFloat("stretch", stretch).apply()
     }
+    // Burned-in subtitles sit at the bottom of the picture: when zooming, crop from the top so they stay.
+    var keepSubs by remember { mutableStateOf(picPrefs.getBoolean("keepSubs", true)) }
+    var videoRatio by remember { mutableFloatStateOf(0f) }
+    DisposableEffect(player) {
+        fun read(v: androidx.media3.common.VideoSize) { if (v.height > 0 && v.width > 0) videoRatio = v.width * v.pixelWidthHeightRatio / v.height }
+        val listener = object : Player.Listener {
+            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) = read(videoSize)
+        }
+        read(player.videoSize)
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
+    // The picture fills the screen's height (pillar-boxed or exact): its bottom is the screen's bottom.
+    val bottomAnchored = keepSubs && videoRatio > 0f && videoRatio <= screenRatio + 0.01f
+    val cropFill = bottomAnchored && PictureModes[resize].resize == AspectRatioFrameLayout.RESIZE_MODE_ZOOM && PictureModes[resize].ratio == null
+    val fillScale = if (cropFill) screenRatio / videoRatio else 1f
     var indicator by remember { mutableStateOf<Indicator?>(null) }
     var touchedAt by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
@@ -505,7 +521,8 @@ fun PlayerScreen(
                     }
                 },
                 update = { view ->
-                    view.resizeMode = PictureModes[resize].resize
+                    // «ملء مع قص» done here as a scale anchored at the bottom, so the top is what gets cut.
+                    view.resizeMode = if (cropFill) AspectRatioFrameLayout.RESIZE_MODE_FIT else PictureModes[resize].resize
                     view.subtitleView?.visibility = if (arabicCaptions || subDelay > 0) android.view.View.GONE else android.view.View.VISIBLE
                     view.subtitleView?.setFractionalTextSize(SubSizes[subSize].first)
                     view.subtitleView?.setStyle(
@@ -527,8 +544,9 @@ fun PlayerScreen(
                         } ?: Modifier.fillMaxSize(),
                     )
                     .graphicsLayer {
-                        scaleX = zoom * stretch
-                        scaleY = zoom
+                        scaleX = zoom * stretch * fillScale
+                        scaleY = zoom * fillScale
+                        transformOrigin = if (bottomAnchored) androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f) else androidx.compose.ui.graphics.TransformOrigin.Center
                     },
             )
 
@@ -803,6 +821,11 @@ fun PlayerScreen(
                     mode = resize,
                     zoom = zoom,
                     stretch = stretch,
+                    keepSubs = keepSubs,
+                    onKeepSubs = {
+                        keepSubs = !keepSubs
+                        picPrefs.edit().putBoolean("keepSubs", keepSubs).apply()
+                    },
                     onMode = {
                         resize = it
                         savePicture()
@@ -1221,6 +1244,8 @@ private fun PicturePanel(
     mode: Int,
     zoom: Float,
     stretch: Float,
+    keepSubs: Boolean,
+    onKeepSubs: () -> Unit,
     onMode: (Int) -> Unit,
     onZoom: (Float) -> Unit,
     onStretch: (Float) -> Unit,
@@ -1242,6 +1267,7 @@ private fun PicturePanel(
         ) {
             Text("حجم الصورة", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
             LazyColumn(contentPadding = PaddingValues(vertical = 4.dp)) {
+                item { MenuRow("📝 إبقاء الترجمة ظاهرة عند التكبير", selected = keepSubs, onClick = onKeepSubs) }
                 item { SectionLabel("التكبير: ${Math.round(zoom * 100)}%") }
                 item {
                     StepRow(

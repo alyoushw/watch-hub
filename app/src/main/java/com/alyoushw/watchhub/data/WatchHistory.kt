@@ -253,9 +253,25 @@ class WatchHistory(context: Context) {
     fun hideFromContinue(e: WatchEntry) {
         val gk = continueGroupKey(e)
         val now = System.currentTimeMillis()
-        val next = _continueHidden.value + (gk to now)
-        _continueHidden.value = next
-        prefs.edit().putString(KEY_CW_HIDDEN, json.encodeToString(removalsSerializer, next.entries.sortedByDescending { it.value }.take(300).associate { it.key to it.value })).commit()
+        saveHidden(_continueHidden.value + (gk to now))
+        onHidden?.invoke(gk, now)
+    }
+
+    /** Set by the account sync: a card removed here leaves «تابع المشاهدة» on every device. */
+    var onHidden: ((String, Long) -> Unit)? = null
+
+    /** Removals made on another device (group key → when); the later time wins. */
+    @Synchronized
+    fun mergeHidden(remote: Map<String, Long>) {
+        val cur = _continueHidden.value
+        val changed = remote.filter { (k, at) -> (cur[k] ?: 0) < at }
+        if (changed.isNotEmpty()) saveHidden(cur + changed)
+    }
+
+    private fun saveHidden(next: Map<String, Long>) {
+        val kept = next.entries.sortedByDescending { it.value }.take(300).associate { it.key to it.value }
+        _continueHidden.value = kept
+        prefs.edit().putString(KEY_CW_HIDDEN, json.encodeToString(removalsSerializer, kept)).commit()
     }
 
     /** For the "تابع المشاهدة" row: one card per series (its latest episode), finished films left out. */

@@ -121,6 +121,7 @@ class CloudSync(
     /** Called once when the app starts: hooks the local stores and connects if possible. */
     fun start() {
         history.onChange = { entry, key, removedAt, important -> pushHistory(entry, key, removedAt, important) }
+        history.onHidden = { key, at -> pushHidden(mapOf(key to at)) }
         store.onWatchChanged = { item, key, removedAt -> pushWatch(item, key, removedAt) }
         settings.onXtreamAccountsChanged = { list, at -> pushXtream(list, at) }
         config?.let { connect(it) }
@@ -408,6 +409,8 @@ class CloudSync(
                 mergeHistory(base.collection("history").get().await().documents)
                 mergeWatchlist(base.collection("watchlist").get().await().documents)
                 mergeXtream(base.collection("meta").document("xtream").get().await())
+                history.mergeHidden(hiddenOf(base.collection("meta").document("continueHidden").get().await()))
+                history.continueHidden.value.takeIf { it.isNotEmpty() }?.let(::pushHidden)
                 _lastSync.value = System.currentTimeMillis()
             } catch (e: Exception) {
                 Log.w(TAG, "first sync failed", e)
@@ -429,6 +432,10 @@ class CloudSync(
                 if (e != null || snap == null || snap.metadata.hasPendingWrites()) return@addSnapshotListener
                 applyXtreamDoc(snap)
             }
+            listeners += base.collection("meta").document("continueHidden").addSnapshotListener { snap, e ->
+                if (e != null || snap == null || snap.metadata.hasPendingWrites()) return@addSnapshotListener
+                history.mergeHidden(hiddenOf(snap))
+            }
         }
     }
 
@@ -443,6 +450,23 @@ class CloudSync(
     // ---- history
 
     private fun docId(key: String) = key.replace('/', '_')
+
+    // «تابع المشاهدة» removals: one document, field = base64 of the group key (keys hold ':' and '.'), value = when.
+    private fun hiddenField(key: String) = android.util.Base64.encodeToString(key.toByteArray(), android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
+
+    private fun hiddenOf(doc: DocumentSnapshot): Map<String, Long> = doc.data.orEmpty().mapNotNull { (field, value) ->
+        val key = runCatching { String(android.util.Base64.decode(field, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)) }.getOrNull()
+        val at = (value as? Number)?.toLong()
+        if (key == null || at == null) null else key to at
+    }.toMap()
+
+    private fun pushHidden(items: Map<String, Long>) {
+        val ref = userDoc()?.collection("meta")?.document("continueHidden") ?: return
+        scope.launch {
+            runCatching { ref.set(items.entries.associate { hiddenField(it.key) to it.value }, SetOptions.merge()).await() }
+                .onFailure { Log.w(TAG, "hidden sync failed", it) }
+        }
+    }
 
     private fun WatchEntry.toMap(): Map<String, Any?> = mapOf(
         "key" to key, "kind" to kind, "itemId" to itemId, "title" to title, "subtitle" to subtitle,
