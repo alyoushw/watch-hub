@@ -115,13 +115,22 @@ class AnimeSourcesViewModel(private val container: AppContainer, private val ani
         }
     }
 
+    /** The following season (its own Animeify title) and its episodes, so playback runs on into it. */
+    private var nextSeason: Pair<AnimeifyTitle, List<AnimeifyEpisode>>? = null
+
     private suspend fun loadTitle(title: AnimeifyTitle) {
         selected = title
         episodes = emptyList()
+        nextSeason = null
         episodes = container.animeify.episodes(title.id)
         // Related works include separately catalogued MAL seasons, films and specials.
         try { titles = (titles + container.animeify.related(title)).distinctBy { it.id } }
         catch (_: AnimeifyException) { /* Current season's episodes remain usable. */ }
+        if (title.type == "SERIES") {
+            titles.filter { it.type == "SERIES" && it.id != title.id && it.season > title.season }.minByOrNull { it.season }?.let { next ->
+                runCatching { container.animeify.episodes(next.id) }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { nextSeason = next to it }
+            }
+        }
     }
 
     fun chooseEpisode(ep: AnimeifyEpisode, requestedAction: AnimeEpisodeAction = AnimeEpisodeAction.PLAY) {
@@ -143,24 +152,26 @@ class AnimeSourcesViewModel(private val container: AppContainer, private val ani
         episode = null
     }
 
-    private fun ref(ep: AnimeifyEpisode, server: String): AnimeEpisodeRef {
-        val title = checkNotNull(selected)
+    private fun ref(ep: AnimeifyEpisode, server: String, of: AnimeifyTitle? = null): AnimeEpisodeRef {
+        val title = of ?: checkNotNull(selected)
         return AnimeEpisodeRef(title.id, title.malId ?: anime.malId ?: 0, title.type, title.season, ep.number, server,
             detailType = if (title.malId != null) MediaType.ANIME.path else anime.detailType.path,
             detailId = title.malId ?: anime.detailId)
     }
 
-    fun entry(ep: AnimeifyEpisode, server: String): WatchEntry {
-        val r = ref(ep, server)
+    fun entry(ep: AnimeifyEpisode, server: String, of: AnimeifyTitle? = null): WatchEntry {
+        val r = ref(ep, server, of)
         return WatchEntry(
             key = "animeify:${r.animeId}:${r.episode}", kind = WatchEntry.ANIME,
-            itemId = r.episode, title = selected?.title ?: anime.title,
+            itemId = r.episode, title = of?.title ?: selected?.title ?: anime.title,
             subtitle = if (r.type == "MOVIE") "فيلم" else "الموسم ${r.season} · الحلقة ${r.episode}", image = anime.backdrop ?: selected?.poster ?: anime.poster,
             seriesId = r.animeId, accountId = "animeify", animeRef = r,
         )
     }
 
-    fun queue(server: String): List<QueueItem> = episodes.map { QueueItem(emptyList(), entry(it, server)) }
+    /** This season's episodes, then the next season's: finishing a season goes straight on to its episode 1. */
+    fun queue(server: String): List<QueueItem> = episodes.map { QueueItem(emptyList(), entry(it, server)) } +
+        nextSeason?.let { (next, eps) -> eps.map { QueueItem(emptyList(), entry(it, server, next)) } }.orEmpty()
 }
 
 private val AnimeNavigationJson = Json { ignoreUnknownKeys = true }
