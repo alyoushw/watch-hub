@@ -192,7 +192,10 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
                 WatchlistScreen(onOpen = { type, id -> nav.openDetail(type, id) })
             }
             composable(Tab.SUBSCRIPTIONS.route) { SubscriptionsScreen() }
-            composable(Tab.KORA.route) { KoraScreen(onBack = { nav.switchTab(Tab.HOME.route) }) }
+            composable(Tab.KORA.route) {
+                val koraUrl by appContainer().settings.koraUrl.collectAsStateWithLifecycle()
+                KoraScreen(homeUrl = koraUrl.ifBlank { KORA_HOME }, kora = true, onBack = { nav.switchTab(Tab.HOME.route) })
+            }
             composable(Tab.YOUTUBE.route) { YouTubeLauncher() }
             composable(Tab.SETTINGS.route) { SettingsScreen(onOpenXtream = { nav.switchTab(Tab.XTREAM.route) }, onOpenHistory = { nav.navigate("watch-history") }) }
             composable("watch-history") { WatchHistoryScreen(onBack = { nav.popBackStack() }) }

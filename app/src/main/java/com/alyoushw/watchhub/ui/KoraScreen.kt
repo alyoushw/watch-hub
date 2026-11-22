@@ -71,6 +71,8 @@ import kotlin.coroutines.resume
 @Composable
 fun KoraScreen(
     homeUrl: String = KORA_HOME, pageTitle: String = "كوره", onBack: () -> Unit,
+    /** The «كوره» tab itself (its address can be changed in Settings). */
+    kora: Boolean = false,
     /** Movie sites (TukTuk): collect every video the page plays and offer it to the app's player. */
     detectVideos: Boolean = false,
     /** With [detectVideos]: top-level pages must stay on hosts containing this (advert redirects are blocked). */
@@ -93,7 +95,7 @@ fun KoraScreen(
     var nativeStarted by remember { mutableStateOf(false) }
     var nativePaused by remember { mutableStateOf(false) }
     var nativeJob by remember { mutableStateOf<Job?>(null) }
-    val nativeEnabled = Uri.parse(homeUrl).host == Uri.parse(KORA_HOME).host
+    val nativeEnabled = kora || Uri.parse(homeUrl).host == Uri.parse(KORA_HOME).host
     val found = remember { androidx.compose.runtime.mutableStateListOf<KoraNativeStream>() }
     /** Watch servers and download pages read from the site's own page (label to address). */
     val servers = remember { androidx.compose.runtime.mutableStateListOf<WebLinkItem>() }
@@ -531,7 +533,7 @@ fun KoraScreen(
     }
 }
 
-private const val KORA_HOME = "http://majed-kooora.com/"
+internal const val KORA_HOME = "https://majed-kooora.com/"
 
 internal data class WebLinkItem(val label: String, val url: String, val download: Boolean)
 

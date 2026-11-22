@@ -366,6 +366,16 @@ class SettingsStore(context: Context) {
         _torrentIndexEnabled.value = value
     }
 
+    /** The «كوره» site; empty means the built-in address. */
+    private val _koraUrl = MutableStateFlow(prefs.getString("kora_url", "").orEmpty())
+    val koraUrl: StateFlow<String> = _koraUrl.asStateFlow()
+    fun setKoraUrl(value: String) {
+        var url = value.trim()
+        if (url.isNotEmpty() && !url.startsWith("http://") && !url.startsWith("https://")) url = "https://$url"
+        prefs.edit().putString("kora_url", url).apply()
+        _koraUrl.value = url
+    }
+
     private val _sourceCatalogue = MutableStateFlow(prefs.getString("source_catalogue", "").orEmpty())
     val sourceCatalogue: StateFlow<String> = _sourceCatalogue.asStateFlow()
     fun setSourceCatalogue(value: String) {

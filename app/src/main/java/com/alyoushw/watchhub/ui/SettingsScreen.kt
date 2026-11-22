@@ -152,6 +152,9 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}, onOpenHistory: () -> Unit = {}
             ClaudeSection()
 
             HorizontalDivider()
+            KoraLinkSection()
+
+            HorizontalDivider()
 
             CustomAppsSection()
 
@@ -301,6 +304,37 @@ private fun AppPickerDialog(exclude: Set<String>, onDismiss: () -> Unit, onPick:
         confirmButton = {},
         dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = onDismiss) { Text("إلغاء") } },
     )
+}
+
+/** «كوره»'s address: shown, and a field to change it only after asking. */
+@Composable
+private fun KoraLinkSection() {
+    val settings = appContainer().settings
+    val saved by settings.koraUrl.collectAsStateWithLifecycle()
+    var editing by remember { mutableStateOf(false) }
+    var text by remember(saved, editing) { mutableStateOf(saved.ifBlank { KORA_HOME }) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionTitle("رابط كوره")
+        Text(saved.ifBlank { KORA_HOME }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (!editing) {
+            OutlinedButton(modifier = Modifier.focusFrame(), onClick = { editing = true }) { Text("تغيير رابط كوره") }
+        } else {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                label = { Text("الرابط الجديد") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(modifier = Modifier.focusFrame(), onClick = { settings.setKoraUrl(text); editing = false }) { Text("حفظ") }
+                TextButton(modifier = Modifier.focusFrame(), onClick = { editing = false }) { Text("إلغاء") }
+                if (saved.isNotBlank()) {
+                    TextButton(modifier = Modifier.focusFrame(), onClick = { settings.setKoraUrl(""); editing = false }) { Text("الرابط الأصلي") }
+                }
+            }
+        }
+    }
 }
 
 /** Optional: the user's own Claude API key makes voice and text search understand anything. */
