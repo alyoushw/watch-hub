@@ -89,36 +89,38 @@ fun HeroTabs(
             add(MediaType.MOVIE to "أفلام")
             add(MediaType.ANIME to "أنمي")
         }
-        Row(
-            Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(if (narrow) 8.dp else 16.dp),
-        ) {
-            entries.forEach { (type, label) ->
-                val on = if (type == null) live else !live && type == selected
-                Column(
-                    Modifier.focusFrame(RoundedCornerShape(8.dp))
-                        .clickable { if (type == null) onLive?.invoke() else onSelect(type) }
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
+        // A dark glass capsule, readable over any poster; the chosen tab is filled gold.
+        Box(Modifier.weight(1f)) {
+            Row(
+                Modifier.clip(CircleShape).background(Color(0xFF0A0908).copy(alpha = 0.6f))
+                    .horizontalScroll(rememberScrollState()).padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                entries.forEach { (type, label) ->
+                    val on = if (type == null) live else !live && type == selected
                     Text(
                         label,
-                        color = if (on) Color.White else Color.White.copy(alpha = 0.65f),
+                        color = if (on) Color(0xFF1C1206) else Color.White.copy(alpha = 0.85f),
                         fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
-                        fontSize = if (narrow) 16.sp else 17.sp,
+                        fontSize = if (narrow) 15.sp else 17.sp,
                         maxLines = 1,
                         softWrap = false,
-                    )
-                    Box(
-                        Modifier.padding(top = 4.dp).width(if (on) 22.dp else 0.dp).height(3.dp)
-                            .clip(RoundedCornerShape(2.dp)).background(Gold),
+                        modifier = Modifier.focusFrame(CircleShape)
+                            .clip(CircleShape)
+                            .background(if (on) Gold else Color.Transparent)
+                            .clickable { if (type == null) onLive?.invoke() else onSelect(type) }
+                            .padding(horizontal = if (narrow) 13.dp else 16.dp, vertical = 6.dp),
                     )
                 }
             }
         }
         // Only while there are downloads (with their progress).
         DownloadsButton()
-        IconButton(modifier = Modifier.focusFrame(), onClick = onRefresh) {
+        IconButton(
+            modifier = Modifier.focusFrame(CircleShape).clip(CircleShape).background(Color(0xFF0A0908).copy(alpha = 0.6f)),
+            onClick = onRefresh,
+        ) {
             Icon(Icons.Filled.Refresh, contentDescription = "تحديث", tint = Color.White)
         }
     }
