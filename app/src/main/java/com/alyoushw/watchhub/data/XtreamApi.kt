@@ -181,6 +181,27 @@ data class XtreamSeries(
 
 class XtreamException(message: String) : ApiException(message)
 
+/** One entry of an Xtream list, only the fields the app uses (values may be numbers or text). */
+@kotlinx.serialization.Serializable
+internal class RawItem(
+    @kotlinx.serialization.SerialName("stream_id") val streamId: JsonElement? = null,
+    @kotlinx.serialization.SerialName("series_id") val seriesId: JsonElement? = null,
+    val name: JsonElement? = null,
+    val title: JsonElement? = null,
+    val cover: JsonElement? = null,
+    @kotlinx.serialization.SerialName("stream_icon") val streamIcon: JsonElement? = null,
+    @kotlinx.serialization.SerialName("container_extension") val containerExtension: JsonElement? = null,
+    val rating: JsonElement? = null,
+    @kotlinx.serialization.SerialName("category_id") val categoryId: JsonElement? = null,
+    val num: JsonElement? = null,
+    val tmdb: JsonElement? = null,
+    @kotlinx.serialization.SerialName("tmdb_id") val tmdbId: JsonElement? = null,
+    @kotlinx.serialization.SerialName("direct_source") val directSource: JsonElement? = null,
+    val year: JsonElement? = null,
+    val releaseDate: JsonElement? = null,
+    @kotlinx.serialization.SerialName("release_date") val releaseDate2: JsonElement? = null,
+)
+
 /** Minimal client for the Xtream Codes player API: checks the login and lists the account's content. */
 class XtreamApi(private val settings: SettingsStore) {
     // Shares Net's pool, which is dropped when the phone changes network.
@@ -217,28 +238,60 @@ class XtreamApi(private val settings: SettingsStore) {
 
     suspend fun items(kind: XtreamKind, categoryId: String?, account: XtreamAccount = active): List<XtreamItem> {
         val params = categoryId?.let { mapOf("category_id" to it) }.orEmpty()
-        return (call(account, kind.listAction, params) as? JsonArray).orEmpty()
-            .mapNotNull { it as? JsonObject }
-            .mapNotNull { o ->
-                val id = (if (kind == XtreamKind.SERIES) o.text("series_id") else o.text("stream_id"))
-                    ?: return@mapNotNull null
-                XtreamItem(
-                    kind = kind,
-                    id = id,
-                    name = o.text("name") ?: o.text("title") ?: id,
-                    image = (if (kind == XtreamKind.SERIES) o.text("cover") else o.text("stream_icon"))?.takeIf { it.startsWith("http") },
-                    extension = o.text("container_extension"),
-                    rating = o.text("rating")?.takeIf { it != "0" && it != "0.0" },
-                    categoryId = o.text("category_id"),
-                    num = o.text("num")?.toIntOrNull(),
-                    tmdb = (o.text("tmdb") ?: o.text("tmdb_id"))?.takeIf { it != "0" },
-                    directUrl = o.text("direct_source"),
-                    year = o.text("year")?.take(4)
-                        ?: (o.text("releaseDate") ?: o.text("release_date"))?.take(4)?.takeIf { it.length == 4 },
-                )
-            }
-            .distinctBy { it.id }
+        val rows: List<RawItem> = if (account.id == FourU.account.id) {
+            (call(account, kind.listAction, params) as? JsonArray).orEmpty()
+                .mapNotNull { runCatching { json.decodeFromJsonElement(RawItem.serializer(), it) }.getOrNull() }
+        } else {
+            streamList(account, kind.listAction, params)
+        }
+        return rows.mapNotNull { o ->
+            val id = (if (kind == XtreamKind.SERIES) o.seriesId.str() else o.streamId.str()) ?: return@mapNotNull null
+            XtreamItem(
+                kind = kind,
+                id = id,
+                name = o.name.str() ?: o.title.str() ?: id,
+                image = (if (kind == XtreamKind.SERIES) o.cover.str() else o.streamIcon.str())?.takeIf { it.startsWith("http") },
+                extension = o.containerExtension.str(),
+                rating = o.rating.str()?.takeIf { it != "0" && it != "0.0" },
+                categoryId = o.categoryId.str(),
+                num = o.num.str()?.toIntOrNull(),
+                tmdb = (o.tmdb.str() ?: o.tmdbId.str())?.takeIf { it != "0" },
+                directUrl = o.directSource.str(),
+                year = o.year.str()?.take(4)
+                    ?: (o.releaseDate.str() ?: o.releaseDate2.str())?.take(4)?.takeIf { it.length == 4 },
+            )
+        }.distinctBy { it.id }
     }
+
+    /**
+     * A channel / film / series list read straight from the network one entry at a time: no copy of
+     * the whole reply as text or as a JSON tree (tens of thousands of entries ran TVs out of memory).
+     */
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    private suspend fun streamList(account: XtreamAccount, action: String, params: Map<String, String>): List<RawItem> =
+        withContext(Dispatchers.IO) {
+            if (!account.isComplete) throw XtreamException("أضف حساب Xtream Codes من الإعدادات أول")
+            try {
+                client.newCall(Request.Builder().url(urlFor(account, action, params)).build()).execute().use { response ->
+                    if (response.code == 401 || response.code == 403) throw XtreamException("اسم المستخدم أو كلمة المرور غلط")
+                    if (!response.isSuccessful) throw XtreamException("السيرفر رد بخطأ (${response.code})")
+                    val input = java.io.BufferedInputStream(response.body?.byteStream() ?: return@use emptyList(), 64 * 1024)
+                    // Some servers answer an empty list with {} or nothing.
+                    input.mark(256)
+                    var first = input.read()
+                    while (first != -1 && first.toChar().isWhitespace()) first = input.read()
+                    input.reset()
+                    if (first != '['.code) return@use emptyList()
+                    json.decodeToSequence(input, RawItem.serializer(), kotlinx.serialization.json.DecodeSequenceMode.ARRAY_WRAPPED).toList()
+                }
+            } catch (e: XtreamException) {
+                throw e
+            } catch (e: IOException) {
+                throw XtreamException("ما قدرنا نوصل للسيرفر، تأكد من الهوست والإنترنت")
+            } catch (e: kotlinx.serialization.SerializationException) {
+                throw notXtream()
+            }
+        }
 
     private val cache = mutableMapOf<String, List<XtreamItem>>()
     private val cacheLock = Mutex()
@@ -400,15 +453,7 @@ class XtreamApi(private val settings: SettingsStore) {
         withContext(Dispatchers.IO) {
             if (account.id == FourU.account.id) return@withContext FourU.liveApi(action, params)
             if (!account.isComplete) throw XtreamException("أضف حساب Xtream Codes من الإعدادات أول")
-            val url = baseUrl(account).newBuilder()
-                .addPathSegment("player_api.php")
-                .addQueryParameter("username", account.username)
-                .addQueryParameter("password", account.password)
-                .apply {
-                    action?.let { addQueryParameter("action", it) }
-                    params.forEach { (k, v) -> addQueryParameter(k, v) }
-                }
-                .build()
+            val url = urlFor(account, action, params)
 
             val body = try {
                 client.newCall(Request.Builder().url(url).build()).execute().use { response ->
@@ -423,6 +468,20 @@ class XtreamApi(private val settings: SettingsStore) {
             }
             runCatching { json.parseToJsonElement(body) }.getOrNull() ?: throw notXtream()
         }
+
+    private fun urlFor(account: XtreamAccount, action: String?, params: Map<String, String>): HttpUrl =
+        baseUrl(account).newBuilder()
+            .addPathSegment("player_api.php")
+            .addQueryParameter("username", account.username)
+            .addQueryParameter("password", account.password)
+            .apply {
+                action?.let { addQueryParameter("action", it) }
+                params.forEach { (k, v) -> addQueryParameter(k, v) }
+            }
+            .build()
+
+    private fun JsonElement?.str(): String? =
+        (this as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content?.trim()?.takeIf { it.isNotEmpty() }
 
     private fun notXtream() = XtreamException("الرد مو من سيرفر Xtream Codes، تأكد من الهوست")
 
