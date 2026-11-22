@@ -99,11 +99,13 @@ class Recommender(
         }
         val genreW = mutableMapOf<Int, Double>()
         val countryW = mutableMapOf<String, Double>()
+        val langW = mutableMapOf<String, Double>()
         val disliked = dislikedGenres()
         for ((s, d) in details) {
             // Its proper name ("Dear X"), not the account's ("AR-AS-S: Dear X (2025) (KR)").
             d.displayTitle.takeIf { it.isNotBlank() }?.let { s.title = it }
             d.genres.forEach { g -> genreW[g.id] = (genreW[g.id] ?: 0.0) + s.weight }
+            d.originalLanguage?.let { l -> langW[l] = (langW[l] ?: 0.0) + s.weight }
             (d.originCountry.firstOrNull() ?: d.productionCountries.firstOrNull()?.code)?.let { c -> countryW[c] = (countryW[c] ?: 0.0) + s.weight }
         }
         val genreTotal = genreW.values.sum().coerceAtLeast(1.0)
@@ -149,7 +151,10 @@ class Recommender(
             val cMatch = r.country?.let { (countryW[it] ?: 0.0) / countryTotal } ?: 0.0
             val bad = r.genreIds.count { it in disliked } * 0.8
             val rating = ((r.voteAverage ?: 6.0) - 6.0) / 4.0
-            val score = seedScore * 1.2 + gMatch * 3 + cMatch * 2 + rating - bad
+            // A language the user never watches (an American show for someone on Gulf series) sinks.
+            val lMatch = r.originalLanguage?.let { langW[it] }?.let { it / langW.values.sum().coerceAtLeast(1.0) }
+            val langScore = if (lMatch == null) -2.5 else lMatch * 2
+            val score = seedScore * 1.2 + gMatch * 3 + cMatch * 2 + langScore + rating - bad
             Pick(r, reason(r, from, genreW.keys), score)
         }.sortedByDescending { it.score }
         _picks.value = scored.take(20)
@@ -171,8 +176,28 @@ class Recommender(
             }
         }
         _finished.value = doneSeed?.let { s ->
-            val next = scored.filter { p -> cands["${p.item.mediaType}:${p.item.id}"]?.second?.any { it.id == s.id } == true }.take(3)
-                .ifEmpty { scored.take(3) }
+            // Close to that title: same language (and its genre first), never unrelated ones.
+            val d = details.firstOrNull { it.first.id == s.id && it.first.type == s.type }?.second
+            val lang = d?.originalLanguage
+            val genre = d?.genres?.firstOrNull()?.id
+            val fromSeed = scored.filter { p -> cands["${p.item.mediaType}:${p.item.id}"]?.second?.any { it.id == s.id } == true }
+            val sameLang = (fromSeed + scored).filter { lang == null || it.item.originalLanguage == lang }
+                .sortedByDescending { p -> if (genre != null && genre in p.item.genreIds) 1 else 0 }
+            val found = runCatching {
+                if (sameLang.size >= 3 || lang == null) emptyList() else api.discover(
+                    s.type,
+                    buildMap {
+                        put("sort_by", "popularity.desc")
+                        put("vote_count.gte", "5")
+                        put("with_original_language", lang)
+                        d?.originCountry?.firstOrNull()?.let { put("with_origin_country", it) }
+                        genre?.let { put("with_genres", "$it") }
+                    },
+                    streamableOnly = false,
+                ).filter { r -> "${r.mediaType ?: s.type.path}:${r.id}" !in seen && r.posterPath != null }
+                    .map { r -> Pick(if (r.mediaType == null) r.copy(mediaType = s.type.path) else r, "يشبه «${s.title}»", 0.0) }
+            }.getOrDefault(emptyList())
+            val next = (sameLang + found).distinctBy { "${it.item.mediaType}:${it.item.id}" }.take(3)
             FinishedNext(s.title, "${s.type.path}:${s.id}", next)
         }
     }

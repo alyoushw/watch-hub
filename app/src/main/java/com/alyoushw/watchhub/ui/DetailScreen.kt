@@ -387,9 +387,33 @@ class DetailViewModel(
         val strict = if (genres.isNotEmpty()) discover(genres.take(2).joinToString(",")) else emptyList()
         val loose = if (strict.size < 12 && genres.isNotEmpty()) discover(genres.first().toString()) else emptyList()
         val sameLang = recs.filter { it.originalLanguage == lang }
-        val sameGenre = recs.filter { r -> r.genreIds.any { it in genres } }
+        val close = (sameLangSameGenre + strict + loose + sameLang).distinctBy { it.id }
+        // Few from the same country: widen to the same language anywhere (Saudi → Gulf/Arabic),
+        // never straight to foreign titles.
+        val wider = if (close.size < 15 && lang != null) {
+            suspend fun langOnly(g: String?) = try {
+                container.api.discover(
+                    type,
+                    buildMap {
+                        put("sort_by", "popularity.desc")
+                        put("vote_count.gte", "5")
+                        put("with_original_language", lang)
+                        g?.let { put("with_genres", it) }
+                    },
+                    streamableOnly = false,
+                )
+            } catch (_: ApiException) {
+                emptyList()
+            }
+            langOnly(genres.firstOrNull()?.toString()) + (if (genres.isNotEmpty()) langOnly(null) else emptyList())
+        } else {
+            emptyList()
+        }
+        val sameKind = close + wider
+        // Other languages only when the language itself has almost nothing.
+        val foreign = if (sameKind.distinctBy { it.id }.size < 6) recs.filter { r -> r.genreIds.any { it in genres } } + recs else emptyList()
 
-        return (sameLangSameGenre + strict + loose + sameLang + sameGenre + recs)
+        return (sameKind + foreign)
             .filter { it.id != info.id && it.posterPath != null }
             .map { if (it.mediaType == null) it.copy(mediaType = type.path) else it }
             .distinctBy { it.id }
