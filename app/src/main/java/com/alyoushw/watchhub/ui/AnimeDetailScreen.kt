@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AssistChip
@@ -197,8 +198,8 @@ private fun AnimeContent(vm: AnimeDetailViewModel, anime: JAnime, onOpen: (Media
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (saved == null) {
                     OutlinedButton(onClick = vm::addToWatchlist, modifier = Modifier.fillMaxWidth().focusFrame()) {
-                        Icon(Icons.Filled.Add, contentDescription = null)
-                        Text("  أضفه لقائمتي")
+                        Icon(Icons.Filled.FavoriteBorder, contentDescription = null)
+                        Text("  أضفه للمفضلة")
                     }
                 } else {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -216,7 +217,7 @@ private fun AnimeContent(vm: AnimeDetailViewModel, anime: JAnime, onOpen: (Media
                     }
                     if (anime.type != "Movie") EpisodeTracker(saved)
                     TextButton(modifier = Modifier.focusFrame(), onClick = { scope.launch { container.store.removeWatch(saved.key) } }) {
-                        Text("شيله من قائمتي", color = MaterialTheme.colorScheme.error)
+                        Text("شيله من المفضلة", color = MaterialTheme.colorScheme.error)
                     }
                 }
             }

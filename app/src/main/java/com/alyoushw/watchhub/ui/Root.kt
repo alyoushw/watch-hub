@@ -12,12 +12,18 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationRailItemDefaults
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
@@ -53,7 +59,7 @@ private enum class Tab(val route: String, val label: String, val icon: ImageVect
     XTREAM("xtream", "IPTV", Icons.Filled.PlayArrow),
     KORA("kora", "كوره", com.alyoushw.watchhub.player.PlayerIcons.Football),
     SEARCH("search", "البحث", Icons.Filled.Search),
-    WATCHLIST("watchlist", "قائمتي", Icons.AutoMirrored.Filled.List),
+    WATCHLIST("watchlist", "المفضلة", Icons.Filled.Favorite),
     SUBSCRIPTIONS("subscriptions", "اشتراكاتي", Icons.Filled.DateRange),
     YOUTUBE("youtube", "يوتيوب", com.alyoushw.watchhub.player.PlayerIcons.YouTube),
     SETTINGS("settings", "الإعدادات", Icons.Filled.Settings),
@@ -119,12 +125,17 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
             if (!rail && !fullLive) {
                 NavigationBar {
                     tabs.forEach { tab ->
+                        // Every tab shows its name; the chosen one is gold on a soft gold pill.
                         NavigationBarItem(
                             selected = currentRoute == tab.route,
                             onClick = { nav.switchTab(tab.route) },
                             icon = { Icon(tab.icon, contentDescription = null) },
-                            label = { Text(tab.label, maxLines = 1) },
-                            alwaysShowLabel = false,
+                            label = { Text(tab.label, maxLines = 1, fontSize = 11.sp, fontWeight = if (currentRoute == tab.route) FontWeight.Bold else FontWeight.Normal) },
+                            alwaysShowLabel = true,
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = Gold, selectedTextColor = Gold, indicatorColor = Gold.copy(alpha = 0.18f),
+                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant, unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            ),
                         )
                     }
                 }
@@ -146,6 +157,9 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
                         onClick = { nav.switchTab(tab.route) },
                         icon = { Icon(tab.icon, contentDescription = null) },
                         label = { Text(tab.label, maxLines = 1) },
+                        colors = NavigationRailItemDefaults.colors(
+                            selectedIconColor = Gold, selectedTextColor = Gold, indicatorColor = Gold.copy(alpha = 0.18f),
+                        ),
                     )
                 }
             }

@@ -284,7 +284,7 @@ object SmartSearch {
             }
         }
 
-        if (listOf("قائمتي", "قايمتي", "ذوقي", "اضفته", "بناء علي").any(::hasWord)) return SmartQuery.FromWatchlist
+        if (listOf("قائمتي", "قايمتي", "المفضلة", "المفضله", "مفضلتي", "ذوقي", "اضفته", "بناء علي").any(::hasWord)) return SmartQuery.FromWatchlist
 
         val genres = Genre.entries.filter { g -> g.words.any(::hasWord) }.toMutableSet()
         val topics = Topic.entries.filter { t -> t.words.any(::hasWord) }.toSet()

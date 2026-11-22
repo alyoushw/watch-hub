@@ -178,7 +178,7 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}, onOpenHistory: () -> Unit = {}
             Text(
                 "Watch Hub يشغّل حلقات Animeify ومحتوى حساب Xtream Codes بالمشغل المدمج ويجمع لك المحتوى في مكان واحد، " +
                     "ولما تضغط «شاهد» يفتح العمل في تطبيق المنصة الرسمي.\n\n" +
-                    "كل بياناتك (قائمتك واشتراكاتك) محفوظة على جوالك بس.\n\n" +
+                    "كل بياناتك (المفضلة واشتراكاتك) محفوظة على جوالك بس.\n\n" +
                     "This product uses the TMDB API but is not endorsed or certified by TMDB. " +
                     "Streaming availability data is provided by JustWatch.",
                 style = MaterialTheme.typography.bodySmall,
@@ -753,7 +753,7 @@ private fun AccountSection() {
                     TextButton(modifier = Modifier.focusFrame(), onClick = { cloud.signOut() }) { Text("خروج") }
                 }
                 Text(
-                    "قائمتي، وتابع المشاهدة (لين الثانية اللي وقفت عندها)، وحسابات Xtream تتحدّث على كل جهاز داخل بنفس الحساب.",
+                    "المفضلة، وتابع المشاهدة (لين الثانية اللي وقفت عندها)، وحسابات Xtream تتحدّث على كل جهاز داخل بنفس الحساب.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -958,7 +958,7 @@ private fun GuestNote(onCleared: () -> Unit) {
         AlertDialog(
             onDismissRequest = { confirm = false },
             title = { Text("تمسح بيانات الزائر؟") },
-            text = { Text("ينمسح من هذا الجهاز: تابع المشاهدة، وقائمتي، وحسابات Xtream، والقنوات المفضلة. حسابك في Google ما يتأثر.") },
+            text = { Text("ينمسح من هذا الجهاز: تابع المشاهدة، والمفضلة، وحسابات Xtream، والقنوات المفضلة. حسابك في Google ما يتأثر.") },
             confirmButton = {
                 TextButton(modifier = Modifier.focusFrame(), onClick = {
                     confirm = false
@@ -1067,7 +1067,7 @@ fun PairApprovalDialog() {
                         Text("«${device}» يبي يدخل حسابك:", fontWeight = FontWeight.Bold)
                         Text(signedIn.email ?: signedIn.name.orEmpty(), color = Gold)
                         Text(
-                            "بيشوف قائمتك وتابع المشاهدة وحسابات Xtream. وافق بس إذا الجهاز قدامك.",
+                            "بيشوف مفضلتك وتابع المشاهدة وحسابات Xtream. وافق بس إذا الجهاز قدامك.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

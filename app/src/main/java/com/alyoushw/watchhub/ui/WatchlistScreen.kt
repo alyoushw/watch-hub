@@ -1,6 +1,15 @@
 package com.alyoushw.watchhub.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,18 +27,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -120,6 +123,13 @@ private enum class Filter(val label: String, val status: WatchStatus?) {
     DONE("خلصته", WatchStatus.DONE),
 }
 
+private enum class Kind(val label: String, val type: MediaType?) {
+    ALL("الكل", null),
+    TV("مسلسلات", MediaType.TV),
+    MOVIE("أفلام", MediaType.MOVIE),
+    ANIME("أنمي", MediaType.ANIME),
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WatchlistScreen(onOpen: (MediaType, Int) -> Unit) {
@@ -127,9 +137,11 @@ fun WatchlistScreen(onOpen: (MediaType, Int) -> Unit) {
     val vm: WatchlistViewModel = viewModel { WatchlistViewModel(container) }
     val data by container.store.data.collectAsStateWithLifecycle()
     var filter by rememberSaveable { mutableStateOf(Filter.ALL) }
+    var kind by rememberSaveable { mutableStateOf(Kind.ALL) }
 
+    val ofKind = data.watchlist.filter { kind.type == null || it.type == kind.type }
     // Shows with new episodes first, then most recently added.
-    val items = data.watchlist
+    val items = ofKind
         .filter { filter.status == null || it.status == filter.status }
         .sortedWith(
             compareByDescending<WatchItem> { it.status == WatchStatus.WATCHING && it.unwatchedAired() > 0 }
@@ -140,7 +152,7 @@ fun WatchlistScreen(onOpen: (MediaType, Int) -> Unit) {
         contentWindowInsets = WindowInsets(0),
         topBar = {
             TopAppBar(
-                title = { Text("قائمتي") },
+                title = { Text("المفضلة") },
                 actions = {
                     if (vm.refreshing) {
                         CircularProgressIndicator(Modifier.size(24.dp).padding(end = 8.dp), strokeWidth = 2.dp)
@@ -152,13 +164,45 @@ fun WatchlistScreen(onOpen: (MediaType, Int) -> Unit) {
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
+            // Type: one capsule, the chosen one gold.
             Row(
-                Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainer).padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Kind.entries.forEach { k ->
+                    val on = kind == k
+                    Text(
+                        k.label,
+                        textAlign = TextAlign.Center,
+                        fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
+                        color = if (on) Color(0xFF1C1206) else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f).focusFrame(CircleShape).clip(CircleShape)
+                            .background(if (on) Gold else Color.Transparent)
+                            .clickable { kind = k }.padding(vertical = 8.dp),
+                    )
+                }
+            }
+            // Status: underlined tabs with their counts.
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(18.dp),
             ) {
                 Filter.entries.forEach { f ->
-                    val count = data.watchlist.count { f.status == null || it.status == f.status }
-                    FilterChip(modifier = Modifier.focusFrame(), selected = filter == f, onClick = { filter = f }, label = { Text("${f.label} ($count)") })
+                    val on = filter == f
+                    val count = ofKind.count { f.status == null || it.status == f.status }
+                    Column(
+                        Modifier.focusFrame(androidx.compose.foundation.shape.RoundedCornerShape(6.dp)).clickable { filter = f }.padding(vertical = 4.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(
+                            "${f.label}  $count",
+                            fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
+                            color = if (on) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Box(Modifier.padding(top = 4.dp).height(2.dp).width(if (on) 36.dp else 0.dp).background(Gold))
+                    }
                 }
             }
             vm.error?.let {
@@ -167,16 +211,16 @@ fun WatchlistScreen(onOpen: (MediaType, Int) -> Unit) {
 
             if (items.isEmpty()) {
                 MessageBox(
-                    title = if (data.watchlist.isEmpty()) "قائمتك فاضية" else "ما فيه شي هنا",
-                    body = if (data.watchlist.isEmpty()) "ابحث عن أي فيلم أو مسلسل واضغط «أضفه لقائمتي»." else null,
+                    title = if (data.watchlist.isEmpty()) "المفضلة فاضية" else "ما فيه شي هنا",
+                    body = if (data.watchlist.isEmpty()) "ابحث عن أي فيلم أو مسلسل واضغط ♥ عشان تضيفه للمفضلة." else null,
                 )
             } else {
                 val watchlistState = androidx.compose.foundation.lazy.rememberLazyListState()
                 LazyColumn(
                     modifier = Modifier.tvScrollAssist(watchlistState),
                     state = watchlistState,
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(items, key = { it.key }) { item ->
                         WatchRow(item, onClick = { onOpen(item.type, item.id) })
@@ -187,81 +231,97 @@ fun WatchlistScreen(onOpen: (MediaType, Int) -> Unit) {
     }
 }
 
+/** One tidy line per title: poster, name, where you are, a gold play button and a ⋮ menu. */
 @Composable
 private fun WatchRow(item: WatchItem, onClick: () -> Unit) {
     val container = appContainer()
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var menuOpen by remember { mutableStateOf(false) }
     val services = item.providerIds.mapNotNull { StreamingService.forProvider(it) }.distinct()
+    val service = StreamingService.entries.firstOrNull { it.key in item.directLinks } ?: services.firstOrNull()
+    val progress = item.progress
+    val next = item.nextEpisode()
+    val unwatched = item.unwatchedAired()
+    val where = when {
+        item.type == MediaType.MOVIE -> null
+        progress == null -> "ما بديت"
+        item.type == MediaType.ANIME -> "ح${progress.episode}"
+        else -> "م${progress.season} ح${progress.episode}"
+    }
 
-    Card(
-        modifier = Modifier.fillMaxWidth().focusHighlight(androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+    Row(
+        Modifier.fillMaxWidth()
+            .focusHighlight(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .clickable(onClick = onClick)
+            .padding(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Poster(item.posterPath, width = 60.dp)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(verticalAlignment = Alignment.Top) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(
-                            item.title,
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            item.type.label + " · " + item.status.label,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Box {
-                        IconButton(modifier = Modifier.focusFrame(), onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "خيارات") }
-                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                            WatchStatus.entries.filter { it != item.status }.forEach { status ->
-                                DropdownMenuItem(
-                                    text = { Text("انقله إلى: ${status.label}") },
-                                    onClick = {
-                                        menuOpen = false
-                                        scope.launch { container.store.updateWatch(item.key) { it.copy(status = status) } }
-                                    },
-                                )
+        Poster(item.posterPath, width = 52.dp)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(item.title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                buildAnnotatedString {
+                    append(listOfNotNull(item.type.label, where).joinToString(" · "))
+                    if (unwatched > 0) withStyle(SpanStyle(color = Gold)) { append(" · باقي $unwatched حلقة") }
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        // Play: on its streaming service when known, else the title's page.
+        IconButton(
+            modifier = Modifier.focusFrame(CircleShape).size(40.dp).clip(CircleShape).background(Gold),
+            onClick = { if (service != null) context.watchOn(service, item.directLinks[service.key], item.searchTitle) else onClick() },
+        ) { Icon(Icons.Filled.PlayArrow, contentDescription = "شاهد", tint = Color(0xFF1C1206)) }
+        Box {
+            IconButton(modifier = Modifier.focusFrame(), onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "خيارات") }
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                if (item.type != MediaType.MOVIE && next != null) {
+                    DropdownMenuItem(
+                        text = { Text(if (item.type == MediaType.ANIME) "شفت الحلقة ${next.episode}" else "شفت م${next.season} ح${next.episode}") },
+                        onClick = {
+                            menuOpen = false
+                            scope.launch {
+                                container.store.updateWatch(item.key) {
+                                    it.copy(progress = next, status = if (it.status == WatchStatus.PLANNED) WatchStatus.WATCHING else it.status)
+                                }
                             }
-                            DropdownMenuItem(
-                                text = { Text("حذف", color = MaterialTheme.colorScheme.error) },
-                                onClick = {
-                                    menuOpen = false
-                                    scope.launch { container.store.removeWatch(item.key) }
-                                },
-                            )
-                        }
-                    }
+                        },
+                    )
                 }
-                BadgeRow(services)
-                WatchNowButton(item, services)
-                if (item.type != MediaType.MOVIE && item.status != WatchStatus.DONE) {
-                    EpisodeTracker(item)
+                if (item.type != MediaType.MOVIE && progress != null) {
+                    DropdownMenuItem(
+                        text = { Text("تراجع حلقة") },
+                        onClick = {
+                            menuOpen = false
+                            scope.launch { container.store.updateWatch(item.key) { it.copy(progress = it.previousEpisode()) } }
+                        },
+                    )
                 }
+                WatchStatus.entries.filter { it != item.status }.forEach { status ->
+                    DropdownMenuItem(
+                        text = { Text("انقله إلى: ${status.label}") },
+                        onClick = {
+                            menuOpen = false
+                            scope.launch { container.store.updateWatch(item.key) { it.copy(status = status) } }
+                        },
+                    )
+                }
+                DropdownMenuItem(
+                    text = { Text("إزالة من المفضلة", color = MaterialTheme.colorScheme.error) },
+                    onClick = {
+                        menuOpen = false
+                        scope.launch { container.store.removeWatch(item.key) }
+                    },
+                )
             }
         }
-    }
-}
-
-/** Opens the title directly on its service (or searches for it when no direct link is known). */
-@Composable
-private fun WatchNowButton(item: WatchItem, services: List<StreamingService>) {
-    val context = LocalContext.current
-    val service = StreamingService.entries.firstOrNull { it.key in item.directLinks } ?: services.firstOrNull() ?: return
-    val direct = item.directLinks[service.key]
-    Button(
-                    modifier = Modifier.focusFrame(),
-        onClick = { context.watchOn(service, direct, item.searchTitle) },
-        colors = ButtonDefaults.buttonColors(containerColor = Color(service.color), contentColor = Color.White),
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-    ) {
-        Icon(if (direct != null) Icons.Filled.PlayArrow else Icons.Filled.Search, contentDescription = null, Modifier.size(18.dp))
-        Text(" " + if (direct != null) "شاهد على ${service.label}" else "ابحث في ${service.label}")
     }
 }
 

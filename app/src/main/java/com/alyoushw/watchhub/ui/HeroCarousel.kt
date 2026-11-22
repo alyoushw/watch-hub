@@ -26,6 +26,8 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
@@ -310,8 +312,8 @@ private fun HeroText(
                 modifier = Modifier.size(48.dp).focusFrame(RoundedCornerShape(12.dp)),
             ) {
                 Icon(
-                    if (saved) Icons.Filled.Check else Icons.Filled.Add,
-                    contentDescription = if (saved) "في قائمتي" else "أضفه لقائمتي",
+                    if (saved) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                    contentDescription = if (saved) "في المفضلة" else "أضفه للمفضلة",
                     tint = Color.White,
                 )
             }

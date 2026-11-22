@@ -391,7 +391,7 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
 
     private suspend fun fromWatchlist(): SearchState {
         val watchlist = container.store.data.value.watchlist
-        if (watchlist.isEmpty()) return SearchState.Failed("قائمتك فاضية. أضف كم عمل يعجبك وبنرشّح لك على ذوقك.")
+        if (watchlist.isEmpty()) return SearchState.Failed("المفضلة فاضية. أضف كم عمل يعجبك وبنرشّح لك على ذوقك.")
         val saved = watchlist.map { it.key }.toSet()
         val recent = watchlist.sortedByDescending { it.addedAt }
         val tmdbSeeds = recent.filter { it.type != MediaType.ANIME }.take(5)
@@ -433,7 +433,7 @@ private val Examples = listOf(
     "شي مشابه لـ Interstellar",
     "أنمي فانتازيا",
     "كوميدي عائلي جديد",
-    "رشّح لي من قائمتي",
+    "رشّح لي من المفضلة",
 )
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -513,7 +513,7 @@ fun SearchScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, o
                     )
                 }
                 item {
-                    AssistChip(modifier = Modifier.focusFrame(), onClick = vm::recommendFromWatchlist, label = { Text("✨ من قائمتي") })
+                    AssistChip(modifier = Modifier.focusFrame(), onClick = vm::recommendFromWatchlist, label = { Text("✨ من المفضلة") })
                 }
                 items(data.savedFilters.distinctBy { it.name }, key = { "saved-" + it.name }) { saved ->
                     AssistChip(modifier = Modifier.focusFrame(), onClick = { vm.applyFilter(saved.filter, "نمطك «${saved.name}»:") }, label = { Text("★ ${saved.name}") })
