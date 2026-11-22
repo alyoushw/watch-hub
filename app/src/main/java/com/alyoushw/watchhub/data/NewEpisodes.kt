@@ -20,6 +20,7 @@ import androidx.work.WorkerParameters
 import com.alyoushw.watchhub.MainActivity
 import com.alyoushw.watchhub.R
 import com.alyoushw.watchhub.WatchHubApp
+import com.alyoushw.watchhub.AppContainer
 import java.time.LocalDate
 import java.util.concurrent.TimeUnit
 
@@ -34,12 +35,17 @@ class NewEpisodesWorker(context: Context, params: WorkerParameters) : CoroutineW
         if (container.settings.apiKey.value.isBlank()) return Result.success()
         val prefs = applicationContext.getSharedPreferences("new_episodes", Context.MODE_PRIVATE)
         val series = mutableMapOf<Int, String>()
-        // Series watched in the last 45 days.
+        // Series watched in the last 45 days, from any source (account, 4U, watch sources).
         val since = System.currentTimeMillis() - 45L * 86_400_000
-        container.history.entries.value.filter { it.kind == WatchEntry.EPISODE && it.updatedAt > since }
-            .distinctBy { it.seriesId }.take(15).forEach { e ->
-                container.recommender.tmdbIdFor(MediaType.TV, e.title)?.let { series[it] = XtreamApi.normalizeTitle(e.title).ifBlank { e.title } }
+        val recent = container.history.entries.value.filter { it.updatedAt > since }
+        recent.filter { it.kind == WatchEntry.EPISODE }
+            .distinctBy { it.sourceRef?.query?.tmdbId ?: it.fourURef?.detailId ?: it.seriesId ?: it.title }.take(20).forEach { e ->
+                val known = e.sourceRef?.query?.takeIf { it.type == MediaType.TV }?.tmdbId
+                    ?: e.fourURef?.takeIf { it.detailType == MediaType.TV.path }?.detailId
+                val id = known ?: container.recommender.tmdbIdFor(MediaType.TV, e.title)
+                id?.let { series[it] = XtreamApi.normalizeTitle(e.title).ifBlank { e.title } }
             }
+        checkAnime(container, recent, prefs)
         container.store.data.value.watchlist.filter { it.type == MediaType.TV && it.status == WatchStatus.WATCHING }.forEach { series[it.id] = it.title }
 
         val today = LocalDate.now()
@@ -59,6 +65,29 @@ class NewEpisodesWorker(context: Context, params: WorkerParameters) : CoroutineW
             notify(applicationContext, id, "نزلت الحلقة ${last.episodeNumber} من «$name»", if (inAccount != null) "الموسم ${last.seasonNumber} · موجود في حسابك «${inAccount.label}»" else "الموسم ${last.seasonNumber}")
         }
         return Result.success()
+    }
+
+    /**
+     * Anime followed through أنمي فاي (watched in the last 45 days): its episode list is read, and a
+     * notification goes out the first time a newer episode than the last one seen shows up.
+     */
+    private suspend fun checkAnime(container: AppContainer, recent: List<WatchEntry>, prefs: android.content.SharedPreferences) {
+        val followed = recent.filter { it.animeRef != null && it.animeRef.type != "MOVIE" }.groupBy { it.animeRef!!.animeId }
+        for ((animeId, entries) in followed.entries.take(20)) {
+            val numbers = runCatching { container.animeify.episodes(animeId) }.getOrNull()
+                ?.mapNotNull { it.number.toDoubleOrNull() }?.takeIf { it.isNotEmpty() } ?: continue
+            val latest = numbers.max()
+            val key = "anime:$animeId"
+            val known = prefs.getString(key, null)?.toDoubleOrNull()
+            prefs.edit().putString(key, latest.toString()).apply()
+            // First look: only remember where the list stands.
+            if (known == null || latest <= known) continue
+            val watched = entries.mapNotNull { it.animeRef?.episode?.toDoubleOrNull() }.maxOrNull() ?: 0.0
+            if (latest <= watched) continue
+            val name = entries.first().title
+            val number = if (latest % 1.0 == 0.0) latest.toInt().toString() else latest.toString()
+            notify(applicationContext, animeId.hashCode(), "نزلت الحلقة $number من «$name»", "أنمي · جاهزة للمشاهدة في أنمي فاي")
+        }
     }
 
     private fun notify(context: Context, id: Int, title: String, text: String) {
@@ -88,10 +117,11 @@ class NewEpisodesWorker(context: Context, params: WorkerParameters) : CoroutineW
 
     companion object {
         fun schedule(context: Context) {
-            val request = PeriodicWorkRequestBuilder<NewEpisodesWorker>(8, TimeUnit.HOURS)
+            // Hourly, so a new episode is announced soon after it comes out.
+            val request = PeriodicWorkRequestBuilder<NewEpisodesWorker>(1, TimeUnit.HOURS)
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .build()
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork("new-episodes", ExistingPeriodicWorkPolicy.KEEP, request)
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork("new-episodes", ExistingPeriodicWorkPolicy.UPDATE, request)
         }
     }
 }
