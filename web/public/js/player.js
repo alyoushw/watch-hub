@@ -179,6 +179,7 @@ function waitForStart(timeoutMs) {
 // ---------- MKV/AVI on Apple: the server rewraps the film as HLS (see web/remux.ts) ----------
 // The HLS stream starts where it was opened ([offset]); the timeline still shows the whole film.
 let remux = null; // { src, duration, offset, retries }
+let remuxProblem = ""; // why the server could not rewrap the last film
 const total = () => (remux && remux.duration > 0 ? remux.duration : video.duration);
 const posNow = () => (remux ? remux.offset : 0) + video.currentTime;
 const appleSafari = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1
@@ -188,8 +189,8 @@ const needsRemux = (url) => appleSafari() && /\.(mkv|avi|wmv|flv)$/i.test(new UR
 async function openRemux(src, t) {
   const key = settings.proxyKey ? `&key=${encodeURIComponent(settings.proxyKey)}` : "";
   const r = await fetch(`/remux/open?url=${encodeURIComponent(src)}&t=${Math.floor(t)}${key}`);
-  if (!r.ok) throw new Error("remux");
-  const j = await r.json();
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { remuxProblem = j.error || `HTTP ${r.status}`; throw new Error("remux"); }
   return { playlist: new URL(j.playlist, location.href).href, duration: j.duration || 0 };
 }
 
@@ -501,6 +502,7 @@ async function playHere(urls, entry) {
   const live = entry.kind === "live";
   const mine = ++session;
   remux = null;
+  remuxProblem = "";
   reset();
   current = { urls, entry, live, started: false };
   openOverlay(entry, live);
@@ -631,7 +633,7 @@ function showFailure(url, direct = false) {
   ];
   const msg = panel(text, buttons);
   playbackDiagnosis(url, direct).then((diagnosis) => {
-    if (mine === session && msg.isConnected) msg.textContent = `تعذّر التشغيل${ext ? ` (${ext})` : ""}. ${diagnosis}${ios && ext === "MKV" ? " دعم MKV على الآيفون محدود؛ يمكنك تجربة مشغّل خارجي." : ""}`;
+    if (mine === session && msg.isConnected) msg.textContent = `تعذّر التشغيل${ext ? ` (${ext})` : ""}. ${diagnosis}${ios && ext === "MKV" ? " دعم MKV على الآيفون محدود؛ يمكنك تجربة مشغّل خارجي." : ""}${remuxProblem ? ` (تحويل السيرفر: ${remuxProblem})` : ""}`;
   });
 }
 

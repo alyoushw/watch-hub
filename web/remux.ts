@@ -66,10 +66,16 @@ async function open(url: URL): Promise<Response> {
     "-hls_segment_type", "fmp4", "-hls_fmp4_init_filename", "init.mp4",
     "-hls_segment_filename", `${dir}/seg%05d.m4s`, `${dir}/index.m3u8`,
   ];
-  const proc = new Deno.Command("ffmpeg", { args, stdin: "null", stdout: "null", stderr: "null" }).spawn();
+  const proc = new Deno.Command("ffmpeg", { args, stdin: "null", stdout: "null", stderr: "piped" }).spawn();
   const current: Job = { id, dir, proc, touched: Date.now(), exited: false };
   job = current;
   proc.status.then(() => { current.exited = true; });
+  // Keep ffmpeg's last complaint: it is the reason shown when the film cannot be read.
+  let complaint = "";
+  (async () => {
+    const decoder = new TextDecoder();
+    for await (const chunk of proc.stderr) complaint = (complaint + decoder.decode(chunk)).slice(-600);
+  })().catch(() => {});
 
   // Ready once the playlist lists its first segment.
   const until = Date.now() + 45_000;
@@ -81,7 +87,9 @@ async function open(url: URL): Promise<Response> {
     await new Promise((r) => setTimeout(r, 400));
   }
   if (job === current) stop();
-  return fail(502, "could not read the film");
+  const reason = complaint.trim().split("\n").pop() || (current.exited ? "ffmpeg stopped" : "timed out");
+  console.error("WATCHHUB_REMUX_FAILED", new URL(src).host, reason);
+  return fail(502, reason.replace(/https?:\/\/\S+/g, "[url]").slice(0, 200));
 }
 
 const TYPES: Record<string, string> = { m3u8: "application/vnd.apple.mpegurl", mp4: "video/mp4", m4s: "video/iso.segment" };

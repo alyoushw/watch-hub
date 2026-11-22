@@ -92,6 +92,8 @@ async function proxy(req: Request, self: URL, session?: MediaSession): Promise<R
     const v = upstream.headers.get(h);
     if (v) out.set(h, v);
   }
+  // Some panels (4U) send "accept-ranges: 0-<size>"; Safari only trusts "bytes".
+  if (out.has("accept-ranges") || out.has("content-range")) out.set("accept-ranges", "bytes");
 
   const finalUrl = upstream.url || target.href;
   const type = upstream.headers.get("content-type") ?? "";
@@ -172,7 +174,9 @@ function loadFourUCatalogue(series: boolean): Promise<FourUCatalogue> {
     const upstream = new URL(`${FOURU_MEDIA}/player_api.php`);
     upstream.searchParams.set("action", series ? "get_series" : "get_vod_streams");
     upstream.searchParams.set("username", "4u"); upstream.searchParams.set("password", "4u");
-    const response = await fetch(upstream, { signal: AbortSignal.timeout(45000) });
+    // The film list is ~11 MB and can take most of a minute to arrive: allow two, and one retry.
+    const get = () => fetch(upstream, { signal: AbortSignal.timeout(120000) });
+    const response = await get().catch(() => get());
     if (!response.ok || !response.body) throw new Error("تعذّر جلب محتوى 4U");
     const reader = response.body.getReader(), chunks: Uint8Array[] = []; let size = 0;
     try {
