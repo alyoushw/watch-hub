@@ -462,6 +462,14 @@ class PlayerActivity : ComponentActivity() {
             }
             val key = entry?.key
             resolveJob = lifecycleScope.launch {
+                // Every quality (server) of this episode goes in «الجودة»: switching keeps the spot.
+                launch {
+                    val servers = runCatching { container.animeify.servers(ref.copy(server = "")) }.getOrNull().orEmpty()
+                    if (entry?.key == key && servers.size > 1) {
+                        session.sourceQualities = servers.map { it.key to it.label }
+                        session.sourceQuality = ref.server
+                    }
+                }
                 try {
                     val url = container.animeify.resolve(ref)
                     if (entry?.key != key) return@launch
@@ -478,6 +486,19 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun selectSourceQuality(id: String) {
+        entry?.animeRef?.let { anime ->
+            if (id == anime.server || session.sourceQualities.none { it.first == id }) return
+            val at = player.currentPosition
+            player.pause()
+            // This episode and the ones after it keep the chosen quality.
+            queue = queue.mapIndexed { i, q ->
+                val r = q.entry.animeRef
+                if (i >= position && r != null) q.copy(urls = emptyList(), entry = q.entry.copy(animeRef = r.copy(server = id))) else q
+            }
+            session.sourceQuality = id
+            setMedia(at)
+            return
+        }
         val ref = entry?.sourceRef ?: return
         if (id == ref.variantId || session.sourceQualities.none { it.first == id }) return
         val at = player.currentPosition
