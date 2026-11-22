@@ -159,16 +159,43 @@ fun TukTukFinderScreen(lookup: SourceLookup, home: String, onBack: () -> Unit) {
             if (!direct) {
                 load(view, searchUrl, ready = "document.querySelectorAll('a[href]').length>30||document.readyState==='complete'")
                 note("search ${view.url}")
-                page = pickLink(js(view, LINKS_SCRIPT), wanted, view.url, note = ::note)
-                    ?: run { status = "«$title» مو موجود في توك توك."; done = true; return@LaunchedEffect }
+                var picked = pickLink(js(view, LINKS_SCRIPT), wanted, view.url, note = ::note)
+                // Search results show the latest season first: look at the next result pages too.
+                if (picked == null && series) for (n in 2..3) {
+                    load(view, home + "page/$n/?s=" + Uri.encode(title), ready = "document.querySelectorAll('a[href]').length>30||document.readyState==='complete'")
+                    note("search page $n ${view.url}")
+                    picked = pickLink(js(view, LINKS_SCRIPT), wanted, view.url, note = ::note)
+                    if (picked != null) break
+                }
+                // Still nothing: open any page of the series, then walk to the season, then the episode.
+                if (picked == null && series) {
+                    load(view, searchUrl, ready = "document.querySelectorAll('a[href]').length>30||document.readyState==='complete'")
+                    val any = pickLink(js(view, LINKS_SCRIPT), wanted.copy(season = null, episode = null), view.url, note = ::note)
+                    if (any != null) {
+                        status = "نفتح صفحة المسلسل…"
+                        load(view, any, ready = "document.readyState==='complete'")
+                        note("series ${view.url}")
+                        picked = pickLink(js(view, LINKS_SCRIPT), wanted, view.url, episodeOnly = true, note = ::note)
+                            ?: pickLink(js(view, LINKS_SCRIPT), wanted, view.url, seasonOnly = true, note = ::note)
+                    }
+                }
+                page = picked ?: run { status = "«$title» مو موجود في توك توك."; done = true; return@LaunchedEffect }
                 status = "فتحنا صفحة العمل…"
                 frameLinks.clear(); media.clear() // nothing from the search page counts
                 load(view, page, ready = hasServers)
             }
             note("title ${view.url}")
             // A series page lists episodes: go to the episode itself.
-            if (series) pickLink(js(view, LINKS_SCRIPT), wanted, view.url, episodeOnly = true, note = ::note)?.let {
-                page = it; frameLinks.clear(); media.clear(); load(view, it, ready = hasServers); note("episode ${view.url}")
+            if (series) {
+                // A season page first when the episode is not listed here, then the episode itself.
+                if (pickLink(js(view, LINKS_SCRIPT), wanted, view.url, episodeOnly = true, note = ::note) == null) {
+                    pickLink(js(view, LINKS_SCRIPT), wanted, view.url, seasonOnly = true, note = ::note)?.let {
+                        load(view, it, ready = "document.readyState==='complete'"); note("season ${view.url}")
+                    }
+                }
+                pickLink(js(view, LINKS_SCRIPT), wanted, view.url, episodeOnly = true, note = ::note)?.let {
+                    page = it; frameLinks.clear(); media.clear(); load(view, it, ready = hasServers); note("episode ${view.url}")
+                }
             }
             // A separate "watch" page, when the title page links to one.
             if (js(view, "String(!!document.querySelector('[data-link]'))") != "true") js(view, WATCH_LINK_SCRIPT)?.takeIf { it.startsWith("http") && it != view.url }?.let {
@@ -353,12 +380,13 @@ private val BLOCK_HOSTS = Regex("agl\\d|xbeat|histats|cvt-s\\d|adangle|popads|pr
 
 private data class SearchKey(val title: String, val year: Int, val season: Int?, val episode: Int?)
 
-private val ORDINALS_AR = listOf("الاول", "الثاني", "الثالث", "الرابع", "الخامس", "السادس", "السابع", "الثامن", "التاسع", "العاشر")
+private val ORDINALS_AR = listOf("الاول", "الثاني", "الثالث", "الرابع", "الخامس", "السادس", "السابع", "الثامن", "التاسع", "العاشر",
+    "الحادي", "الثاني عشر", "الثالث عشر", "الرابع عشر", "الخامس عشر")
 private fun norm(s: String) = s.lowercase().replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا').replace('ة', 'ه').replace('ى', 'ي')
 private fun key(s: String) = norm(s).filter { it.isLetterOrDigit() }
 
 /** The best same-site link for the title (and season/episode) among the page's links. */
-private fun pickLink(json: String?, wanted: SearchKey, pageUrl: String?, episodeOnly: Boolean = false, note: (String) -> Unit): String? {
+private fun pickLink(json: String?, wanted: SearchKey, pageUrl: String?, episodeOnly: Boolean = false, seasonOnly: Boolean = false, note: (String) -> Unit): String? {
     val arr = runCatching { org.json.JSONArray(json ?: return null) }.getOrNull() ?: return null
     val host = Uri.parse(pageUrl ?: "").host
     val titleKey = key(wanted.title)
@@ -386,6 +414,8 @@ private fun pickLink(json: String?, wanted: SearchKey, pageUrl: String?, episode
             if (season != null && season != wanted.season) continue
             if (season == wanted.season) score += 5
             if (episodeOnly && ep == null) continue
+            // A season's own page: the right season named, no episode.
+            if (seasonOnly && (season != wanted.season || ep != null)) continue
         }
         if (best == null || score > best.second) best = url to score
     }
