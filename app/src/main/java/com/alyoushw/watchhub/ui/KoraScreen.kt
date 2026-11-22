@@ -410,7 +410,7 @@ fun KoraScreen(
                 }
             }
             AndroidView(modifier = Modifier.weight(1f).fillMaxWidth(), factory = { host ->
-                val site = WebView(host).apply {
+                val site = RemoteWebView(host).apply {
                     configure(this)
                     observePlayer(this)
                     webChromeClient = object : WebChromeClient() {
@@ -418,7 +418,7 @@ fun KoraScreen(
                             val hostView = view.parent as? ViewGroup ?: return false
                             // Movie sites open advert tabs on almost every tap: no new windows there.
                             if (detectVideos || !isUserGesture || windows.size >= 4) return false
-                            val popup = WebView(view.context).apply {
+                            val popup = RemoteWebView(view.context).apply {
                                 configure(this)
                                 observePlayer(this)
                                 webViewClient = view.webViewClient
@@ -453,6 +453,8 @@ fun KoraScreen(
                             }
                         }
                         override fun onPageFinished(view: WebView, url: String?) {
+                            // A match page: press its «مشاهدة البث المباشر» for the user; the stream then opens in the app's player.
+                            if (kora && view == web) view.evaluateJavascript(KORA_AUTO_WATCH, null)
                             if (detectVideos && view == web) scan(view, keepList = Uri.parse(url ?: "").host?.contains(siteKeyword ?: "\u0000", true) != true)
                             if (view == web) {
                                 loading = false
@@ -593,3 +595,42 @@ private val KORA_MEDIA_OBSERVER = """
       };
     })();
 """.trimIndent()
+
+/**
+ * On a match page, presses the site's own watch button once (a link is followed directly, since a
+ * scripted click cannot open a window). The home page is left alone.
+ */
+private val KORA_AUTO_WATCH = """
+    (function(){
+      if(location.pathname==='/'||location.pathname==='')return;
+      if(window.__watchHubAuto===location.href)return;
+      window.__watchHubAuto=location.href;
+      var tries=0;
+      (function look(){
+        var els=document.querySelectorAll('a,button,[role=button],[onclick]');
+        for(var i=0;i<els.length;i++){
+          var e=els[i],t=(e.textContent||'').replace(/\s+/g,' ').trim();
+          if(t.length>40||!/مشاهدة البث|شاهد البث|مشاهدة المباراة|شاهد المباراة/.test(t)||!e.offsetWidth)continue;
+          var a=e.closest('a[href]');
+          if(a&&/^https?:/.test(a.href)&&a.href.split('#')[0]!==location.href.split('#')[0]){location.href=a.href;return;}
+          e.click();return;
+        }
+        if(++tries<20)setTimeout(look,500);
+      })();
+    })();
+""".trimIndent()
+
+/** TV remote: when Up/Down has no link left to move to on screen, the page scrolls instead of losing focus. */
+private class RemoteWebView(context: android.content.Context) : WebView(context) {
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        val code = event.keyCode
+        if (code != android.view.KeyEvent.KEYCODE_DPAD_UP && code != android.view.KeyEvent.KEYCODE_DPAD_DOWN) return super.dispatchKeyEvent(event)
+        if (super.dispatchKeyEvent(event)) return true
+        val dir = if (code == android.view.KeyEvent.KEYCODE_DPAD_UP) -1 else 1
+        if (!canScrollVertically(dir)) return false
+        if (event.action == android.view.KeyEvent.ACTION_DOWN) {
+            evaluateJavascript("window.scrollBy({top:" + dir + "*Math.round(innerHeight*0.45),behavior:'smooth'})", null)
+        }
+        return true
+    }
+}
