@@ -40,8 +40,17 @@ internal data class KoraNativeStream(val url: String, val transport: SourceTrans
             val page = pageUrl.toHttpUrlOrNull() ?: return null
             return from(url, null, mapOf("Referer" to page.toString(), "Origin" to "${page.scheme}://${page.host}"))
         }
-        private val AD_HOSTS = listOf("doubleclick", "googlesyndication", "googleads", "adservice", "popads", "propeller",
-            "adsterra", "exoclick", "juicyads", "trafficjunky", "adnxs", "imasdk", "vast", "onclick")
+        internal val AD_HOSTS = listOf("doubleclick", "googlesyndication", "googleads", "adservice", "popads", "propeller",
+            "adsterra", "exoclick", "juicyads", "trafficjunky", "adnxs", "imasdk", "vast", "onclick",
+            "adskeeper", "mgid.com", "taboola", "outbrain", "adcash", "hilltopads", "clickadu", "a-ads.com", "monetag",
+            "popcash", "richads", "galaksion", "admaven", "pubfuture", "bidvertiser", "highperformanceformat",
+            "profitablecpmrate", "effectivegatecpm", "adspyglass", "realsrv", "pemsrv", "tsyndicate")
+
+        /** An advert network request: the Kora tab drops it, like a browser ad blocker. */
+        fun isAd(request: WebResourceRequest): Boolean {
+            val host = request.url.host?.lowercase(java.util.Locale.ROOT) ?: return false
+            return AD_HOSTS.any { host.contains(it) }
+        }
 
         /**
          * A live stream reported by any HTTPS frame of the Kora site. The site changes its player's

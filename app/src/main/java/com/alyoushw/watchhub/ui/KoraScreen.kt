@@ -478,6 +478,10 @@ fun KoraScreen(
                             return true
                         }
                         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                            // Kora tab: advert networks get an empty answer, so their videos never show.
+                            if (kora && KoraNativeStream.isAd(request)) {
+                                return WebResourceResponse("text/plain", "utf-8", 204, "No Content", emptyMap(), java.io.ByteArrayInputStream(ByteArray(0)))
+                            }
                             (KoraNativeStream.from(request) ?: if (kora) KoraNativeStream.liveFromAnyPlayer(request) else null)
                                 ?.let { stream -> view.post { openNative(view, stream) } }
                             if (detectVideos) KoraNativeStream.anySite(request)?.let { stream ->
