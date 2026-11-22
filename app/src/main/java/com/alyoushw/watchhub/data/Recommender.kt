@@ -244,11 +244,32 @@ class Recommender(
         e.apply()
         _picks.value = _picks.value?.filter { it != pick }
         _finished.value = _finished.value?.let { f -> f.copy(picks = f.picks.filter { it != pick }) }
+        onDismiss?.invoke(key)
     }
 
     fun acknowledgeFinished() {
-        _finished.value?.let { prefs.edit().putString(KEY_ACK, it.key).apply() }
+        _finished.value?.let { prefs.edit().putString(KEY_ACK, it.key).apply(); onDismiss?.invoke("ack:" + it.key) }
         _finished.value = null
+    }
+
+    /** Set by the account sync: «مو لي» (and a closed «خلصت؟» card) apply on every device. */
+    var onDismiss: ((String) -> Unit)? = null
+
+    /** Every «مو لي» on this device, for the account sync. */
+    fun dismissedKeys(): Set<String> = dismissed() + listOfNotNull(prefs.getString(KEY_ACK, null)?.let { "ack:$it" })
+
+    /** «مو لي» from another device. */
+    fun mergeDismissed(remote: Set<String>) {
+        val ack = remote.filter { it.startsWith("ack:") }.map { it.removePrefix("ack:") }
+        val titles = remote.filterNot { it.startsWith("ack:") }.toSet()
+        val fresh = titles - dismissed()
+        if (fresh.isNotEmpty()) prefs.edit().putStringSet(KEY_DISMISSED, dismissed() + fresh).apply()
+        val finishedKey = _finished.value?.key
+        if (finishedKey != null && finishedKey in ack) { prefs.edit().putString(KEY_ACK, finishedKey).apply(); _finished.value = null }
+        if (fresh.isNotEmpty()) {
+            _picks.value = _picks.value?.filter { "${it.item.mediaType}:${it.item.id}" !in fresh }
+            _finished.value = _finished.value?.let { f -> f.copy(picks = f.picks.filter { "${it.item.mediaType}:${it.item.id}" !in fresh }) }
+        }
     }
 
     companion object {

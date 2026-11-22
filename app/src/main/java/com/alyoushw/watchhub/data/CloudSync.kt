@@ -411,6 +411,10 @@ class CloudSync(
                 mergeXtream(base.collection("meta").document("xtream").get().await())
                 history.mergeHidden(hiddenOf(base.collection("meta").document("continueHidden").get().await()))
                 history.continueHidden.value.takeIf { it.isNotEmpty() }?.let(::pushHidden)
+                recommender?.let { rec ->
+                    rec.mergeDismissed(hiddenOf(base.collection("meta").document("dismissed").get().await()).keys)
+                    rec.dismissedKeys().takeIf { it.isNotEmpty() }?.let(::pushDismissed)
+                }
                 _lastSync.value = System.currentTimeMillis()
             } catch (e: Exception) {
                 Log.w(TAG, "first sync failed", e)
@@ -436,6 +440,10 @@ class CloudSync(
                 if (e != null || snap == null || snap.metadata.hasPendingWrites()) return@addSnapshotListener
                 history.mergeHidden(hiddenOf(snap))
             }
+            listeners += base.collection("meta").document("dismissed").addSnapshotListener { snap, e ->
+                if (e != null || snap == null || snap.metadata.hasPendingWrites()) return@addSnapshotListener
+                recommender?.mergeDismissed(hiddenOf(snap).keys)
+            }
         }
     }
 
@@ -450,6 +458,21 @@ class CloudSync(
     // ---- history
 
     private fun docId(key: String) = key.replace('/', '_')
+
+    /** Set once the recommender exists: its «مو لي» list is synced like the removals below. */
+    var recommender: Recommender? = null
+        set(value) {
+            field = value
+            value?.onDismiss = { key -> pushDismissed(setOf(key)) }
+        }
+
+    private fun pushDismissed(keys: Set<String>) {
+        val ref = userDoc()?.collection("meta")?.document("dismissed") ?: return
+        scope.launch {
+            runCatching { ref.set(keys.associate { hiddenField(it) to System.currentTimeMillis() }, SetOptions.merge()).await() }
+                .onFailure { Log.w(TAG, "dismissed sync failed", it) }
+        }
+    }
 
     // «تابع المشاهدة» removals: one document, field = base64 of the group key (keys hold ':' and '.'), value = when.
     private fun hiddenField(key: String) = android.util.Base64.encodeToString(key.toByteArray(), android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
