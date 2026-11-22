@@ -465,6 +465,11 @@ fun CrashNotice() {
  * Watch Hub site (never a stream link from the Xtream account, which carries the password).
  */
 fun android.content.Context.shareTitle(title: String, type: MediaType?, id: Int?) {
+    // TVs have nothing to share with (the system only says "no app can do this").
+    if (packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)) {
+        android.widget.Toast.makeText(this, "المشاركة متوفرة من الجوال", android.widget.Toast.LENGTH_SHORT).show()
+        return
+    }
     val site = (applicationContext as com.alyoushw.watchhub.WatchHubApp).container.settings.webUrl.value.trimEnd('/')
     val link = when {
         id == null || type == null -> null

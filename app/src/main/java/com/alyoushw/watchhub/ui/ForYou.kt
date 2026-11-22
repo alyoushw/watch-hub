@@ -103,10 +103,28 @@ private fun PickCard(p: Pick, onOpen: (MediaType, Int) -> Unit, onNope: () -> Un
         }
     }
     val context = androidx.compose.ui.platform.LocalContext.current
+    val tv = isTv()
+    var menu by remember { mutableStateOf(false) }
+    // Long press / held OK: the card's options, reachable with a TV remote (sharing only where it exists).
+    if (menu) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { menu = false },
+            title = { Text(item.displayTitle, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    androidx.compose.material3.OutlinedButton(modifier = Modifier.fillMaxWidth().focusFrame(), onClick = { menu = false; item.type?.let { onOpen(it, item.id) } }) { Text("افتح") }
+                    androidx.compose.material3.OutlinedButton(modifier = Modifier.fillMaxWidth().focusFrame(), onClick = { menu = false; onNope() }) { Text("مو لي ✕") }
+                    if (!tv) androidx.compose.material3.OutlinedButton(modifier = Modifier.fillMaxWidth().focusFrame(), onClick = { menu = false; context.shareTitle(item.displayTitle, item.type, item.id) }) { Text("↗ مشاركة") }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { androidx.compose.material3.TextButton(modifier = Modifier.focusFrame(), onClick = { menu = false }) { Text("إلغاء") } },
+        )
+    }
     Column(
-        Modifier.width(150.dp).focusHighlight().remoteLongPress({ context.shareTitle(item.displayTitle, item.type, item.id) }, { item.type?.let { onOpen(it, item.id) } }).combinedClickable(
+        Modifier.width(150.dp).focusHighlight().remoteLongPress({ menu = true }, { item.type?.let { onOpen(it, item.id) } }).combinedClickable(
             onClick = { item.type?.let { onOpen(it, item.id) } },
-            onLongClick = { context.shareTitle(item.displayTitle, item.type, item.id) },
+            onLongClick = { menu = true },
         ),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {

@@ -1,6 +1,7 @@
 package com.alyoushw.watchhub.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -284,6 +285,7 @@ fun WatchlistScreen(onOpen: (MediaType, Int) -> Unit) {
 }
 
 /** One tidy line per title: poster, name, where you are, a gold play button and a ⋮ menu. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun WatchRow(item: WatchItem, onClick: () -> Unit) {
     val container = appContainer()
@@ -307,7 +309,9 @@ private fun WatchRow(item: WatchItem, onClick: () -> Unit) {
             .focusHighlight(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
             .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surfaceContainer)
-            .clickable(onClick = onClick)
+            // Long press (a held OK on the TV remote) opens the ⋮ options: the small buttons are hard to reach there.
+            .remoteLongPress({ menuOpen = true }, onClick)
+            .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true })
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),

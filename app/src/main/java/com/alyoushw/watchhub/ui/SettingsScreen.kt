@@ -196,7 +196,8 @@ private const val APP_DOWNLOAD = "https://github.com/alyoushw/watch-hub/releases
 private fun shareApp(context: android.content.Context) {
     val text = "جرّب Watch Hub: أفلام ومسلسلات وأنمي وقنوات في مكان واحد.\nحمّله من هنا: $APP_DOWNLOAD"
     val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain").putExtra(android.content.Intent.EXTRA_TEXT, text)
-    runCatching { context.startActivity(android.content.Intent.createChooser(send, "مشاركة Watch Hub")) }.onFailure {
+    val tv = context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
+    runCatching { if (tv) error("no share on TV"); context.startActivity(android.content.Intent.createChooser(send, "مشاركة Watch Hub")) }.onFailure {
         // TVs often have nothing to share with: copy the link instead.
         val cm = context.getSystemService(android.content.ClipboardManager::class.java)
         cm?.setPrimaryClip(android.content.ClipData.newPlainText("Watch Hub", APP_DOWNLOAD))
