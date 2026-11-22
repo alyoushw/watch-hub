@@ -147,12 +147,18 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
             delay(600) // wait for the user to stop typing
             // Live results use the offline parser; Claude runs on search / voice to save credit.
             runSmart(value, useClaude = false)
+            // Kept in «عمليات البحث الأخيرة» once the user has stopped on it for a moment.
+            delay(2500)
+            container.settings.addRecentSearch(value)
         }
     }
 
     fun submit() {
         job?.cancel()
-        if (query.isNotBlank()) job = viewModelScope.launch { runSmart(query, useClaude = true) }
+        if (query.isNotBlank()) {
+            container.settings.addRecentSearch(query)
+            job = viewModelScope.launch { runSmart(query, useClaude = true) }
+        }
     }
 
     /** Spoken or tapped request: show it in the box and run it right away. */
@@ -521,7 +527,10 @@ fun SearchScreen(onOpen: (MediaType, Int) -> Unit, onOpenSettings: () -> Unit, o
                 )
 
                 else -> when (val s = vm.state) {
-                    SearchState.Idle -> IdleHints(onAsk = vm::ask, onVoice = startVoice, onCatalogue = vm::applyFilter)
+                    SearchState.Idle -> Column(Modifier.fillMaxSize()) {
+                        RecentSearches(onAsk = vm::ask)
+                        Box(Modifier.weight(1f)) { IdleHints(onAsk = vm::ask, onVoice = startVoice, onCatalogue = vm::applyFilter) }
+                    }
                     SearchState.Loading -> CenteredLoading()
                     is SearchState.Failed -> MessageBox(s.message, actionLabel = "حاول مرة ثانية", onAction = vm::submit)
                     is SearchState.Results -> LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
@@ -896,6 +905,33 @@ private fun SearchRow(item: SearchResult, onClick: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+/** «عمليات البحث الأخيرة»: tap one to search it again; long press removes it. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun RecentSearches(onAsk: (String) -> Unit) {
+    val settings = appContainer().settings
+    val recent by settings.recentSearches.collectAsStateWithLifecycle()
+    if (recent.isEmpty()) return
+    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("عمليات البحث الأخيرة", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            TextButton(modifier = Modifier.focusFrame(), onClick = settings::clearRecentSearches) { Text("مسح") }
+        }
+        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(recent, key = { it }) { q ->
+                AssistChip(
+                    modifier = Modifier.focusFrame(),
+                    onClick = { onAsk(q) },
+                    label = { Text("🕘 $q", maxLines = 1) },
+                    trailingIcon = {
+                        Text("✕", modifier = Modifier.clickable { settings.removeRecentSearch(q) }.padding(2.dp))
+                    },
                 )
             }
         }

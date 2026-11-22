@@ -528,6 +528,12 @@ async function playHere(urls, entry) {
     const secure = !downloaded && secureDirectUrl(entry, url);
     return [...(secure ? [{ url: secure, direct: true }] : []), { url, direct: false }];
   });
+  // Apple: IPTV panels refuse the hosted proxy (a data-centre address) but serve the viewer's own
+  // connection, so files Safari can play are tried straight from the device first.
+  if (appleSafari() && !downloaded) {
+    const own = urls.filter((u) => /^http:/i.test(u) && !needsRemux(u)).reverse();
+    for (const u of own) candidates.unshift({ url: u, direct: true });
+  }
   // Apple cannot open MKV/AVI: first try the server's rewrapped stream of the same film.
   const film = !live && !downloaded && urls.find(needsRemux);
   if (film) candidates.unshift({ url: film, direct: false, remux: true });

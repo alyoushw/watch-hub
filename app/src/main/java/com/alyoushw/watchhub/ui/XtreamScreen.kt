@@ -929,7 +929,19 @@ fun ContinueWatchingRow(
             if (ref.detailId != null) { onOpenTitle(MediaType.fromPath(ref.detailType.orEmpty()) ?: MediaType.TV, ref.detailId); return }
         }
         e.sourceRef?.let { onOpenTitle(it.query.type, it.query.tmdbId); return }
-        e.animeRef?.let { onOpenTitle(MediaType.fromPath(it.detailType) ?: MediaType.ANIME, it.detailId); return }
+        e.animeRef?.let { ref ->
+            val known = MediaType.fromPath(ref.detailType)
+            if (known != null && known != MediaType.ANIME) { onOpenTitle(known, ref.detailId); return }
+            // The anime's TMDB page by its name (MyAnimeList is often unreachable); MAL only as a last resort.
+            val animeType = if (ref.type == "MOVIE") MediaType.MOVIE else MediaType.TV
+            scope.launch {
+                val name = XtreamApi.normalizeTitle(e.title)
+                val hits = runCatching { container.api.search(name).filter { it.type == animeType } }.getOrDefault(emptyList())
+                val hit = hits.firstOrNull { 16 in it.genreIds } ?: hits.firstOrNull()
+                if (hit != null) onOpenTitle(animeType, hit.id) else onOpenTitle(MediaType.ANIME, ref.detailId)
+            }
+            return
+        }
         val type = if (e.kind == WatchEntry.EPISODE) MediaType.TV else MediaType.MOVIE
         val known = e.tmdbId
         if (known != null && type == MediaType.MOVIE) {

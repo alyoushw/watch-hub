@@ -366,6 +366,24 @@ class SettingsStore(context: Context) {
         _torrentIndexEnabled.value = value
     }
 
+    /** The latest searches, newest first. */
+    private val _recentSearches = MutableStateFlow(
+        prefs.getString("recent_searches", "").orEmpty().split('\u0001').filter { it.isNotBlank() },
+    )
+    val recentSearches: StateFlow<List<String>> = _recentSearches.asStateFlow()
+    fun addRecentSearch(value: String) {
+        val q = value.trim().replace('\u0001', ' ')
+        if (q.length < 2) return
+        saveRecentSearches(listOf(q) + _recentSearches.value.filterNot { it.equals(q, ignoreCase = true) })
+    }
+    fun removeRecentSearch(value: String) = saveRecentSearches(_recentSearches.value - value)
+    fun clearRecentSearches() = saveRecentSearches(emptyList())
+    private fun saveRecentSearches(list: List<String>) {
+        val kept = list.take(15)
+        prefs.edit().putString("recent_searches", kept.joinToString("\u0001")).apply()
+        _recentSearches.value = kept
+    }
+
     /** The «كوره» site; empty means the built-in address. */
     private val _koraUrl = MutableStateFlow(prefs.getString("kora_url", "").orEmpty())
     val koraUrl: StateFlow<String> = _koraUrl.asStateFlow()

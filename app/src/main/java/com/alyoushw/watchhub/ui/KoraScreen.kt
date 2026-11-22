@@ -443,6 +443,19 @@ fun KoraScreen(
                         override fun onHideCustomView() = closeFullscreen()
                     }
                     webViewClient = object : WebViewClient() {
+                        // Up/Down the page had no use for (nothing to move to on screen) comes back here:
+                        // scroll the page instead of letting the remote's focus jump out of it.
+                        override fun onUnhandledKeyEvent(view: WebView, event: android.view.KeyEvent) {
+                            val code = event.keyCode
+                            if (code == android.view.KeyEvent.KEYCODE_DPAD_UP || code == android.view.KeyEvent.KEYCODE_DPAD_DOWN) {
+                                val dir = if (code == android.view.KeyEvent.KEYCODE_DPAD_UP) -1 else 1
+                                if (view.canScrollVertically(dir) || dir > 0) {
+                                    if (event.action == android.view.KeyEvent.ACTION_DOWN) view.evaluateJavascript(REMOTE_SCROLL.replace("DIR", "$dir"), null)
+                                    return
+                                }
+                            }
+                            super.onUnhandledKeyEvent(view, event)
+                        }
                         override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                             if (view == web) {
                                 loading = true
@@ -629,8 +642,17 @@ private class RemoteWebView(context: android.content.Context) : WebView(context)
         val dir = if (code == android.view.KeyEvent.KEYCODE_DPAD_UP) -1 else 1
         if (!canScrollVertically(dir)) return false
         if (event.action == android.view.KeyEvent.ACTION_DOWN) {
-            evaluateJavascript("window.scrollBy({top:" + dir + "*Math.round(innerHeight*0.45),behavior:'smooth'})", null)
+            evaluateJavascript(REMOTE_SCROLL.replace("DIR", "$dir"), null)
         }
         return true
     }
 }
+
+/** Scrolls the page (or the box that scrolls in it) by about half a screen; DIR is -1 (up) or 1 (down). */
+private val REMOTE_SCROLL = """
+    (function(d){
+      var h=Math.round(innerHeight*0.45)*d,el=document.activeElement,box=null;
+      for(var n=el;n&&n!==document.body;n=n.parentElement){var s=getComputedStyle(n);if(/(auto|scroll)/.test(s.overflowY)&&n.scrollHeight>n.clientHeight){box=n;break;}}
+      (box||document.scrollingElement||document.body).scrollBy({top:h,behavior:'smooth'});
+    })(DIR);
+""".trimIndent()
