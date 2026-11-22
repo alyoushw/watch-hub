@@ -172,7 +172,7 @@ fun XtreamScreen(onOpenSeries: (String) -> Unit, onOpenSettings: () -> Unit) {
             // Phones: a slim bar; held sideways there is none at all (the tabs row carries downloads).
             val slim = !isTv()
             if (!isWideShort()) TopAppBar(
-                title = { Text("قنواتي", style = if (slim) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge) },
+                title = { Text("IPTV", style = if (slim) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge) },
                 expandedHeight = if (slim) 44.dp else androidx.compose.material3.TopAppBarDefaults.TopAppBarExpandedHeight,
                 actions = {
                     androidx.compose.material3.TextButton(modifier = Modifier.focusFrame(), onClick = { showDownloads = true }) { Text("📥 التنزيلات") }

@@ -229,6 +229,16 @@ class SettingsStore(context: Context) {
         _youtube.value = on
     }
 
+    private val _subscriptionsTab = MutableStateFlow(prefs.getBoolean("subscriptions_tab", false))
+
+    /** Show the «اشتراكاتي» tab (off by default). */
+    val subscriptionsTab: StateFlow<Boolean> = _subscriptionsTab.asStateFlow()
+
+    fun setSubscriptionsTab(on: Boolean) {
+        prefs.edit().putBoolean("subscriptions_tab", on).apply()
+        _subscriptionsTab.value = on
+    }
+
     // ---------- live screen look: folder navigator vs the classic list ----------
 
     private val _liveFolderUi = MutableStateFlow(prefs.getBoolean(KEY_LIVE_FOLDER_UI, false))

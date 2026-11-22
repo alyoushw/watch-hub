@@ -50,11 +50,11 @@ fun appContainer(): AppContainer =
 
 private enum class Tab(val route: String, val label: String, val icon: ImageVector) {
     HOME("home", "الرئيسية", Icons.Filled.Home),
-    KORA("kora", "كوره", Icons.Filled.DateRange),
+    XTREAM("xtream", "IPTV", Icons.Filled.PlayArrow),
+    KORA("kora", "كوره", com.alyoushw.watchhub.player.PlayerIcons.Football),
     SEARCH("search", "البحث", Icons.Filled.Search),
     WATCHLIST("watchlist", "قائمتي", Icons.AutoMirrored.Filled.List),
     SUBSCRIPTIONS("subscriptions", "اشتراكاتي", Icons.Filled.DateRange),
-    XTREAM("xtream", "قنواتي", Icons.Filled.PlayArrow),
     YOUTUBE("youtube", "يوتيوب", com.alyoushw.watchhub.player.PlayerIcons.YouTube),
     SETTINGS("settings", "الإعدادات", Icons.Filled.Settings),
 }
@@ -108,7 +108,11 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
             else c.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
         }
     }
-    val tabs = Tab.entries.filter { (it != Tab.XTREAM || xtream.isComplete) && (it != Tab.YOUTUBE || youtube) }
+    // «اشتراكاتي» only once it is switched on (Settings › اشتراكاتي).
+    val subscriptions by appContainer().settings.subscriptionsTab.collectAsStateWithLifecycle()
+    val tabs = Tab.entries.filter {
+        (it != Tab.XTREAM || xtream.isComplete) && (it != Tab.YOUTUBE || youtube) && (it != Tab.SUBSCRIPTIONS || subscriptions)
+    }
     Scaffold(
         contentWindowInsets = WindowInsets(0),
         bottomBar = {

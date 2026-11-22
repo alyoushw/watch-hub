@@ -485,7 +485,7 @@ private fun XtreamSection(onOpen: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SectionTitle("حسابات Xtream Codes")
         Text(
-            "أضف حساب أو أكثر من مزوّدين رسميين، وسمّ كل واحد باسم تعرفه. القنوات والأفلام والمسلسلات تطلع في «قنواتي»، " +
+            "أضف حساب أو أكثر من مزوّدين رسميين، وسمّ كل واحد باسم تعرفه. القنوات والأفلام والمسلسلات تطلع في «IPTV»، " +
                 "وزر «مشاهدة» في صفحة أي عمل يبحث في كل حساباتك. البيانات محفوظة على جهازك بس.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -519,7 +519,7 @@ private fun XtreamSection(onOpen: () -> Unit) {
                 }
                 OutlinedButton(modifier = Modifier.focusFrame(), onClick = { importOpen = true }) { Text("📋 لصق حسابات") }
                 if (accounts.isNotEmpty()) {
-                    OutlinedButton(modifier = Modifier.focusFrame(), onClick = onOpen) { Text("افتح «قنواتي»") }
+                    OutlinedButton(modifier = Modifier.focusFrame(), onClick = onOpen) { Text("افتح «IPTV»") }
                 }
             }
         }
@@ -1208,6 +1208,11 @@ private fun YouTubeSection() {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("تفعيل يوتيوب", modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
             androidx.compose.material3.Switch(checked = on, onCheckedChange = settings::setYoutubeEnabled, modifier = Modifier.focusFrame())
+        }
+        val subs by settings.subscriptionsTab.collectAsStateWithLifecycle()
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("إظهار تبويب «اشتراكاتي»", modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
+            androidx.compose.material3.Switch(checked = subs, onCheckedChange = settings::setSubscriptionsTab, modifier = Modifier.focusFrame())
         }
     }
 }
