@@ -171,6 +171,7 @@ data class DetailInfo(
             seasons = seasons.ifEmpty { base.seasons },
             latestAired = latestAired ?: base.latestAired,
             directLinks = links?.mapKeys { it.key.key } ?: base.directLinks,
+            anime = base.anime || com.alyoushw.watchhub.data.isAnimeTitle(genreIds, originalLanguage, countries),
         )
     }
 

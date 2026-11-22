@@ -63,6 +63,8 @@ import com.alyoushw.watchhub.data.MediaType
 import com.alyoushw.watchhub.data.StreamingService
 import com.alyoushw.watchhub.data.ApiException
 import com.alyoushw.watchhub.data.WatchItem
+import com.alyoushw.watchhub.data.WatchEntry
+import com.alyoushw.watchhub.data.EpisodeMark
 import com.alyoushw.watchhub.data.WatchStatus
 import com.alyoushw.watchhub.data.nextEpisode
 import com.alyoushw.watchhub.data.previousEpisode
@@ -80,6 +82,48 @@ class WatchlistViewModel(private val container: AppContainer) : ViewModel() {
         refresh()
     }
 
+    /**
+     * Where the user really is, from what they played anywhere in the app (IPTV accounts, 4U, watch
+     * sources, أنمي فاي): each saved series moves forward to the furthest episode watched.
+     */
+    private suspend fun syncFromHistory() {
+        val episodeNo = Regex("الموسم (\\d+) · الحلقة (\\d+)")
+        val watched = container.history.entries.value.filter { it.finished || it.progress >= 0.5f }
+        val animeIds = mutableMapOf<String, Int?>()
+        val marks = mutableMapOf<Int, EpisodeMark>()
+        fun keep(id: Int, mark: EpisodeMark) { if (marks[id]?.let { mark > it } != false) marks[id] = mark }
+        for (e in watched) {
+            val fromSubtitle = episodeNo.find(e.subtitle.orEmpty())?.let { EpisodeMark(it.groupValues[1].toInt(), it.groupValues[2].toInt()) }
+            val ref = e.animeRef
+            when {
+                e.sourceRef != null -> e.sourceRef.query.takeIf { it.type == MediaType.TV && it.episode != null }
+                    ?.let { q -> keep(q.tmdbId, EpisodeMark(q.season ?: 1, q.episode!!)) }
+                e.fourURef != null -> {
+                    val id = e.fourURef.detailId ?: continue
+                    if (fromSubtitle != null) keep(id, fromSubtitle)
+                }
+                ref != null -> {
+                    val episode = ref.episode.toDoubleOrNull()?.toInt() ?: continue
+                    val known = MediaType.fromPath(ref.detailType)?.takeIf { it == MediaType.TV }?.let { ref.detailId }
+                    val id = known ?: animeIds.getOrPut(e.title) { findAnimeOnTmdb(container.api, e.title, movie = false)?.id } ?: continue
+                    keep(id, EpisodeMark(ref.season.coerceAtLeast(1), episode))
+                }
+                e.kind == WatchEntry.EPISODE && fromSubtitle != null -> {
+                    val id = e.tmdbId ?: container.recommender.tmdbIdFor(MediaType.TV, e.title) ?: continue
+                    keep(id, fromSubtitle)
+                }
+            }
+        }
+        for (item in container.store.data.value.watchlist) {
+            if (item.type == MediaType.MOVIE) continue
+            val mark = marks[item.id] ?: continue
+            if (item.progress != null && item.progress >= mark) continue
+            container.store.updateWatch(item.key) {
+                it.copy(progress = mark, status = if (it.status == WatchStatus.PLANNED) WatchStatus.WATCHING else it.status)
+            }
+        }
+    }
+
     /** Re-fetches every saved item so new episodes and providers show up. */
     fun refresh() {
         if (refreshing) return
@@ -87,6 +131,7 @@ class WatchlistViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             refreshing = true
             error = null
+            runCatching { syncFromHistory() }
             val region = container.settings.region.value
             for (item in container.store.data.value.watchlist) {
                 try {
@@ -104,6 +149,9 @@ class WatchlistViewModel(private val container: AppContainer) : ViewModel() {
                             seasons = details.seasonInfo().ifEmpty { current.seasons },
                             latestAired = details.latestAired() ?: current.latestAired,
                             directLinks = current.directLinks.ifEmpty { links.mapKeys { it.key.key } },
+                            anime = current.anime || com.alyoushw.watchhub.data.isAnimeTitle(
+                                details.genres.map { it.id }, details.originalLanguage, details.originCountry,
+                            ),
                         )
                     }
                 } catch (e: ApiException) {
@@ -123,11 +171,15 @@ private enum class Filter(val label: String, val status: WatchStatus?) {
     DONE("خلصته", WatchStatus.DONE),
 }
 
-private enum class Kind(val label: String, val type: MediaType?) {
-    ALL("الكل", null),
-    TV("مسلسلات", MediaType.TV),
-    MOVIE("أفلام", MediaType.MOVIE),
-    ANIME("أنمي", MediaType.ANIME),
+private enum class Kind(val label: String) {
+    ALL("الكل"), TV("مسلسلات"), MOVIE("أفلام"), ANIME("أنمي");
+
+    fun matches(item: WatchItem): Boolean = when (this) {
+        ALL -> true
+        TV -> item.type == MediaType.TV && !item.anime
+        MOVIE -> item.type == MediaType.MOVIE
+        ANIME -> item.type == MediaType.ANIME || item.anime
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -139,7 +191,7 @@ fun WatchlistScreen(onOpen: (MediaType, Int) -> Unit) {
     var filter by rememberSaveable { mutableStateOf(Filter.ALL) }
     var kind by rememberSaveable { mutableStateOf(Kind.ALL) }
 
-    val ofKind = data.watchlist.filter { kind.type == null || it.type == kind.type }
+    val ofKind = data.watchlist.filter { kind.matches(it) }
     // Shows with new episodes first, then most recently added.
     val items = ofKind
         .filter { filter.status == null || it.status == filter.status }
@@ -265,7 +317,7 @@ private fun WatchRow(item: WatchItem, onClick: () -> Unit) {
             Text(item.title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 buildAnnotatedString {
-                    append(listOfNotNull(item.type.label, where).joinToString(" · "))
+                    append(listOfNotNull(if (item.anime) "أنمي" else item.type.label, where).joinToString(" · "))
                     if (unwatched > 0) withStyle(SpanStyle(color = Gold)) { append(" · باقي $unwatched حلقة") }
                 },
                 style = MaterialTheme.typography.bodySmall,

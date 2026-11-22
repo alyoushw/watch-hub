@@ -52,6 +52,8 @@ data class WatchItem(
     val addedAt: Long = System.currentTimeMillis(),
     /** Last change the user made (status, episode), for syncing between devices. */
     val updatedAt: Long = 0,
+    /** A Japanese animation series kept as TMDB "tv": listed under «أنمي», not «مسلسلات». */
+    val anime: Boolean = false,
 ) {
     val key: String get() = keyOf(type, id)
 
@@ -146,3 +148,7 @@ data class StoreData(
     /** Watchlist keys the user removed, and when (so a synced copy cannot bring them back). */
     val removedWatch: Map<String, Long> = emptyMap(),
 )
+
+/** TMDB has no anime type: Japanese animation (genre 16) counts as anime. */
+fun isAnimeTitle(genreIds: List<Int>, language: String?, countries: List<String>): Boolean =
+    16 in genreIds && (language == "ja" || "JP" in countries)
