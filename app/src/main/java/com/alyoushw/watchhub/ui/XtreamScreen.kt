@@ -908,9 +908,22 @@ fun ContinueWatchingRow(
     }
     if (list.isEmpty()) return
 
+    /** An anime's page on TMDB (never MyAnimeList), found by its name. */
+    fun openAnimeOnTmdb(e: WatchEntry) {
+        val ref = e.animeRef ?: return
+        scope.launch {
+            val hit = findAnimeOnTmdb(container.api, e.title, movie = ref.type == "MOVIE")
+            if (hit != null) onOpenTitle(if (ref.type == "MOVIE") MediaType.MOVIE else MediaType.TV, hit.id)
+            else android.widget.Toast.makeText(context, "ما لقينا صفحة «${e.title}» في المنصة", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
     fun openAnime(e: WatchEntry) {
         if (onOpenAnime != null) onOpenAnime(e)
-        else e.animeRef?.let { onOpenTitle(MediaType.fromPath(it.detailType) ?: MediaType.ANIME, it.detailId) }
+        else e.animeRef?.let { ref ->
+            val known = MediaType.fromPath(ref.detailType)
+            if (known != null && known != MediaType.ANIME) onOpenTitle(known, ref.detailId) else openAnimeOnTmdb(e)
+        }
     }
 
     fun openSeries(e: WatchEntry) {
@@ -932,14 +945,7 @@ fun ContinueWatchingRow(
         e.animeRef?.let { ref ->
             val known = MediaType.fromPath(ref.detailType)
             if (known != null && known != MediaType.ANIME) { onOpenTitle(known, ref.detailId); return }
-            // The anime's TMDB page by its name (MyAnimeList is often unreachable); MAL only as a last resort.
-            val animeType = if (ref.type == "MOVIE") MediaType.MOVIE else MediaType.TV
-            scope.launch {
-                val name = XtreamApi.normalizeTitle(e.title)
-                val hits = runCatching { container.api.search(name).filter { it.type == animeType } }.getOrDefault(emptyList())
-                val hit = hits.firstOrNull { 16 in it.genreIds } ?: hits.firstOrNull()
-                if (hit != null) onOpenTitle(animeType, hit.id) else onOpenTitle(MediaType.ANIME, ref.detailId)
-            }
+            openAnimeOnTmdb(e)
             return
         }
         val type = if (e.kind == WatchEntry.EPISODE) MediaType.TV else MediaType.MOVIE

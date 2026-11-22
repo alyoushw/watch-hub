@@ -245,12 +245,6 @@ fun AnimeUpdatesRow(vm: AnimeUpdatesViewModel, currentlyAiring: Boolean, onOpen:
                     detailError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     if (matches?.isEmpty() == true) {
                         Text("لم أعثر على تطابق مؤكّد لهذا الأنمي في TMDB.")
-                        anime.malId?.takeIf { it > 0 }?.let { malId ->
-                            Text("أنمي فاي يربط هذا العمل بـMyAnimeList؛ يمكنك فتح معلوماته هناك باختيارك.", style = MaterialTheme.typography.bodySmall)
-                            OutlinedButton(onClick = {
-                                selected = null; expanded = false; onOpenDetails(MediaType.ANIME, malId)
-                            }, modifier = Modifier.fillMaxWidth().focusFrame()) { Text("فتح معلومات MyAnimeList") }
-                        }
                     }
                     if ((matches?.size ?: 0) > 1) {
                         Text("وجدت أكثر من تطابق في TMDB؛ اختر العمل المقصود:")

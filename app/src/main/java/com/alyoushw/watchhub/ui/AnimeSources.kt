@@ -178,6 +178,26 @@ fun WatchEntry.animeLookup(): AnimeLookup {
         ref.malId.takeIf { it > 0 }, backdrop = image)
 }
 
+/**
+ * An anime's TMDB page found by its name (MyAnimeList is unreachable on many networks, so it is never
+ * used for this). Season/part words are dropped («… 3rd Season» → «…»), then shorter names are tried;
+ * only animation titles count, so a shortened name cannot land on an unrelated show.
+ */
+internal suspend fun findAnimeOnTmdb(api: com.alyoushw.watchhub.data.TmdbApi, rawTitle: String, movie: Boolean): com.alyoushw.watchhub.data.SearchResult? {
+    val type = if (movie) MediaType.MOVIE else MediaType.TV
+    val base = com.alyoushw.watchhub.data.XtreamApi.normalizeTitle(rawTitle)
+    val trimmed = base.replace(Regex("""\b(\d+(st|nd|rd|th)( season)?|season \d+|part \d+|cour \d+|final season|the final)\b"""), " ")
+        .replace(Regex("\\s+"), " ").trim()
+    val words = trimmed.split(" ").filter { it.isNotBlank() }
+    val attempts = (listOf(trimmed, base) + (words.size - 1 downTo 2).map { words.take(it).joinToString(" ") })
+        .distinct().filter { it.length >= 2 }
+    for (q in attempts) {
+        val hits = runCatching { api.search(q).filter { it.type == type } }.getOrDefault(emptyList())
+        hits.firstOrNull { 16 in it.genreIds }?.let { return it }
+    }
+    return null
+}
+
 /** The same gold watch action as the existing IPTV buttons; episode controls live on their own page. */
 @Composable
 fun AnimeifyWatchButton(lookup: AnimeLookup, onOpen: (AnimeLookup) -> Unit, modifier: Modifier = Modifier) {
