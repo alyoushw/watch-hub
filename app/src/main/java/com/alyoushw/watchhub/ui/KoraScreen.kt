@@ -468,6 +468,7 @@ fun KoraScreen(
                         override fun onPageFinished(view: WebView, url: String?) {
                             // A match page: press its «مشاهدة البث المباشر» for the user; the stream then opens in the app's player.
                             if (kora && view == web) view.evaluateJavascript(KORA_AUTO_WATCH, null)
+                            view.evaluateJavascript(FOLLOW_FOCUS, null)
                             if (detectVideos && view == web) scan(view, keepList = Uri.parse(url ?: "").host?.contains(siteKeyword ?: "\u0000", true) != true)
                             if (view == web) {
                                 loading = false
@@ -655,4 +656,20 @@ private val REMOTE_SCROLL = """
       for(var n=el;n&&n!==document.body;n=n.parentElement){var s=getComputedStyle(n);if(/(auto|scroll)/.test(s.overflowY)&&n.scrollHeight>n.clientHeight){box=n;break;}}
       (box||document.scrollingElement||document.body).scrollBy({top:h,behavior:'smooth'});
     })(DIR);
+""".trimIndent()
+
+/**
+ * TV remote: the page follows the focus. Sites that scroll an inner box (Kora) otherwise leave the
+ * highlighted match off screen while the remote moves up or down.
+ */
+private val FOLLOW_FOCUS = """
+    (function(){
+      if(window.__watchHubFollowFocus)return;
+      window.__watchHubFollowFocus=true;
+      document.addEventListener('focusin',function(e){
+        var el=e.target;if(!el||!el.getBoundingClientRect)return;
+        var r=el.getBoundingClientRect();
+        if(r.top<0||r.bottom>innerHeight)el.scrollIntoView({block:'center',inline:'nearest',behavior:'smooth'});
+      },true);
+    })();
 """.trimIndent()
