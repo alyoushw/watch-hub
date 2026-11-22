@@ -43,11 +43,21 @@ internal data class KoraNativeStream(val url: String, val transport: SourceTrans
         private val AD_HOSTS = listOf("doubleclick", "googlesyndication", "googleads", "adservice", "popads", "propeller",
             "adsterra", "exoclick", "juicyads", "trafficjunky", "adnxs", "imasdk", "vast", "onclick")
 
-        /** Called only by the message listener restricted to the HTTPS player origin. */
+        /**
+         * A live stream reported by any HTTPS frame of the Kora site. The site changes its player's
+         * address now and then, so any player counts; only HLS (how matches stream) and no advert hosts.
+         */
         fun observed(url: String, mime: String, referer: String): KoraNativeStream? {
-            if (referer.toHttpUrlOrNull()?.let { it.isHttps && it.host == PLAYER_HOST } != true) return null
-            return from(url, mime, mapOf("Origin" to "https://$PLAYER_HOST", "Referer" to "https://$PLAYER_HOST/"))
+            val page = referer.toHttpUrlOrNull()?.takeIf { it.isHttps } ?: return null
+            val host = url.toHttpUrlOrNull()?.host?.lowercase(java.util.Locale.ROOT) ?: return null
+            if (AD_HOSTS.any { host.contains(it) || page.host.contains(it) }) return null
+            return from(url, mime, mapOf("Origin" to "https://${page.host}", "Referer" to "https://${page.host}/"))
+                ?.takeIf { it.transport == SourceTransport.HLS }
         }
+
+        /** A live stream request from any frame of the Kora site (see [observed]). */
+        fun liveFromAnyPlayer(request: WebResourceRequest): KoraNativeStream? =
+            anySite(request)?.takeIf { it.transport == SourceTransport.HLS }
 
         private fun from(value: String, mimeType: String?, requestHeaders: Map<String, String>): KoraNativeStream? {
             val url = value.toHttpUrlOrNull()?.takeIf { it.isHttps && it.username.isEmpty() && it.password.isEmpty() } ?: return null

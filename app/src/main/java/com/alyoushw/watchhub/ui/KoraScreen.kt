@@ -231,9 +231,10 @@ fun KoraScreen(
     fun observePlayer(view: WebView) {
         if (!nativeEnabled || !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) ||
             !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
-        val origins = setOf("https://${KoraNativeStream.PLAYER_HOST}")
+        // Every frame: the site moves its player to new addresses; KoraNativeStream.observed filters.
+        val origins = setOf("*")
         WebViewCompat.addWebMessageListener(view, "watchHubKora", origins) { sourceView, message, origin, _, _ ->
-            if (origin.scheme != "https" || origin.host != KoraNativeStream.PLAYER_HOST) return@addWebMessageListener
+            if (origin.scheme != "https") return@addWebMessageListener
             val stream = runCatching {
                 val text = message.data?.takeIf { it.length <= 8192 } ?: return@addWebMessageListener
                 val data = org.json.JSONObject(text)
@@ -477,7 +478,8 @@ fun KoraScreen(
                             return true
                         }
                         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-                            KoraNativeStream.from(request)?.let { stream -> view.post { openNative(view, stream) } }
+                            (KoraNativeStream.from(request) ?: if (kora) KoraNativeStream.liveFromAnyPlayer(request) else null)
+                                ?.let { stream -> view.post { openNative(view, stream) } }
                             if (detectVideos) KoraNativeStream.anySite(request)?.let { stream ->
                                 view.post {
                                     if (found.none { it.url == stream.url }) {
