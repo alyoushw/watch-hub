@@ -457,7 +457,6 @@ fun KoraScreen(
                             super.onUnhandledKeyEvent(view, event)
                         }
                         override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
-                            }
                             if (view == web) {
                                 loading = true
                                 error = null
