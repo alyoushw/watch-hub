@@ -153,22 +153,9 @@ fun HeroCarousel(
         else -> (screenHeight * 0.62f).coerceAtMost(560.dp)
     }
 
-    // Advance by itself every 7 seconds; not while the remote is on the banner (moving the page
-    // under the focused button made TVs stutter), nor while the user swipes.
+    // The banner never moves by itself on any version: it changes only when the user swipes or
+    // taps the arrows. (Auto-advance kept reappearing on TV and the owner wants it gone for good.)
     var focused by remember { mutableStateOf(false) }
-    LaunchedEffect(slides.size, focused) {
-        // TVs: never by itself (the page moving under the remote is unsettling); its arrows move it.
-        if (slides.size < 2 || focused || tv) return@LaunchedEffect
-        while (true) {
-            delay(7000)
-            if (!pager.isScrollInProgress) {
-                pager.animateScrollToPage(
-                    (pager.currentPage + 1) % slides.size,
-                    animationSpec = androidx.compose.animation.core.tween(durationMillis = 700),
-                )
-            }
-        }
-    }
 
     Box(Modifier.fillMaxWidth().height(height).onFocusChanged { focused = it.hasFocus }) {
         if (slides.isNotEmpty()) {
