@@ -619,7 +619,7 @@ private fun DetailContent(
 
         if (info.type == MediaType.TV && info.seasonDetails.isNotEmpty()) {
             item { SectionTitle("المواسم", Modifier.padding(horizontal = 16.dp)) }
-            items(info.seasonDetails, key = { "season-${it.number}" }) { SeasonCard(it) }
+            items(info.seasonDetails, key = { "season-${it.number}" }) { SeasonCard(info.id, it) }
         }
 
         if (info.cast.isNotEmpty()) {
@@ -938,37 +938,109 @@ private fun Facts(info: DetailInfo) {
 }
 
 @Composable
-private fun SeasonCard(season: SeasonDetail) {
+private fun SeasonCard(seriesId: Int, season: SeasonDetail) {
+    val api = appContainer().api
     var open by remember { mutableStateOf(false) }
+    // Episodes with their air dates, loaded the first time the season is opened.
+    var episodes by remember(seriesId, season.number) { mutableStateOf<List<com.alyoushw.watchhub.data.AiredEpisodeDto>?>(null) }
+    var loadingEpisodes by remember(seriesId, season.number) { mutableStateOf(false) }
+    LaunchedEffect(open) {
+        if (open && episodes == null && !loadingEpisodes) {
+            loadingEpisodes = true
+            episodes = api.seasonEpisodes(seriesId, season.number)
+            loadingEpisodes = false
+        }
+    }
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
-            .clickable(enabled = season.overview.isNotBlank()) { open = !open }
+            .focusFrame(RoundedCornerShape(12.dp))
+            .clickable { open = !open }
             .animateContentSize(),
     ) {
-        Row(Modifier.padding(10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Poster(season.posterPath, width = 50.dp)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(season.name, fontWeight = FontWeight.Bold)
-                Text(
-                    listOfNotNull("${season.episodes} حلقة", season.year).joinToString(" · "),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (season.overview.isNotBlank()) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Poster(season.posterPath, width = 50.dp)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(season.name, fontWeight = FontWeight.Bold)
                     Text(
-                        season.overview,
+                        listOfNotNull("${season.episodes} حلقة", season.year).joinToString(" · "),
                         style = MaterialTheme.typography.bodySmall,
-                        maxLines = if (open) Int.MAX_VALUE else 2,
-                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    if (season.overview.isNotBlank()) {
+                        Text(
+                            season.overview,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = if (open) Int.MAX_VALUE else 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                Text(if (open) "▾" else "‹", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (open) {
+                when {
+                    loadingEpisodes && episodes == null ->
+                        Text("جارٍ تحميل مواعيد الحلقات…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    episodes.isNullOrEmpty() ->
+                        Text("لا تتوفر مواعيد الحلقات لهذا الموسم.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    else -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        episodes!!.forEach { ep -> EpisodeAirRow(ep) }
+                    }
                 }
             }
         }
     }
 }
+
+/** One episode line: its number, name, and when it airs (upcoming dates stand out). */
+@Composable
+private fun EpisodeAirRow(ep: com.alyoushw.watchhub.data.AiredEpisodeDto) {
+    val date = remember(ep.airDate) { ep.airDate?.takeIf { it.isNotBlank() }?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() } }
+    val today = remember { java.time.LocalDate.now() }
+    val upcoming = date != null && date.isAfter(today)
+    val accent = MaterialTheme.colorScheme.primary
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            Modifier.clip(RoundedCornerShape(6.dp))
+                .background((if (upcoming) accent else MaterialTheme.colorScheme.surfaceVariant).copy(alpha = if (upcoming) 0.9f else 0.6f))
+                .padding(horizontal = 7.dp, vertical = 2.dp),
+        ) {
+            Text("${ep.episodeNumber}", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold,
+                color = if (upcoming) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface)
+        }
+        Text(
+            ep.name?.takeIf { it.isNotBlank() } ?: "الحلقة ${ep.episodeNumber}",
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            when {
+                date == null -> "غير معروف"
+                upcoming -> "تُعرض ${arabicDate(date)}"
+                else -> arabicDate(date)
+            },
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = if (upcoming) FontWeight.Bold else FontWeight.Normal,
+            color = if (upcoming) accent else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+private val ARABIC_MONTHS = listOf(
+    "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
+    "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر",
+)
+
+private fun arabicDate(d: java.time.LocalDate): String = "${d.dayOfMonth} ${ARABIC_MONTHS[d.monthValue - 1]} ${d.year}"
 
 @Composable
 private fun CastRow(cast: List<CastMember>, onOpenPerson: (Int) -> Unit) {
