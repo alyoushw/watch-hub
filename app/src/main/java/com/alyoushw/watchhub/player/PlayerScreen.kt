@@ -1315,6 +1315,8 @@ private fun PicturePanel(
                     item { SectionLabel("تحريك الصورة") }
                     item { StepRow(minusLabel = "↑ فوق", plusLabel = "↓ تحت", onMinus = { onPanStep(0f, -0.2f) }, onPlus = { onPanStep(0f, 0.2f) }) }
                     item { StepRow(minusLabel = "→ يمين", plusLabel = "← يسار", onMinus = { onPanStep(0.2f, 0f) }, onPlus = { onPanStep(-0.2f, 0f) }) }
+                } else {
+                    item { Hint("كبّر الصورة فوق 100٪ (زر «تكبير +») عشان تطلع أزرار تحريك الصورة فوق/تحت/يمين/يسار.") }
                 }
                 item { SectionLabel("التكبير: ${Math.round(zoom * 100)}%") }
                 item {
