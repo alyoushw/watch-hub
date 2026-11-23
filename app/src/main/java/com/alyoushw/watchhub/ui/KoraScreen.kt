@@ -103,13 +103,16 @@ fun KoraScreen(
         if (koraHost != null) {
             val cm = CookieManager.getInstance()
             settings.koraCookies.value.split('\u0001').forEach { c -> if (c.isNotBlank()) runCatching { cm.setCookie("https://$koraHost", c) } }
+            cm.setAcceptCookie(true)
             cm.flush()
         }
         true
     }
     fun saveKoraCookies() {
         val host = koraHost ?: return
-        val cookie = CookieManager.getInstance().getCookie("https://$host") ?: return
+        val cm = CookieManager.getInstance()
+        cm.flush()
+        val cookie = cm.getCookie("https://$host") ?: return
         // "a=1; b=2" → one cookie per line, so setCookie can restore each.
         settings.setKoraCookies(cookie.split(";").map { it.trim() }.filter { it.isNotBlank() }.joinToString("\u0001"))
     }
@@ -370,6 +373,9 @@ fun KoraScreen(
                 Lifecycle.Event.ON_PAUSE -> {
                     view?.onPause()
                     if (nativeStarted) nativePaused = true
+                    // Save the login before the app can be killed or updated, and write cookies to disk.
+                    saveKoraCookies()
+                    CookieManager.getInstance().flush()
                 }
                 else -> Unit
             }
