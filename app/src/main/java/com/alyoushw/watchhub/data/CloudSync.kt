@@ -124,6 +124,7 @@ class CloudSync(
         history.onHidden = { key, at -> pushHidden(mapOf(key to at)) }
         store.onWatchChanged = { item, key, removedAt -> pushWatch(item, key, removedAt) }
         settings.onXtreamAccountsChanged = { list, at -> pushXtream(list, at) }
+        settings.onKoraChanged = { pushKora() }
         config?.let { connect(it) }
         // Refresh the settings in the background (they rarely change; the cached copy works offline).
         scope.launch { refreshConfig() }
@@ -409,6 +410,7 @@ class CloudSync(
                 mergeHistory(base.collection("history").get().await().documents)
                 mergeWatchlist(base.collection("watchlist").get().await().documents)
                 mergeXtream(base.collection("meta").document("xtream").get().await())
+                mergeKora(base.collection("meta").document("kora").get().await())
                 history.mergeHidden(hiddenOf(base.collection("meta").document("continueHidden").get().await()))
                 history.continueHidden.value.takeIf { it.isNotEmpty() }?.let(::pushHidden)
                 recommender?.let { rec ->
@@ -444,6 +446,10 @@ class CloudSync(
                 if (e != null || snap == null || snap.metadata.hasPendingWrites()) return@addSnapshotListener
                 recommender?.mergeDismissed(hiddenOf(snap).keys)
             }
+            listeners += base.collection("meta").document("kora").addSnapshotListener { snap, e ->
+                if (e != null || snap == null || snap.metadata.hasPendingWrites()) return@addSnapshotListener
+                applyKora(snap)
+            }
         }
     }
 
@@ -465,6 +471,28 @@ class CloudSync(
             field = value
             value?.onDismiss = { key -> pushDismissed(setOf(key)) }
         }
+
+    private fun applyKora(doc: DocumentSnapshot) {
+        if (!doc.exists()) return
+        doc.getString("url")?.let { settings.setKoraUrlFromCloud(it, doc.getLong("urlAt") ?: 0) }
+        doc.getString("cookies")?.let { settings.setKoraCookiesFromCloud(it, doc.getLong("cookiesAt") ?: 0) }
+    }
+
+    private suspend fun mergeKora(doc: DocumentSnapshot) {
+        applyKora(doc)
+        // Send what this device has newer (first sign-in brings nothing from the cloud yet).
+        if (settings.koraUrlUpdatedAt > (doc.getLong("urlAt") ?: 0) || settings.koraCookiesUpdatedAt > (doc.getLong("cookiesAt") ?: 0)) pushKora()
+    }
+
+    private fun pushKora() {
+        val ref = userDoc()?.collection("meta")?.document("kora") ?: return
+        val data = buildMap<String, Any> {
+            settings.koraUrl.value.takeIf { it.isNotBlank() }?.let { put("url", it); put("urlAt", settings.koraUrlUpdatedAt) }
+            settings.koraCookies.value.takeIf { it.isNotBlank() }?.let { put("cookies", it); put("cookiesAt", settings.koraCookiesUpdatedAt) }
+        }
+        if (data.isEmpty()) return
+        scope.launch { runCatching { ref.set(data, SetOptions.merge()).await() }.onFailure { Log.w(TAG, "kora sync failed", it) } }
+    }
 
     private fun pushDismissed(keys: Set<String>) {
         val ref = userDoc()?.collection("meta")?.document("dismissed") ?: return

@@ -96,6 +96,23 @@ fun KoraScreen(
     var nativePaused by remember { mutableStateOf(false) }
     var nativeJob by remember { mutableStateOf<Job?>(null) }
     val nativeEnabled = kora || Uri.parse(homeUrl).host == Uri.parse(KORA_HOME).host
+    val settings = appContainer().settings
+    val koraHost = if (kora) Uri.parse(homeUrl).host else null
+    // The site login travels with the Google account: put the saved cookies back before the first load.
+    androidx.compose.runtime.remember(koraHost) {
+        if (koraHost != null) {
+            val cm = CookieManager.getInstance()
+            settings.koraCookies.value.split('\u0001').forEach { c -> if (c.isNotBlank()) runCatching { cm.setCookie("https://$koraHost", c) } }
+            cm.flush()
+        }
+        true
+    }
+    fun saveKoraCookies() {
+        val host = koraHost ?: return
+        val cookie = CookieManager.getInstance().getCookie("https://$host") ?: return
+        // "a=1; b=2" → one cookie per line, so setCookie can restore each.
+        settings.setKoraCookies(cookie.split(";").map { it.trim() }.filter { it.isNotBlank() }.joinToString("\u0001"))
+    }
     val found = remember { androidx.compose.runtime.mutableStateListOf<KoraNativeStream>() }
     /** Watch servers and download pages read from the site's own page (label to address). */
     val servers = remember { androidx.compose.runtime.mutableStateListOf<WebLinkItem>() }
@@ -362,6 +379,7 @@ fun KoraScreen(
     }
     DisposableEffect(Unit) {
         onDispose {
+            saveKoraCookies()
             nativeJob?.cancel()
             pendingStreams.clear()
             closeFullscreen()
@@ -467,7 +485,7 @@ fun KoraScreen(
                         }
                         override fun onPageFinished(view: WebView, url: String?) {
                             // A match page: press its «مشاهدة البث المباشر» for the user; the stream then opens in the app's player.
-                            if (kora && view == web) view.evaluateJavascript(KORA_AUTO_WATCH, null)
+                            if (kora && view == web) { view.evaluateJavascript(KORA_AUTO_WATCH, null); saveKoraCookies() }
                             view.evaluateJavascript(FOLLOW_FOCUS, null)
                             if (detectVideos && view == web) scan(view, keepList = Uri.parse(url ?: "").host?.contains(siteKeyword ?: "\u0000", true) != true)
                             if (view == web) {

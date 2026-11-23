@@ -397,11 +397,36 @@ class SettingsStore(context: Context) {
     /** The «كوره» site; empty means the built-in address. */
     private val _koraUrl = MutableStateFlow(prefs.getString("kora_url", "").orEmpty())
     val koraUrl: StateFlow<String> = _koraUrl.asStateFlow()
+    val koraUrlUpdatedAt: Long get() = prefs.getLong("kora_url_at", 0)
+    /** The account sync: the «كوره» address, and its saved login (cookies), follow the Google account. */
+    var onKoraChanged: (() -> Unit)? = null
     fun setKoraUrl(value: String) {
         var url = value.trim()
         if (url.isNotEmpty() && !url.startsWith("http://") && !url.startsWith("https://")) url = "https://$url"
-        prefs.edit().putString("kora_url", url).apply()
+        prefs.edit().putString("kora_url", url).putLong("kora_url_at", System.currentTimeMillis()).apply()
         _koraUrl.value = url
+        onKoraChanged?.invoke()
+    }
+    fun setKoraUrlFromCloud(url: String, at: Long) {
+        if (at <= koraUrlUpdatedAt) return
+        prefs.edit().putString("kora_url", url).putLong("kora_url_at", at).apply()
+        _koraUrl.value = url
+    }
+
+    // The «كوره» site login, kept as its cookies so a sign-in on one device reaches the others.
+    private val _koraCookies = MutableStateFlow(prefs.getString("kora_cookies", "").orEmpty())
+    val koraCookies: StateFlow<String> = _koraCookies.asStateFlow()
+    val koraCookiesUpdatedAt: Long get() = prefs.getLong("kora_cookies_at", 0)
+    fun setKoraCookies(value: String) {
+        if (value.isBlank() || value == _koraCookies.value) return
+        prefs.edit().putString("kora_cookies", value).putLong("kora_cookies_at", System.currentTimeMillis()).apply()
+        _koraCookies.value = value
+        onKoraChanged?.invoke()
+    }
+    fun setKoraCookiesFromCloud(value: String, at: Long) {
+        if (at <= koraCookiesUpdatedAt || value.isBlank()) return
+        prefs.edit().putString("kora_cookies", value).putLong("kora_cookies_at", at).apply()
+        _koraCookies.value = value
     }
 
     private val _sourceCatalogue = MutableStateFlow(prefs.getString("source_catalogue", "").orEmpty())
