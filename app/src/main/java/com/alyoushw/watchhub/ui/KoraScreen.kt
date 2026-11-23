@@ -129,6 +129,10 @@ fun KoraScreen(
             allowContentAccess = false
             useWideViewPort = true
             loadWithOverviewMode = true
+            // Like a normal browser: let an http/https page load its styles and images even when
+            // they mix schemes. Without this some sites (e.g. the VIP link) render with no CSS —
+            // a black page with bare white boxes.
+            mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
             mediaPlaybackRequiresUserGesture = true
             setSupportMultipleWindows(true)
             javaScriptCanOpenWindowsAutomatically = false
