@@ -13,7 +13,6 @@ class SettingsStore(context: Context) {
         val now = System.currentTimeMillis()
         val e = prefs.edit()
         if (!prefs.getString("kora_url", "").isNullOrBlank() && prefs.getLong("kora_url_at", 0) == 0L) e.putLong("kora_url_at", now)
-        if (!prefs.getString("kora_cookies", "").isNullOrBlank() && prefs.getLong("kora_cookies_at", 0) == 0L) e.putLong("kora_cookies_at", now)
         e.apply()
     }
 
@@ -422,37 +421,7 @@ class SettingsStore(context: Context) {
         _koraUrl.value = url
     }
 
-    // The «كوره» site login, kept as its cookies so a sign-in on one device reaches the others.
-    private val _koraCookies = MutableStateFlow(prefs.getString("kora_cookies", "").orEmpty())
-    val koraCookies: StateFlow<String> = _koraCookies.asStateFlow()
-    val koraCookiesUpdatedAt: Long get() = prefs.getLong("kora_cookies_at", 0)
-    fun setKoraCookies(value: String) {
-        if (value.isBlank() || value == _koraCookies.value) return
-        prefs.edit().putString("kora_cookies", value).putLong("kora_cookies_at", System.currentTimeMillis()).apply()
-        _koraCookies.value = value
-        onKoraChanged?.invoke()
-    }
-    fun setKoraCookiesFromCloud(value: String, at: Long) {
-        if (at <= koraCookiesUpdatedAt || value.isBlank()) return
-        prefs.edit().putString("kora_cookies", value).putLong("kora_cookies_at", at).apply()
-        _koraCookies.value = value
-    }
 
-    // The site's localStorage (some logins keep the session token there, not in cookies).
-    private val _koraStorage = MutableStateFlow(prefs.getString("kora_storage", "").orEmpty())
-    val koraStorage: StateFlow<String> = _koraStorage.asStateFlow()
-    val koraStorageUpdatedAt: Long get() = prefs.getLong("kora_storage_at", 0)
-    fun setKoraStorage(value: String) {
-        if (value.isBlank() || value == _koraStorage.value) return
-        prefs.edit().putString("kora_storage", value).putLong("kora_storage_at", System.currentTimeMillis()).apply()
-        _koraStorage.value = value
-        onKoraChanged?.invoke()
-    }
-    fun setKoraStorageFromCloud(value: String, at: Long) {
-        if (at <= koraStorageUpdatedAt || value.isBlank()) return
-        prefs.edit().putString("kora_storage", value).putLong("kora_storage_at", at).apply()
-        _koraStorage.value = value
-    }
 
     private val _sourceCatalogue = MutableStateFlow(prefs.getString("source_catalogue", "").orEmpty())
     val sourceCatalogue: StateFlow<String> = _sourceCatalogue.asStateFlow()
