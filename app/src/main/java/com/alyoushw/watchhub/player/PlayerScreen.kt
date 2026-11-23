@@ -200,6 +200,8 @@ fun PlayerScreen(
     }
     // Burned-in subtitles sit at the bottom of the picture: when zooming, crop from the top so they stay.
     var keepSubs by remember { mutableStateOf(picPrefs.getBoolean("keepSubs", true)) }
+    // Where the crop keeps the picture: 1 = bottom (subtitles safe), 0.5 = centre, 0 = top.
+    var zoomAnchor by remember { mutableFloatStateOf(picPrefs.getFloat("zoomAnchor", 1f).coerceIn(0f, 1f)) }
     var videoRatio by remember { mutableFloatStateOf(0f) }
     DisposableEffect(player) {
         fun read(v: androidx.media3.common.VideoSize) { if (v.height > 0 && v.width > 0) videoRatio = v.width * v.pixelWidthHeightRatio / v.height }
@@ -546,7 +548,7 @@ fun PlayerScreen(
                     .graphicsLayer {
                         scaleX = zoom * stretch * fillScale
                         scaleY = zoom * fillScale
-                        transformOrigin = if (bottomAnchored) androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f) else androidx.compose.ui.graphics.TransformOrigin.Center
+                        transformOrigin = if (bottomAnchored) androidx.compose.ui.graphics.TransformOrigin(0.5f, zoomAnchor) else androidx.compose.ui.graphics.TransformOrigin.Center
                     },
             )
 
@@ -826,6 +828,11 @@ fun PlayerScreen(
                         keepSubs = !keepSubs
                         picPrefs.edit().putBoolean("keepSubs", keepSubs).apply()
                     },
+                    zoomAnchor = zoomAnchor,
+                    onZoomAnchor = {
+                        zoomAnchor = it.coerceIn(0f, 1f)
+                        picPrefs.edit().putFloat("zoomAnchor", zoomAnchor).apply()
+                    },
                     onMode = {
                         resize = it
                         savePicture()
@@ -842,6 +849,8 @@ fun PlayerScreen(
                         resize = 0
                         zoom = 1f
                         stretch = 1f
+                        zoomAnchor = 1f
+                        picPrefs.edit().putFloat("zoomAnchor", 1f).apply()
                         savePicture()
                     },
                     onClose = { menu = null },
@@ -1246,6 +1255,8 @@ private fun PicturePanel(
     stretch: Float,
     keepSubs: Boolean,
     onKeepSubs: () -> Unit,
+    zoomAnchor: Float,
+    onZoomAnchor: (Float) -> Unit,
     onMode: (Int) -> Unit,
     onZoom: (Float) -> Unit,
     onStretch: (Float) -> Unit,
@@ -1268,6 +1279,10 @@ private fun PicturePanel(
             Text("حجم الصورة", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
             LazyColumn(contentPadding = PaddingValues(vertical = 4.dp)) {
                 item { MenuRow("📝 إبقاء الترجمة ظاهرة عند التكبير", selected = keepSubs, onClick = onKeepSubs) }
+                if (keepSubs) {
+                    item { SectionLabel("موضع القص: " + when { zoomAnchor >= 0.9f -> "من فوق فقط (الترجمة كاملة)"; zoomAnchor <= 0.55f -> "موزّع (قد تُقص الترجمة)"; else -> "أغلبه من فوق" }) }
+                    item { StepRow(minusLabel = "↑ أقل من الرأس", plusLabel = "↓ أبقِ الترجمة", onMinus = { onZoomAnchor(zoomAnchor - 0.1f) }, onPlus = { onZoomAnchor(zoomAnchor + 0.1f) }) }
+                }
                 item { SectionLabel("التكبير: ${Math.round(zoom * 100)}%") }
                 item {
                     StepRow(
@@ -1289,10 +1304,10 @@ private fun PicturePanel(
 }
 
 @Composable
-private fun StepRow(onMinus: () -> Unit, onPlus: () -> Unit, firstFocus: FocusRequester? = null) {
+private fun StepRow(onMinus: () -> Unit, onPlus: () -> Unit, firstFocus: FocusRequester? = null, minusLabel: String = "−  تصغير", plusLabel: String = "+  تكبير") {
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        PillButton("−  تصغير", Modifier.weight(1f).let { if (firstFocus != null) it.focusRequester(firstFocus) else it }, onClick = onMinus)
-        PillButton("+  تكبير", Modifier.weight(1f), onClick = onPlus)
+        PillButton(minusLabel, Modifier.weight(1f).let { if (firstFocus != null) it.focusRequester(firstFocus) else it }, onClick = onMinus)
+        PillButton(plusLabel, Modifier.weight(1f), onClick = onPlus)
     }
 }
 
