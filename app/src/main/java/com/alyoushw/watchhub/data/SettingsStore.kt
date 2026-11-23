@@ -421,6 +421,25 @@ class SettingsStore(context: Context) {
         _koraUrl.value = url
     }
 
+    /** VIP auto-login: the user's own Majed Sport credentials, kept only in their synced account
+     *  so each device logs in by itself and nobody else's app ever sees them. */
+    private val _koraVipUser = MutableStateFlow(prefs.getString("kora_vip_user", "").orEmpty())
+    val koraVipUser: StateFlow<String> = _koraVipUser.asStateFlow()
+    private val _koraVipPass = MutableStateFlow(prefs.getString("kora_vip_pass", "").orEmpty())
+    val koraVipPass: StateFlow<String> = _koraVipPass.asStateFlow()
+    val koraVipUpdatedAt: Long get() = prefs.getLong("kora_vip_at", 0)
+    fun setKoraVip(user: String, pass: String) {
+        val u = user.trim(); val p = pass.trim()
+        prefs.edit().putString("kora_vip_user", u).putString("kora_vip_pass", p).putLong("kora_vip_at", System.currentTimeMillis()).apply()
+        _koraVipUser.value = u; _koraVipPass.value = p
+        onKoraChanged?.invoke()
+    }
+    fun setKoraVipFromCloud(user: String, pass: String, at: Long) {
+        if (at <= koraVipUpdatedAt) return
+        prefs.edit().putString("kora_vip_user", user).putString("kora_vip_pass", pass).putLong("kora_vip_at", at).apply()
+        _koraVipUser.value = user; _koraVipPass.value = pass
+    }
+
 
 
     private val _sourceCatalogue = MutableStateFlow(prefs.getString("source_catalogue", "").orEmpty())

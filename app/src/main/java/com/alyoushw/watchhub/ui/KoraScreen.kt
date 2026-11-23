@@ -77,6 +77,8 @@ fun KoraScreen(
     detectVideos: Boolean = false,
     /** With [detectVideos]: top-level pages must stay on hosts containing this (advert redirects are blocked). */
     siteKeyword: String? = null,
+    /** Optional saved VIP login (username, password): the page's form is filled and submitted once. */
+    autoLogin: Pair<String, String>? = null,
 ) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -95,6 +97,8 @@ fun KoraScreen(
     var nativeStarted by remember { mutableStateOf(false) }
     var nativePaused by remember { mutableStateOf(false) }
     var nativeJob by remember { mutableStateOf<Job?>(null) }
+    // Fill the VIP login only once per visit, so a failed login never loops.
+    var autoLoginDone by remember(homeUrl) { mutableStateOf(false) }
     val nativeEnabled = kora || Uri.parse(homeUrl).host == Uri.parse(KORA_HOME).host
     val found = remember { androidx.compose.runtime.mutableStateListOf<KoraNativeStream>() }
     /** Watch servers and download pages read from the site's own page (label to address). */
@@ -472,6 +476,14 @@ fun KoraScreen(
                         override fun onPageFinished(view: WebView, url: String?) {
                             // A match page: press its «مشاهدة البث المباشر» for the user; the stream then opens in the app's player.
                             if (kora && view == web) view.evaluateJavascript(KORA_AUTO_WATCH, null)
+                            if (!autoLoginDone && autoLogin != null && view == web) {
+                                val host = Uri.parse(url ?: "").host.orEmpty()
+                                val home = Uri.parse(homeUrl).host.orEmpty()
+                                if (host.isNotEmpty() && home.isNotEmpty() && (host == home || host.endsWith(".$home"))) {
+                                    autoLoginDone = true
+                                    view.evaluateJavascript(autoLoginJs(autoLogin.first, autoLogin.second), null)
+                                }
+                            }
                             view.evaluateJavascript(FOLLOW_FOCUS, null)
                             if (detectVideos && view == web) scan(view, keepList = Uri.parse(url ?: "").host?.contains(siteKeyword ?: "\u0000", true) != true)
                             if (view == web) {
@@ -562,6 +574,39 @@ fun KoraScreen(
 internal const val KORA_HOME = "https://majed-kooora.com/"
 /** Built-in VIP address, always offered beside the original in every build. */
 internal const val KORA_VIP = "http://majed-vip.site"
+
+/** Fill the login form (first text field = username, the password field) and submit it once. The
+ *  value is set through the native setter so React-style controlled inputs accept it. */
+private fun autoLoginJs(user: String, pass: String): String {
+    val u = org.json.JSONObject.quote(user)
+    val p = org.json.JSONObject.quote(pass)
+    return """
+        (function(){
+          try{
+            var pass=document.querySelector('input[type=password]');
+            if(!pass) return;
+            var inputs=document.querySelectorAll('input'), user=null;
+            for(var i=0;i<inputs.length;i++){
+              var t=(inputs[i].type||'text').toLowerCase();
+              if(t==='password') break;
+              if(t==='text'||t==='email'||t==='tel'||t==='') user=inputs[i];
+            }
+            if(!user) return;
+            if(user.value && user.value.length>0) return;
+            function set(el,val){
+              var d=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');
+              if(d&&d.set) d.set.call(el,val); else el.value=val;
+              el.dispatchEvent(new Event('input',{bubbles:true}));
+              el.dispatchEvent(new Event('change',{bubbles:true}));
+            }
+            set(user,$u); set(pass,$p);
+            var form=pass.form;
+            var btn=(form&&form.querySelector('button[type=submit],input[type=submit],button'))||document.querySelector('button[type=submit],input[type=submit]');
+            setTimeout(function(){ if(btn) btn.click(); else if(form) form.submit(); }, 300);
+          }catch(e){}
+        })();
+    """.trimIndent()
+}
 
 internal data class WebLinkItem(val label: String, val url: String, val download: Boolean)
 

@@ -211,8 +211,13 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
             }
             composable(Tab.SUBSCRIPTIONS.route) { SubscriptionsScreen() }
             composable(Tab.KORA.route) {
-                val koraUrl by appContainer().settings.koraUrl.collectAsStateWithLifecycle()
-                KoraScreen(homeUrl = koraUrl.ifBlank { KORA_HOME }, kora = true, onBack = { nav.switchTab(Tab.HOME.route) })
+                val settings = appContainer().settings
+                val koraUrl by settings.koraUrl.collectAsStateWithLifecycle()
+                val vipUser by settings.koraVipUser.collectAsStateWithLifecycle()
+                val vipPass by settings.koraVipPass.collectAsStateWithLifecycle()
+                val resolved = koraUrl.ifBlank { KORA_HOME }
+                val autoLogin = if (resolved == KORA_VIP && vipUser.isNotBlank()) vipUser to vipPass else null
+                KoraScreen(homeUrl = resolved, kora = true, autoLogin = autoLogin, onBack = { nav.switchTab(Tab.HOME.route) })
             }
             composable(Tab.YOUTUBE.route) { YouTubeLauncher() }
             composable(Tab.SETTINGS.route) { SettingsScreen(onOpenXtream = { nav.switchTab(Tab.XTREAM.route) }, onOpenHistory = { nav.navigate("watch-history") }) }

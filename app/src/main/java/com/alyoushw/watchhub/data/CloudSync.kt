@@ -511,6 +511,8 @@ class CloudSync(
     private fun applyKora(doc: DocumentSnapshot) {
         if (!doc.exists()) return
         doc.getString("url")?.let { settings.setKoraUrlFromCloud(it, doc.getLong("urlAt") ?: 0) }
+        val vipUser = doc.getString("vipUser")
+        if (vipUser != null) settings.setKoraVipFromCloud(vipUser, doc.getString("vipPass").orEmpty(), doc.getLong("vipAt") ?: 0)
     }
 
     private suspend fun mergeKora(doc: DocumentSnapshot) {
@@ -518,13 +520,18 @@ class CloudSync(
         // Send what this device has that the cloud is missing or older than.
         val urlNewer = settings.koraUrl.value.isNotBlank() && settings.koraUrlUpdatedAt > (doc.getLong("urlAt") ?: 0)
         val urlMissing = settings.koraUrl.value.isNotBlank() && doc.getString("url").isNullOrBlank()
-        if (urlNewer || urlMissing) pushKora()
+        val vipNewer = settings.koraVipUser.value.isNotBlank() && settings.koraVipUpdatedAt > (doc.getLong("vipAt") ?: 0)
+        val vipMissing = settings.koraVipUser.value.isNotBlank() && doc.getString("vipUser").isNullOrBlank()
+        if (urlNewer || urlMissing || vipNewer || vipMissing) pushKora()
     }
 
     private fun pushKora() {
         val ref = userDoc()?.collection("meta")?.document("kora") ?: return
         val data = buildMap<String, Any> {
             settings.koraUrl.value.takeIf { it.isNotBlank() }?.let { put("url", it); put("urlAt", settings.koraUrlUpdatedAt) }
+            settings.koraVipUser.value.takeIf { it.isNotBlank() }?.let {
+                put("vipUser", it); put("vipPass", settings.koraVipPass.value); put("vipAt", settings.koraVipUpdatedAt)
+            }
         }
         if (data.isEmpty()) return
         scope.launch { runCatching { ref.set(data, SetOptions.merge()).await() }.onFailure { Log.w(TAG, "kora sync failed", it) } }

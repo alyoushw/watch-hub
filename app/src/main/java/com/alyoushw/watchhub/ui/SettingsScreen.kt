@@ -415,6 +415,10 @@ private fun KoraLinkSection() {
     val onCustom = !onOriginal && !onVip
     var editing by remember { mutableStateOf(false) }
     var text by remember(editing) { mutableStateOf(if (onCustom) active else "") }
+    val vipUser by settings.koraVipUser.collectAsStateWithLifecycle()
+    var vipEditing by remember { mutableStateOf(false) }
+    var vUser by remember(vipEditing) { mutableStateOf(vipUser) }
+    var vPass by remember(vipEditing) { mutableStateOf("") }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(active, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -432,6 +436,43 @@ private fun KoraLinkSection() {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(modifier = Modifier.focusFrame(), onClick = { if (text.isNotBlank()) settings.setKoraUrl(text.trim()); editing = false }) { Text("حفظ") }
                 TextButton(modifier = Modifier.focusFrame(), onClick = { editing = false }) { Text("إلغاء") }
+            }
+        }
+
+        Spacer(Modifier.height(4.dp))
+        Text("دخول VIP التلقائي", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+        Text(
+            if (vipUser.isBlank())
+                "أدخل بيانات اشتراك ماجد سبورت مرة وحدة هنا — تتزامن لكل أجهزتك ويسجّل الدخول تلقائياً، بدون كتابة بالريموت."
+            else "محفوظ باسم: $vipUser — يسجّل تلقائياً على كل أجهزتك.",
+            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (!vipEditing) {
+            OutlinedButton(modifier = Modifier.focusFrame(), onClick = { vipEditing = true }) {
+                Text(if (vipUser.isBlank()) "أضف بيانات VIP" else "تعديل بيانات VIP")
+            }
+        } else {
+            OutlinedTextField(
+                value = vUser, onValueChange = { vUser = it },
+                label = { Text("اسم المستخدم") }, singleLine = true,
+                modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(),
+            )
+            OutlinedTextField(
+                value = vPass, onValueChange = { vPass = it },
+                label = { Text("كلمة المرور" + if (vipUser.isNotBlank()) " (اتركها فاضية للإبقاء على الحالية)" else "") },
+                singleLine = true,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(modifier = Modifier.focusFrame(), onClick = {
+                    if (vUser.isNotBlank()) settings.setKoraVip(vUser, vPass.ifBlank { settings.koraVipPass.value })
+                    vipEditing = false
+                }) { Text("حفظ") }
+                TextButton(modifier = Modifier.focusFrame(), onClick = { vipEditing = false }) { Text("إلغاء") }
+                if (vipUser.isNotBlank()) {
+                    TextButton(modifier = Modifier.focusFrame(), onClick = { settings.setKoraVip("", ""); vipEditing = false }) { Text("حذف") }
+                }
             }
         }
     }
