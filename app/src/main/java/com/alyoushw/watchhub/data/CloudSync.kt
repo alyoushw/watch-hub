@@ -411,6 +411,8 @@ class CloudSync(
                 mergeWatchlist(base.collection("watchlist").get().await().documents)
                 mergeXtream(base.collection("meta").document("xtream").get().await())
                 mergeKora(base.collection("meta").document("kora").get().await())
+                applyMarks(base.collection("meta").document("seriesMarks").get().await())
+                marks?.seriesKeys()?.takeIf { it.isNotEmpty() }?.let(::pushMarks)
                 history.mergeHidden(hiddenOf(base.collection("meta").document("continueHidden").get().await()))
                 history.continueHidden.value.takeIf { it.isNotEmpty() }?.let(::pushHidden)
                 recommender?.let { rec ->
@@ -450,6 +452,10 @@ class CloudSync(
                 if (e != null || snap == null || snap.metadata.hasPendingWrites()) return@addSnapshotListener
                 applyKora(snap)
             }
+            listeners += base.collection("meta").document("seriesMarks").addSnapshotListener { snap, e ->
+                if (e != null || snap == null || snap.metadata.hasPendingWrites()) return@addSnapshotListener
+                applyMarks(snap)
+            }
         }
     }
 
@@ -471,6 +477,36 @@ class CloudSync(
             field = value
             value?.onDismiss = { key -> pushDismissed(setOf(key)) }
         }
+
+    /** Set once the player's learned marks exist, so intro/credits sync across devices. */
+    var marks: com.alyoushw.watchhub.player.SeriesMarks? = null
+        set(value) {
+            field = value
+            value?.onChange = { series -> pushMarks(setOf(series)) }
+        }
+
+    private fun pushMarks(series: Set<String>) {
+        val m = marks ?: return
+        val ref = userDoc()?.collection("meta")?.document("seriesMarks") ?: return
+        val data = series.associate { s ->
+            val r = m.record(s)
+            hiddenField(s) to org.json.JSONObject(mapOf(
+                "intro" to r.intro, "introAt" to r.introAt, "credits" to r.credits, "creditsAt" to r.creditsAt,
+            )).toString()
+        }
+        if (data.isEmpty()) return
+        scope.launch { runCatching { ref.set(data, SetOptions.merge()).await() }.onFailure { Log.w(TAG, "marks sync failed", it) } }
+    }
+
+    private fun applyMarks(doc: DocumentSnapshot) {
+        val m = marks ?: return
+        doc.data.orEmpty().forEach { (field, value) ->
+            val series = runCatching { String(android.util.Base64.decode(field, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)) }.getOrNull() ?: return@forEach
+            val o = runCatching { org.json.JSONObject(value as String) }.getOrNull() ?: return@forEach
+            m.applyRemote(series, o.optString("intro", null.toString()).takeIf { it != "null" && it.isNotBlank() },
+                o.optLong("introAt"), o.optLong("credits", -1), o.optLong("creditsAt"))
+        }
+    }
 
     private fun applyKora(doc: DocumentSnapshot) {
         if (!doc.exists()) return

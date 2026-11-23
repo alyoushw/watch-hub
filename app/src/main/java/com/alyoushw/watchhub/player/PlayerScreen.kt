@@ -551,8 +551,10 @@ fun PlayerScreen(
                     .graphicsLayer {
                         scaleX = zoom * stretch * fillScale
                         scaleY = zoom * fillScale
-                        translationX = panX
-                        translationY = panY
+                        val ovX = kotlin.math.max(0f, (zoom * stretch * fillScale - 1f)) * size.width / 2f
+                        val ovY = kotlin.math.max(0f, (zoom * fillScale - 1f)) * size.height / 2f
+                        translationX = panX * ovX
+                        translationY = panY * ovY
                         transformOrigin = if (panX != 0f || panY != 0f) androidx.compose.ui.graphics.TransformOrigin.Center
                             else if (bottomAnchored) androidx.compose.ui.graphics.TransformOrigin(0.5f, zoomAnchor) else androidx.compose.ui.graphics.TransformOrigin.Center
                     },
@@ -637,10 +639,10 @@ fun PlayerScreen(
                                         3 -> setVolume(startVol - dy / size.height * 1.3f)
                                         5 -> swipeDx = dx
                                         6 -> {
-                                            val ovX = kotlin.math.max(0f, (zoom * stretch - 1f) * size.width / 2f)
-                                            val ovY = kotlin.math.max(0f, (zoom - 1f) * size.height / 2f)
-                                            panX = (startPanX + dx).coerceIn(-ovX, ovX)
-                                            panY = (startPanY + dy).coerceIn(-ovY, ovY)
+                                            val ovX = kotlin.math.max(1f, (zoom * stretch - 1f) * size.width / 2f)
+                                            val ovY = kotlin.math.max(1f, (zoom - 1f) * size.height / 2f)
+                                            panX = (startPanX + dx / ovX).coerceIn(-1f, 1f)
+                                            panY = (startPanY + dy / ovY).coerceIn(-1f, 1f)
                                         }
                                     }
                                     if (mode > 0) c.consume()
@@ -848,6 +850,11 @@ fun PlayerScreen(
                     onZoomAnchor = {
                         zoomAnchor = it.coerceIn(0f, 1f)
                         picPrefs.edit().putFloat("zoomAnchor", zoomAnchor).apply()
+                    },
+                    zoomed = zoom > 1.02f,
+                    onPanStep = { dx, dy ->
+                        panX = (panX + dx).coerceIn(-1f, 1f)
+                        panY = (panY + dy).coerceIn(-1f, 1f)
                     },
                     onMode = {
                         resize = it
@@ -1275,6 +1282,8 @@ private fun PicturePanel(
     onKeepSubs: () -> Unit,
     zoomAnchor: Float,
     onZoomAnchor: (Float) -> Unit,
+    zoomed: Boolean,
+    onPanStep: (Float, Float) -> Unit,
     onMode: (Int) -> Unit,
     onZoom: (Float) -> Unit,
     onStretch: (Float) -> Unit,
@@ -1301,7 +1310,12 @@ private fun PicturePanel(
                     item { SectionLabel("موضع القص: " + when { zoomAnchor >= 0.9f -> "الترجمة كاملة"; zoomAnchor <= 0.55f -> "يحمي الرأس"; else -> "متوازن" }) }
                     item { StepRow(minusLabel = "↑ أعلى", plusLabel = "↓ أسفل", onMinus = { onZoomAnchor(zoomAnchor - 0.1f) }, onPlus = { onZoomAnchor(zoomAnchor + 0.1f) }) }
                 }
-                item { Hint("وأنت مكبّر، حرّك الصورة بإصبعك لأعلى أو أسفل لإظهار الترجمة أو الرأس.") }
+                item { Hint("وأنت مكبّر، حرّك الصورة بإصبعك (أو بالأزرار تحت) لإظهار الترجمة أو الرأس.") }
+                if (zoomed) {
+                    item { SectionLabel("تحريك الصورة") }
+                    item { StepRow(minusLabel = "↑ فوق", plusLabel = "↓ تحت", onMinus = { onPanStep(0f, -0.2f) }, onPlus = { onPanStep(0f, 0.2f) }) }
+                    item { StepRow(minusLabel = "→ يمين", plusLabel = "← يسار", onMinus = { onPanStep(0.2f, 0f) }, onPlus = { onPanStep(-0.2f, 0f) }) }
+                }
                 item { SectionLabel("التكبير: ${Math.round(zoom * 100)}%") }
                 item {
                     StepRow(

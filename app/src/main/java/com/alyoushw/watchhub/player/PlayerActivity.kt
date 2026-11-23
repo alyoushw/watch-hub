@@ -58,7 +58,7 @@ class PlayerActivity : ComponentActivity() {
     private val container get() = (application as WatchHubApp).container
     private val history get() = container.history
     private val cloud get() = container.cloud
-    private val marks by lazy { SeriesMarks(this) }
+    private val marks by lazy { container.marks }
     private val handler = Handler(Looper.getMainLooper())
     private val session = PlayerSession()
     private var phoneCast: PhoneCastController? = null

@@ -80,18 +80,52 @@ class PlayerSession {
 class SeriesMarks(context: Context) {
     private val prefs = context.getSharedPreferences("series_marks", Context.MODE_PRIVATE)
 
+    /** Set by the account sync: a learned intro/credits applies on every device. */
+    var onChange: ((String) -> Unit)? = null
+
     fun intro(series: String): LongRange? = prefs.getString("intro:$series", null)?.split(',')
         ?.mapNotNull { it.toLongOrNull() }?.takeIf { it.size == 2 && it[1] > it[0] }?.let { it[0]..it[1] }
 
     fun setIntro(series: String, start: Long, end: Long) {
-        if (end > start) prefs.edit().putString("intro:$series", "$start,$end").apply()
+        if (end > start) {
+            prefs.edit().putString("intro:$series", "$start,$end").putLong("introAt:$series", System.currentTimeMillis()).apply()
+            onChange?.invoke(series)
+        }
     }
 
     /** How long before the end the credits start, in ms (learned), or null. */
     fun credits(series: String): Long? = prefs.getLong("credits:$series", -1).takeIf { it > 0 }
 
     fun setCredits(series: String, remainingMs: Long) {
-        if (remainingMs in 10_000..240_000) prefs.edit().putLong("credits:$series", remainingMs).apply()
+        if (remainingMs in 10_000..240_000) {
+            prefs.edit().putLong("credits:$series", remainingMs).putLong("creditsAt:$series", System.currentTimeMillis()).apply()
+            onChange?.invoke(series)
+        }
+    }
+
+    // ---- account sync ----
+    fun seriesKeys(): Set<String> = prefs.all.keys.mapNotNull { k ->
+        listOf("intro:", "credits:").firstOrNull { k.startsWith(it) }?.let { k.removePrefix(it) }
+    }.toSet()
+
+    class Record(val intro: String?, val introAt: Long, val credits: Long, val creditsAt: Long)
+
+    fun record(series: String) = Record(
+        prefs.getString("intro:$series", null), prefs.getLong("introAt:$series", 0),
+        prefs.getLong("credits:$series", -1), prefs.getLong("creditsAt:$series", 0),
+    )
+
+    /** Applies a learned mark from another device when it is newer. Returns true if anything changed. */
+    fun applyRemote(series: String, intro: String?, introAt: Long, credits: Long, creditsAt: Long): Boolean {
+        val e = prefs.edit(); var changed = false
+        if (intro != null && introAt > prefs.getLong("introAt:$series", 0)) {
+            e.putString("intro:$series", intro).putLong("introAt:$series", introAt); changed = true
+        }
+        if (credits > 0 && creditsAt > prefs.getLong("creditsAt:$series", 0)) {
+            e.putLong("credits:$series", credits).putLong("creditsAt:$series", creditsAt); changed = true
+        }
+        if (changed) e.apply()
+        return changed
     }
 }
 

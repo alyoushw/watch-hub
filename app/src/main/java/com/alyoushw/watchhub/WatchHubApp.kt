@@ -49,6 +49,7 @@ class AppContainer(context: Context) {
     val statusCache = StatusCache(context, api)
     val updater = com.alyoushw.watchhub.data.Updater(context)
     val recommender = com.alyoushw.watchhub.data.Recommender(context, api, history, store).also { cloud.recommender = it }
+    val marks = com.alyoushw.watchhub.player.SeriesMarks(context).also { cloud.marks = it }
     val stats = com.alyoushw.watchhub.data.WatchStats(context)
     val downloads = com.alyoushw.watchhub.data.Downloads(context)
 
