@@ -480,8 +480,12 @@ class CloudSync(
 
     private suspend fun mergeKora(doc: DocumentSnapshot) {
         applyKora(doc)
-        // Send what this device has newer (first sign-in brings nothing from the cloud yet).
-        if (settings.koraUrlUpdatedAt > (doc.getLong("urlAt") ?: 0) || settings.koraCookiesUpdatedAt > (doc.getLong("cookiesAt") ?: 0)) pushKora()
+        // Send what this device has that the cloud is missing or older than.
+        val urlNewer = settings.koraUrl.value.isNotBlank() && settings.koraUrlUpdatedAt > (doc.getLong("urlAt") ?: 0)
+        val urlMissing = settings.koraUrl.value.isNotBlank() && doc.getString("url").isNullOrBlank()
+        val cookiesNewer = settings.koraCookies.value.isNotBlank() && settings.koraCookiesUpdatedAt > (doc.getLong("cookiesAt") ?: 0)
+        val cookiesMissing = settings.koraCookies.value.isNotBlank() && doc.getString("cookies").isNullOrBlank()
+        if (urlNewer || urlMissing || cookiesNewer || cookiesMissing) pushKora()
     }
 
     private fun pushKora() {

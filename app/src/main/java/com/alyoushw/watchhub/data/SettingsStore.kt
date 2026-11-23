@@ -8,6 +8,15 @@ import kotlinx.coroutines.flow.asStateFlow
 class SettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
+    init {
+        // A «كوره» URL saved before sync existed carries no time: stamp it once so it uploads.
+        val now = System.currentTimeMillis()
+        val e = prefs.edit()
+        if (!prefs.getString("kora_url", "").isNullOrBlank() && prefs.getLong("kora_url_at", 0) == 0L) e.putLong("kora_url_at", now)
+        if (!prefs.getString("kora_cookies", "").isNullOrBlank() && prefs.getLong("kora_cookies_at", 0) == 0L) e.putLong("kora_cookies_at", now)
+        e.apply()
+    }
+
     private val _watchNext = MutableStateFlow(prefs.getBoolean("watch_next", false))
     val watchNext: StateFlow<Boolean> = _watchNext.asStateFlow()
     fun setWatchNext(value: Boolean) {
