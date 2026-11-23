@@ -403,18 +403,25 @@ private fun AppPickerDialog(exclude: Set<String>, onDismiss: () -> Unit, onPick:
     )
 }
 
-/** «كوره»'s address: shown, and a field to change it only after asking. */
+/** «كوره»'s address: three fixed choices — original, VIP, or a link you add yourself. */
 @Composable
 private fun KoraLinkSection() {
     val settings = appContainer().settings
     val saved by settings.koraUrl.collectAsStateWithLifecycle()
+    // Which of the two built-in links is active now (blank counts as the original).
+    val active = saved.ifBlank { KORA_HOME }
+    val onOriginal = active == KORA_HOME
+    val onVip = active == KORA_VIP
+    val onCustom = !onOriginal && !onVip
     var editing by remember { mutableStateOf(false) }
-    var text by remember(saved, editing) { mutableStateOf(saved.ifBlank { KORA_HOME }) }
+    var text by remember(editing) { mutableStateOf(if (onCustom) active else "") }
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(saved.ifBlank { KORA_HOME }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (!editing) {
-            OutlinedButton(modifier = Modifier.focusFrame(), onClick = { editing = true }) { Text("تغيير رابط كوره") }
-        } else {
+        Text(active, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        KoraChoiceRow("الرابط الأصلي", KORA_HOME, selected = onOriginal) { settings.setKoraUrl(""); editing = false }
+        KoraChoiceRow("رابط VIP", KORA_VIP, selected = onVip) { settings.setKoraUrl(KORA_VIP); editing = false }
+        KoraChoiceRow("رابط أضيفه", if (onCustom) active else "اكتب رابطاً خاصاً بك", selected = onCustom) { editing = true }
+        if (editing) {
             OutlinedTextField(
                 value = text,
                 onValueChange = { text = it },
@@ -423,12 +430,29 @@ private fun KoraLinkSection() {
                 modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(),
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(modifier = Modifier.focusFrame(), onClick = { settings.setKoraUrl(text); editing = false }) { Text("حفظ") }
+                Button(modifier = Modifier.focusFrame(), onClick = { if (text.isNotBlank()) settings.setKoraUrl(text.trim()); editing = false }) { Text("حفظ") }
                 TextButton(modifier = Modifier.focusFrame(), onClick = { editing = false }) { Text("إلغاء") }
-                if (saved.isNotBlank()) {
-                    TextButton(modifier = Modifier.focusFrame(), onClick = { settings.setKoraUrl(""); editing = false }) { Text("الرابط الأصلي") }
-                }
             }
+        }
+    }
+}
+
+@Composable
+private fun KoraChoiceRow(title: String, subtitle: String, selected: Boolean, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+            .background((if (selected) scheme.primary.copy(alpha = 0.16f) else scheme.surfaceVariant.copy(alpha = 0.5f)))
+            .focusFrame(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(if (selected) "◉" else "◯", color = if (selected) scheme.primary else scheme.onSurfaceVariant)
+        Column(Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+            Text(subtitle, style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant, maxLines = 1)
         }
     }
 }

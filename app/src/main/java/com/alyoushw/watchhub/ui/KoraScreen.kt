@@ -556,6 +556,8 @@ fun KoraScreen(
 }
 
 internal const val KORA_HOME = "https://majed-kooora.com/"
+/** Built-in VIP address, always offered beside the original in every build. */
+internal const val KORA_VIP = "http://majed-vip.site"
 
 internal data class WebLinkItem(val label: String, val url: String, val download: Boolean)
 
