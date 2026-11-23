@@ -76,9 +76,34 @@ class PlayerActivity : ComponentActivity() {
     // ---------- slow connection: notice, load ahead ----------
 
     private var preloadJob: Job? = null
+    // Animeify «تلقائي»: concrete servers best→worst, the one in use, and recent stalls.
+    private var autoServers: List<Pair<String, String>> = emptyList()
+    private var autoServer: String? = null
+    private var autoIndex = 0
+    private var autoStalls = 0
+    private var autoStallSince = 0L
+    private fun qualityRank(label: String): Int = label.uppercase(java.util.Locale.ROOT).let {
+        when { "FHD" in it || "1080" in it -> 4; "HD" in it || "720" in it -> 3; "SD" in it || "480" in it -> 2; else -> 1 }
+    }
 
     /** Extra loading is opt-in; ordinary buffering never opens a prompt or pauses playback. */
+    private fun autoDowngrade(state: Int) {
+        if (entry?.animeRef?.server != "auto" || autoServers.isEmpty() || autoIndex >= autoServers.lastIndex || !started) return
+        if (state != Player.STATE_BUFFERING || !player.playWhenReady || player.currentPosition < 3_000) return
+        val now = System.currentTimeMillis()
+        if (now - autoStallSince > 25_000) { autoStalls = 0; autoStallSince = now }
+        if (++autoStalls < 2) return
+        autoStalls = 0
+        autoIndex++
+        autoServer = autoServers.getOrNull(autoIndex)?.first ?: return
+        Toast.makeText(this, "النت ضعيف، نزّلنا الجودة إلى ${autoServers[autoIndex].second}", Toast.LENGTH_SHORT).show()
+        val at = player.currentPosition
+        queue = queue.toMutableList().also { it[position] = it[position].copy(urls = emptyList()) }
+        setMedia(at)
+    }
+
     private fun watchStalls(state: Int) {
+        autoDowngrade(state)
         val e = entry ?: return
         if (!session.autoPreload || e.isLive || !started || session.preloading != null) return
         if (state == Player.STATE_BUFFERING && player.playWhenReady && player.currentPosition > 3_000) preload(2)
@@ -215,7 +240,10 @@ class PlayerActivity : ComponentActivity() {
                     urlIndex++
                     setMedia(at)
                 } else {
-                    Toast.makeText(this@PlayerActivity, "ما قدرنا نشغّل «${entry?.title.orEmpty()}»", Toast.LENGTH_LONG).show()
+                    // The real reason (HTTP code, codec, timeout) so a device-specific failure can be reported.
+                    val http = (error.cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
+                    val detail = http?.let { "رد السيرفر $it" } ?: error.errorCodeName
+                    Toast.makeText(this@PlayerActivity, "ما قدرنا نشغّل «${entry?.title.orEmpty()}» ($detail)", Toast.LENGTH_LONG).show()
                 }
             }
 
@@ -462,16 +490,30 @@ class PlayerActivity : ComponentActivity() {
             }
             val key = entry?.key
             resolveJob = lifecycleScope.launch {
-                // Every quality (server) of this episode goes in «الجودة»: switching keeps the spot.
-                launch {
-                    val servers = runCatching { container.animeify.servers(ref.copy(server = "")) }.getOrNull().orEmpty()
-                    if (entry?.key == key && servers.size > 1) {
-                        session.sourceQualities = servers.map { it.key to it.label }
-                        session.sourceQuality = ref.server
-                    }
+                val servers = runCatching { container.animeify.servers(ref.copy(server = "")) }.getOrNull().orEmpty()
+                if (entry?.key != key) return@launch
+                if (servers.size > 1) {
+                    // «تلقائي» first, then every quality.
+                    session.sourceQualities = listOf("auto" to "تلقائي (حسب النت)") + servers.map { it.key to it.label }
+                    session.sourceQuality = ref.server.ifBlank { "auto" }
                 }
+                // In auto, pick the server by the measured speed (or the one already chosen after a downgrade).
+                val effective = if (ref.server == "auto" || ref.server.isBlank()) {
+                    if (autoServers.isEmpty() || autoServer == null) {
+                        autoServers = servers.sortedByDescending { qualityRank(it.label) }.map { it.key to it.label }
+                        val mbps = bandwidth.bitrateEstimate / 1_000_000.0
+                        autoIndex = when {
+                            autoServers.isEmpty() -> 0
+                            mbps <= 0 || mbps >= 4.5 -> 0
+                            mbps >= 2.0 -> minOf(1, autoServers.lastIndex)
+                            else -> autoServers.lastIndex
+                        }
+                        autoServer = autoServers.getOrNull(autoIndex)?.first
+                    }
+                    autoServer ?: ref.server
+                } else ref.server
                 try {
-                    val url = container.animeify.resolve(ref)
+                    val url = container.animeify.resolve(ref.copy(server = effective))
                     if (entry?.key != key) return@launch
                     queue = queue.toMutableList().also { it[position] = it[position].copy(urls = listOf(url)) }
                     urlIndex = 0
@@ -490,7 +532,8 @@ class PlayerActivity : ComponentActivity() {
             if (id == anime.server || session.sourceQualities.none { it.first == id }) return
             val at = player.currentPosition
             player.pause()
-            // This episode and the ones after it keep the chosen quality.
+            // Picking «تلقائي» or a fixed quality both start fresh; auto re-measures the speed.
+            autoServers = emptyList(); autoServer = null; autoIndex = 0; autoStalls = 0
             queue = queue.mapIndexed { i, q ->
                 val r = q.entry.animeRef
                 if (i >= position && r != null) q.copy(urls = emptyList(), entry = q.entry.copy(animeRef = r.copy(server = id))) else q
