@@ -521,6 +521,8 @@ fun HomeScreen(
                 // The trending row becomes the big banner; for anime the first row feeds it.
                 val hero = vm.sections.firstOrNull { it.wide } ?: vm.sections.firstOrNull()
                 val homeListState = androidx.compose.foundation.lazy.rememberLazyListState()
+                // Changing tab starts the page from the top again (the banner / «تابع المشاهدة»).
+                LaunchedEffect(vm.type, live) { homeListState.scrollToItem(0) }
                 // The tabs ride over the banner at the top; once it scrolls away they pin as a solid bar.
                 val pinnedTabs by remember {
                     androidx.compose.runtime.derivedStateOf {
@@ -572,7 +574,15 @@ fun HomeScreen(
                     exit = androidx.compose.animation.fadeOut(),
                     modifier = Modifier.align(Alignment.TopCenter),
                 ) {
-                    Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) { header() }
+                    Box(
+                        Modifier.fillMaxWidth().background(
+                            androidx.compose.ui.graphics.Brush.verticalGradient(
+                                0f to MaterialTheme.colorScheme.background,
+                                0.7f to MaterialTheme.colorScheme.background.copy(alpha = 0.96f),
+                                1f to MaterialTheme.colorScheme.background.copy(alpha = 0.0f),
+                            ),
+                        ).padding(bottom = 10.dp),
+                    ) { header() }
                 }
                 }
             }
