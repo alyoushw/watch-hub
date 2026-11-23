@@ -1271,17 +1271,17 @@ private fun PicturePanel(
             Modifier
                 .align(Alignment.CenterEnd)
                 .fillMaxHeight()
-                .width(320.dp)
+                .width(344.dp)
                 .background(Color(0xE6141210))
                 .pointerInput(Unit) { detectTapGestures { } }
                 .padding(vertical = 14.dp),
         ) {
             Text("حجم الصورة", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
-            LazyColumn(contentPadding = PaddingValues(vertical = 4.dp)) {
+            LazyColumn(contentPadding = PaddingValues(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 item { MenuRow("📝 إبقاء الترجمة ظاهرة عند التكبير", selected = keepSubs, onClick = onKeepSubs) }
                 if (keepSubs) {
-                    item { SectionLabel("موضع القص: " + when { zoomAnchor >= 0.9f -> "من فوق فقط (الترجمة كاملة)"; zoomAnchor <= 0.55f -> "موزّع (قد تُقص الترجمة)"; else -> "أغلبه من فوق" }) }
-                    item { StepRow(minusLabel = "↑ أقل من الرأس", plusLabel = "↓ أبقِ الترجمة", onMinus = { onZoomAnchor(zoomAnchor - 0.1f) }, onPlus = { onZoomAnchor(zoomAnchor + 0.1f) }) }
+                    item { SectionLabel("موضع القص: " + when { zoomAnchor >= 0.9f -> "الترجمة كاملة"; zoomAnchor <= 0.55f -> "يحمي الرأس"; else -> "متوازن" }) }
+                    item { StepRow(minusLabel = "↑ أعلى", plusLabel = "↓ أسفل", onMinus = { onZoomAnchor(zoomAnchor - 0.1f) }, onPlus = { onZoomAnchor(zoomAnchor + 0.1f) }) }
                 }
                 item { SectionLabel("التكبير: ${Math.round(zoom * 100)}%") }
                 item {
