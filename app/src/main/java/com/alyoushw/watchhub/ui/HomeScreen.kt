@@ -5,6 +5,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.background
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -516,6 +519,13 @@ fun HomeScreen(
                 // The trending row becomes the big banner; for anime the first row feeds it.
                 val hero = vm.sections.firstOrNull { it.wide } ?: vm.sections.firstOrNull()
                 val homeListState = androidx.compose.foundation.lazy.rememberLazyListState()
+                // The tabs ride over the banner at the top; once it scrolls away they pin as a solid bar.
+                val pinnedTabs by remember {
+                    androidx.compose.runtime.derivedStateOf {
+                        homeListState.firstVisibleItemIndex >= 1 || homeListState.firstVisibleItemScrollOffset > 320
+                    }
+                }
+                Box(Modifier.fillMaxSize()) {
                 LazyColumn(
                     modifier = Modifier.tvScrollAssist(homeListState),
                     state = homeListState,
@@ -553,6 +563,15 @@ fun HomeScreen(
                             onOpen = { item -> item.type?.let { onOpen(it, item.id) } },
                         )
                     }
+                }
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = pinnedTabs && !tv,
+                    enter = androidx.compose.animation.fadeIn(),
+                    exit = androidx.compose.animation.fadeOut(),
+                    modifier = Modifier.align(Alignment.TopCenter),
+                ) {
+                    Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) { header() }
+                }
                 }
             }
         }
