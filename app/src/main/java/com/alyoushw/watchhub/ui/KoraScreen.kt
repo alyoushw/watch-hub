@@ -98,9 +98,12 @@ fun KoraScreen(
     val nativeEnabled = kora || Uri.parse(homeUrl).host == Uri.parse(KORA_HOME).host
     val settings = appContainer().settings
     val koraHost = if (kora) Uri.parse(homeUrl).host else null
-    // The site login travels with the Google account: put the saved cookies back before the first load.
+    // Only a device with no session of its own borrows the saved one. A live login is never overwritten.
+    val bootstrapSession = androidx.compose.runtime.remember(koraHost) {
+        koraHost != null && CookieManager.getInstance().getCookie("https://$koraHost").isNullOrBlank()
+    }
     androidx.compose.runtime.remember(koraHost) {
-        if (koraHost != null) {
+        if (bootstrapSession) {
             val cm = CookieManager.getInstance()
             settings.koraCookies.value.split('\u0001').forEach { c -> if (c.isNotBlank()) runCatching { cm.setCookie("https://$koraHost", c) } }
             cm.setAcceptCookie(true)
@@ -490,9 +493,10 @@ fun KoraScreen(
                             super.onUnhandledKeyEvent(view, event)
                         }
                         override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
-                            if (kora && view == web && Uri.parse(url ?: "").host == koraHost) {
+                            if (bootstrapSession && view == web && Uri.parse(url ?: "").host == koraHost) {
                                 settings.koraStorage.value.takeIf { it.length > 2 }?.let { blob ->
-                                    view.evaluateJavascript("(function(){try{var d=JSON.parse(" + org.json.JSONObject.quote(blob) + ");for(var k in d)localStorage.setItem(k,d[k]);}catch(e){}})()", null)
+                                    // Fill only keys the page doesn't already have, so a live login stays intact.
+                                    view.evaluateJavascript("(function(){try{var d=JSON.parse(" + org.json.JSONObject.quote(blob) + ");for(var k in d){if(localStorage.getItem(k)==null)localStorage.setItem(k,d[k]);}}catch(e){}})()", null)
                                 }
                             }
                             if (view == web) {
