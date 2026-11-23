@@ -202,6 +202,9 @@ fun PlayerScreen(
     var keepSubs by remember { mutableStateOf(picPrefs.getBoolean("keepSubs", true)) }
     // Where the crop keeps the picture: 1 = bottom (subtitles safe), 0.5 = centre, 0 = top.
     var zoomAnchor by remember { mutableFloatStateOf(picPrefs.getFloat("zoomAnchor", 1f).coerceIn(0f, 1f)) }
+    // Free pan while zoomed (like YouTube): move the visible part up/down/sideways.
+    var panX by remember { mutableFloatStateOf(0f) }
+    var panY by remember { mutableFloatStateOf(0f) }
     var videoRatio by remember { mutableFloatStateOf(0f) }
     DisposableEffect(player) {
         fun read(v: androidx.media3.common.VideoSize) { if (v.height > 0 && v.width > 0) videoRatio = v.width * v.pixelWidthHeightRatio / v.height }
@@ -548,7 +551,10 @@ fun PlayerScreen(
                     .graphicsLayer {
                         scaleX = zoom * stretch * fillScale
                         scaleY = zoom * fillScale
-                        transformOrigin = if (bottomAnchored) androidx.compose.ui.graphics.TransformOrigin(0.5f, zoomAnchor) else androidx.compose.ui.graphics.TransformOrigin.Center
+                        translationX = panX
+                        translationY = panY
+                        transformOrigin = if (panX != 0f || panY != 0f) androidx.compose.ui.graphics.TransformOrigin.Center
+                            else if (bottomAnchored) androidx.compose.ui.graphics.TransformOrigin(0.5f, zoomAnchor) else androidx.compose.ui.graphics.TransformOrigin.Center
                     },
             )
 
@@ -589,6 +595,8 @@ fun PlayerScreen(
                             var startDist = 0f
                             var target = startPos
                             var swipeDx = 0f
+                            val startPanX = panX
+                            val startPanY = panY
                             do {
                                 val event = awaitPointerEvent()
                                 val pressed = event.changes.filter { it.pressed }
@@ -609,6 +617,8 @@ fun PlayerScreen(
                                     val dy = c.position.y - down.position.y
                                     if (mode == 0 && (abs(dx) > slop || abs(dy) > slop)) {
                                         mode = when {
+                                            // Zoomed in (and not live): a drag pans the picture, like YouTube.
+                                            !live && zoom > 1.02f -> 6
                                             abs(dx) > abs(dy) -> if (live) 5 else 1
                                             down.position.x < size.width / 2f -> 2
                                             else -> 3
@@ -626,6 +636,12 @@ fun PlayerScreen(
                                         2 -> setBrightness(startBright - dy / size.height * 1.3f)
                                         3 -> setVolume(startVol - dy / size.height * 1.3f)
                                         5 -> swipeDx = dx
+                                        6 -> {
+                                            val ovX = kotlin.math.max(0f, (zoom * stretch - 1f) * size.width / 2f)
+                                            val ovY = kotlin.math.max(0f, (zoom - 1f) * size.height / 2f)
+                                            panX = (startPanX + dx).coerceIn(-ovX, ovX)
+                                            panY = (startPanY + dy).coerceIn(-ovY, ovY)
+                                        }
                                     }
                                     if (mode > 0) c.consume()
                                 }
@@ -850,6 +866,8 @@ fun PlayerScreen(
                         zoom = 1f
                         stretch = 1f
                         zoomAnchor = 1f
+                        panX = 0f
+                        panY = 0f
                         picPrefs.edit().putFloat("zoomAnchor", 1f).apply()
                         savePicture()
                     },
@@ -1283,6 +1301,7 @@ private fun PicturePanel(
                     item { SectionLabel("موضع القص: " + when { zoomAnchor >= 0.9f -> "الترجمة كاملة"; zoomAnchor <= 0.55f -> "يحمي الرأس"; else -> "متوازن" }) }
                     item { StepRow(minusLabel = "↑ أعلى", plusLabel = "↓ أسفل", onMinus = { onZoomAnchor(zoomAnchor - 0.1f) }, onPlus = { onZoomAnchor(zoomAnchor + 0.1f) }) }
                 }
+                item { Hint("وأنت مكبّر، حرّك الصورة بإصبعك لأعلى أو أسفل لإظهار الترجمة أو الرأس.") }
                 item { SectionLabel("التكبير: ${Math.round(zoom * 100)}%") }
                 item {
                     StepRow(
