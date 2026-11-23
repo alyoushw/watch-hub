@@ -476,6 +476,7 @@ class CloudSync(
         if (!doc.exists()) return
         doc.getString("url")?.let { settings.setKoraUrlFromCloud(it, doc.getLong("urlAt") ?: 0) }
         doc.getString("cookies")?.let { settings.setKoraCookiesFromCloud(it, doc.getLong("cookiesAt") ?: 0) }
+        doc.getString("storage")?.let { settings.setKoraStorageFromCloud(it, doc.getLong("storageAt") ?: 0) }
     }
 
     private suspend fun mergeKora(doc: DocumentSnapshot) {
@@ -485,7 +486,9 @@ class CloudSync(
         val urlMissing = settings.koraUrl.value.isNotBlank() && doc.getString("url").isNullOrBlank()
         val cookiesNewer = settings.koraCookies.value.isNotBlank() && settings.koraCookiesUpdatedAt > (doc.getLong("cookiesAt") ?: 0)
         val cookiesMissing = settings.koraCookies.value.isNotBlank() && doc.getString("cookies").isNullOrBlank()
-        if (urlNewer || urlMissing || cookiesNewer || cookiesMissing) pushKora()
+        val storageNewer = settings.koraStorage.value.isNotBlank() && settings.koraStorageUpdatedAt > (doc.getLong("storageAt") ?: 0)
+        val storageMissing = settings.koraStorage.value.isNotBlank() && doc.getString("storage").isNullOrBlank()
+        if (urlNewer || urlMissing || cookiesNewer || cookiesMissing || storageNewer || storageMissing) pushKora()
     }
 
     private fun pushKora() {
@@ -493,6 +496,7 @@ class CloudSync(
         val data = buildMap<String, Any> {
             settings.koraUrl.value.takeIf { it.isNotBlank() }?.let { put("url", it); put("urlAt", settings.koraUrlUpdatedAt) }
             settings.koraCookies.value.takeIf { it.isNotBlank() }?.let { put("cookies", it); put("cookiesAt", settings.koraCookiesUpdatedAt) }
+            settings.koraStorage.value.takeIf { it.isNotBlank() }?.let { put("storage", it); put("storageAt", settings.koraStorageUpdatedAt) }
         }
         if (data.isEmpty()) return
         scope.launch { runCatching { ref.set(data, SetOptions.merge()).await() }.onFailure { Log.w(TAG, "kora sync failed", it) } }

@@ -112,9 +112,17 @@ fun KoraScreen(
         val host = koraHost ?: return
         val cm = CookieManager.getInstance()
         cm.flush()
-        val cookie = cm.getCookie("https://$host") ?: return
-        // "a=1; b=2" → one cookie per line, so setCookie can restore each.
-        settings.setKoraCookies(cookie.split(";").map { it.trim() }.filter { it.isNotBlank() }.joinToString("\u0001"))
+        cm.getCookie("https://$host")?.let { cookie ->
+            // "a=1; b=2" → one cookie per line, so setCookie can restore each.
+            settings.setKoraCookies(cookie.split(";").map { it.trim() }.filter { it.isNotBlank() }.joinToString("\u0001"))
+        }
+    }
+    // Some logins keep the session token in localStorage: read it from the page and save it.
+    fun saveKoraStorage(view: WebView) {
+        if (koraHost == null || view != web) return
+        view.evaluateJavascript("(function(){try{var o={};for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);o[k]=localStorage.getItem(k);}return JSON.stringify(o);}catch(e){return '';}})()") { encoded ->
+            runCatching { org.json.JSONTokener(encoded).nextValue() as? String }.getOrNull()?.takeIf { it.length > 2 }?.let { settings.setKoraStorage(it) }
+        }
     }
     val found = remember { androidx.compose.runtime.mutableStateListOf<KoraNativeStream>() }
     /** Watch servers and download pages read from the site's own page (label to address). */
@@ -375,6 +383,7 @@ fun KoraScreen(
                     if (nativeStarted) nativePaused = true
                     // Save the login before the app can be killed or updated, and write cookies to disk.
                     saveKoraCookies()
+                    view?.let { saveKoraStorage(it) }
                     CookieManager.getInstance().flush()
                 }
                 else -> Unit
@@ -481,6 +490,11 @@ fun KoraScreen(
                             super.onUnhandledKeyEvent(view, event)
                         }
                         override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                            if (kora && view == web && Uri.parse(url ?: "").host == koraHost) {
+                                settings.koraStorage.value.takeIf { it.length > 2 }?.let { blob ->
+                                    view.evaluateJavascript("(function(){try{var d=JSON.parse(" + org.json.JSONObject.quote(blob) + ");for(var k in d)localStorage.setItem(k,d[k]);}catch(e){}})()", null)
+                                }
+                            }
                             if (view == web) {
                                 loading = true
                                 error = null
@@ -491,7 +505,7 @@ fun KoraScreen(
                         }
                         override fun onPageFinished(view: WebView, url: String?) {
                             // A match page: press its «مشاهدة البث المباشر» for the user; the stream then opens in the app's player.
-                            if (kora && view == web) { view.evaluateJavascript(KORA_AUTO_WATCH, null); saveKoraCookies() }
+                            if (kora && view == web) { view.evaluateJavascript(KORA_AUTO_WATCH, null); saveKoraCookies(); saveKoraStorage(view) }
                             view.evaluateJavascript(FOLLOW_FOCUS, null)
                             if (detectVideos && view == web) scan(view, keepList = Uri.parse(url ?: "").host?.contains(siteKeyword ?: "\u0000", true) != true)
                             if (view == web) {

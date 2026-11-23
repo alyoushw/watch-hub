@@ -438,6 +438,22 @@ class SettingsStore(context: Context) {
         _koraCookies.value = value
     }
 
+    // The site's localStorage (some logins keep the session token there, not in cookies).
+    private val _koraStorage = MutableStateFlow(prefs.getString("kora_storage", "").orEmpty())
+    val koraStorage: StateFlow<String> = _koraStorage.asStateFlow()
+    val koraStorageUpdatedAt: Long get() = prefs.getLong("kora_storage_at", 0)
+    fun setKoraStorage(value: String) {
+        if (value.isBlank() || value == _koraStorage.value) return
+        prefs.edit().putString("kora_storage", value).putLong("kora_storage_at", System.currentTimeMillis()).apply()
+        _koraStorage.value = value
+        onKoraChanged?.invoke()
+    }
+    fun setKoraStorageFromCloud(value: String, at: Long) {
+        if (at <= koraStorageUpdatedAt || value.isBlank()) return
+        prefs.edit().putString("kora_storage", value).putLong("kora_storage_at", at).apply()
+        _koraStorage.value = value
+    }
+
     private val _sourceCatalogue = MutableStateFlow(prefs.getString("source_catalogue", "").orEmpty())
     val sourceCatalogue: StateFlow<String> = _sourceCatalogue.asStateFlow()
     fun setSourceCatalogue(value: String) {
