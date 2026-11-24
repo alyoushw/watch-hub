@@ -460,7 +460,13 @@ fun KoraScreen(
                             val code = event.keyCode
                             if (code == android.view.KeyEvent.KEYCODE_DPAD_UP || code == android.view.KeyEvent.KEYCODE_DPAD_DOWN) {
                                 val dir = if (code == android.view.KeyEvent.KEYCODE_DPAD_UP) -1 else 1
-                                if (view.canScrollVertically(dir) || dir > 0) {
+                                val remote = view as? RemoteWebView
+                                if (remote != null) {
+                                    if (remote.canRemoteScroll(dir)) {
+                                        if (event.action == android.view.KeyEvent.ACTION_DOWN) remote.remoteScroll(dir)
+                                        return
+                                    }
+                                } else if (view.canScrollVertically(dir) || dir > 0) {
                                     if (event.action == android.view.KeyEvent.ACTION_DOWN) view.evaluateJavascript(REMOTE_SCROLL.replace("DIR", "$dir"), null)
                                     return
                                 }
@@ -696,25 +702,56 @@ private val KORA_AUTO_WATCH = """
 
 /** TV remote: when Up/Down has no link left to move to on screen, the page scrolls instead of losing focus. */
 private class RemoteWebView(context: android.content.Context) : WebView(context) {
+    /** Where the page's own scroll box (or the page) ended up after the last remote scroll; -1 when nothing moved. */
+    private var scrolledTo = -1.0
+
+    /**
+     * Down always tries to scroll (some sites keep the page fixed and scroll an inner box instead,
+     * which [canScrollVertically] cannot see). Up scrolls while there is something above left to show,
+     * so at the very top it still lets the remote leave the page for the app's bar.
+     */
+    fun canRemoteScroll(dir: Int): Boolean = dir > 0 || canScrollVertically(-1) || scrolledTo > 8.0
+
+    fun remoteScroll(dir: Int) {
+        evaluateJavascript(REMOTE_SCROLL.replace("DIR", "$dir")) { r -> scrolledTo = r?.trim('"')?.toDoubleOrNull() ?: -1.0 }
+    }
+
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
         val code = event.keyCode
         if (code != android.view.KeyEvent.KEYCODE_DPAD_UP && code != android.view.KeyEvent.KEYCODE_DPAD_DOWN) return super.dispatchKeyEvent(event)
         if (super.dispatchKeyEvent(event)) return true
         val dir = if (code == android.view.KeyEvent.KEYCODE_DPAD_UP) -1 else 1
-        if (!canScrollVertically(dir)) return false
-        if (event.action == android.view.KeyEvent.ACTION_DOWN) {
-            evaluateJavascript(REMOTE_SCROLL.replace("DIR", "$dir"), null)
-        }
+        if (!canRemoteScroll(dir)) return false
+        if (event.action == android.view.KeyEvent.ACTION_DOWN) remoteScroll(dir)
         return true
     }
 }
 
-/** Scrolls the page (or the box that scrolls in it) by about half a screen; DIR is -1 (up) or 1 (down). */
+/**
+ * Scrolls by about half a screen; DIR is -1 (up) or 1 (down). It picks the first thing that can really
+ * still move that way: the scroll box around the focused element, then the page itself, then the
+ * biggest scroll box on screen (some sites keep the page fixed and scroll an inner box). Returns where
+ * that box is heading (its scrollTop after the move), or -1 when nothing could scroll.
+ */
 private val REMOTE_SCROLL = """
     (function(d){
-      var h=Math.round(innerHeight*0.45)*d,el=document.activeElement,box=null;
-      for(var n=el;n&&n!==document.body;n=n.parentElement){var s=getComputedStyle(n);if(/(auto|scroll)/.test(s.overflowY)&&n.scrollHeight>n.clientHeight){box=n;break;}}
-      (box||document.scrollingElement||document.body).scrollBy({top:h,behavior:'smooth'});
+      var h=Math.round(innerHeight*0.45)*d,root=document.scrollingElement||document.documentElement,t=null;
+      function movable(n){var m=n.scrollHeight-n.clientHeight;return d>0?n.scrollTop<m-1:n.scrollTop>1;}
+      function scroller(n){return /(auto|scroll|overlay)/.test(getComputedStyle(n).overflowY)&&n.scrollHeight>n.clientHeight+8;}
+      for(var n=document.activeElement;n&&n!==document.documentElement;n=n.parentElement){if(n!==root&&scroller(n)&&movable(n)){t=n;break;}}
+      if(!t&&movable(root))t=root;
+      if(!t){
+        var best=0,all=document.querySelectorAll('body *');
+        for(var i=0;i<all.length;i++){
+          var e=all[i];if(!scroller(e)||!movable(e))continue;
+          var r=e.getBoundingClientRect();
+          var v=Math.max(0,Math.min(r.bottom,innerHeight)-Math.max(r.top,0))*Math.max(0,Math.min(r.right,innerWidth)-Math.max(r.left,0));
+          if(v>best){best=v;t=e;}
+        }
+      }
+      if(!t)return -1;
+      t.scrollBy({top:h,behavior:'smooth'});
+      return Math.max(0,t.scrollTop+h);
     })(DIR);
 """.trimIndent()
 
