@@ -504,15 +504,14 @@ private fun DetailContent(
     ) {
         item {
             Header(info) {
-                if (!isAnime) {
-                    XtreamWatchButton(
-                        isSeries = info.type == MediaType.TV,
-                        tmdbId = info.id,
-                        titles = listOf(info.title, info.searchTitle),
-                        year = info.year,
-                        onOpenSeries = onOpenXtreamSeries,
-                    )
-                }
+                // Same «watch in my accounts» check for every title, anime included.
+                XtreamWatchButton(
+                    isSeries = info.type == MediaType.TV,
+                    tmdbId = info.id,
+                    titles = listOf(info.title, info.searchTitle).filter { it.isNotBlank() }.distinct(),
+                    year = info.year,
+                    onOpenSeries = onOpenXtreamSeries,
+                )
             }
         }
 
