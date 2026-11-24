@@ -687,6 +687,7 @@ fun XtreamWatchButton(
     titles: List<String>,
     year: String?,
     onOpenSeries: (String) -> Unit,
+    hideWhenEmpty: Boolean = false,
 ) {
     val container = appContainer()
     val context = LocalContext.current
@@ -752,6 +753,8 @@ fun XtreamWatchButton(
         )
     }
 
+    // On pages where a miss should stay quiet (anime), show nothing until a match is actually found.
+    if (hideWhenEmpty && matches.isEmpty()) return
     val colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Color(0xFF1C1206))
     when {
         searching -> Button(onClick = {}, enabled = false, colors = colors, modifier = Modifier.height(44.dp)) {

@@ -204,6 +204,7 @@ private fun AnimeContent(vm: AnimeDetailViewModel, anime: JAnime, onOpen: (Media
                     titles = listOfNotNull(lookup.title, lookup.searchTitle, anime.displayTitle).distinct(),
                     year = anime.year?.toString(),
                     onOpenSeries = onOpenXtreamSeries,
+                    hideWhenEmpty = true,
                 )
             }
         }

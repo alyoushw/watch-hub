@@ -267,8 +267,12 @@ private suspend fun loadFolderTree(api: XtreamApi, accounts: List<XtreamAccount>
     }
     val whole = loaded.all { (_, cats, chans) -> cats.isNotEmpty() && chans.isNotEmpty() }
     val built = withContext(Dispatchers.Default) { buildFolderTree(loaded) }
-    if (whole && built.first.isNotEmpty()) {
-        val cache = FolderCache(accountsKey(usable), System.currentTimeMillis(), built.first, built.second)
+    if (built.first.isNotEmpty()) {
+        // Keep any non-empty tree in memory AND on disk so the next cold start opens instantly. A
+        // partial result (an account was down) is stamped stale so it refreshes next time instead
+        // of being served for the whole freshness window.
+        val at = if (whole) System.currentTimeMillis() else 0L
+        val cache = FolderCache(accountsKey(usable), at, built.first, built.second)
         folderCache = cache
         withContext(Dispatchers.IO) { writeFolderDisk(cacheFile, cache) }
     }
