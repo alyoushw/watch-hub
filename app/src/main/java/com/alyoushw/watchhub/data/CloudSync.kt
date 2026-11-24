@@ -259,6 +259,67 @@ class CloudSync(
         signInWithIdToken(GoogleIdTokenCredential.createFrom(credential.data).idToken)
     }
 
+    // ---------- email + password ----------
+
+    /** Firebase's error for an email / password step, in plain Arabic. */
+    private fun emailMessage(e: Exception): String {
+        if (e is com.google.firebase.FirebaseNetworkException) return "تأكد من الإنترنت وجرّب"
+        return when ((e as? com.google.firebase.auth.FirebaseAuthException)?.errorCode) {
+            "ERROR_INVALID_EMAIL" -> "الإيميل مكتوب غلط"
+            "ERROR_WRONG_PASSWORD", "ERROR_INVALID_CREDENTIAL", "ERROR_USER_NOT_FOUND" ->
+                "الإيميل أو كلمة المرور غلط. لو سجّلت بـ Google قبل، اضغط «نسيت كلمة المرور» عشان تفعّل الدخول بكلمة مرور."
+            "ERROR_EMAIL_ALREADY_IN_USE" -> "هذا الإيميل مسجّل من قبل. اضغط «دخول»، أو «نسيت كلمة المرور» لو سجّلت بـ Google."
+            "ERROR_WEAK_PASSWORD" -> "كلمة المرور ضعيفة، اكتب ٦ أحرف على الأقل"
+            "ERROR_OPERATION_NOT_ALLOWED" -> "الدخول بالإيميل مو مفعّل في Firebase (Authentication ← Sign-in method ← Email/Password)"
+            "ERROR_TOO_MANY_REQUESTS" -> "محاولات كثيرة، انتظر شوي وجرّب"
+            "ERROR_USER_DISABLED" -> "هذا الحساب موقوف"
+            else -> "ما ضبط الدخول: ${e.message ?: "خطأ"}"
+        }
+    }
+
+    private fun emailAuth(): com.google.firebase.auth.FirebaseAuth =
+        auth ?: throw CloudException("إعدادات الحساب ما وصلت من موقعك بعد")
+
+    /** Email + password. Same account as Google when the email is the same, so the data follows you. */
+    suspend fun signInWithEmail(email: String, password: String) {
+        val mail = email.trim()
+        if (mail.isEmpty()) throw CloudException("اكتب الإيميل")
+        if (password.isEmpty()) throw CloudException("اكتب كلمة المرور")
+        try {
+            emailAuth().signInWithEmailAndPassword(mail, password).await()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.w(TAG, "email sign-in failed", e)
+            throw CloudException(emailMessage(e))
+        }
+    }
+
+    suspend fun signUpWithEmail(email: String, password: String) {
+        val mail = email.trim()
+        if (mail.isEmpty()) throw CloudException("اكتب الإيميل")
+        if (password.isEmpty()) throw CloudException("اكتب كلمة المرور")
+        try {
+            emailAuth().createUserWithEmailAndPassword(mail, password).await()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.w(TAG, "email sign-up failed", e)
+            throw CloudException(emailMessage(e))
+        }
+    }
+
+    /** Mails a link to set a new password (this also switches password sign-in on for an account that only used Google). */
+    suspend fun sendPasswordReset(email: String) {
+        val mail = email.trim()
+        if (mail.isEmpty()) throw CloudException("اكتب إيميلك أول")
+        try {
+            emailAuth().sendPasswordResetEmail(mail).await()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.w(TAG, "password reset failed", e)
+            throw CloudException(emailMessage(e))
+        }
+    }
+
     /** TV (or any device): asks the web app for a code to enter at google.com/device. */
     private fun parseObject(body: String): kotlinx.serialization.json.JsonObject? =
         runCatching { json.parseToJsonElement(body) as? kotlinx.serialization.json.JsonObject }.getOrNull()

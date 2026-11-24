@@ -82,6 +82,10 @@ deno task web   # http://localhost:8000
 2. افتح Google مرة ثانية، وتحت **Web SDK configuration** انسخ **Web client ID** ← هذا `GOOGLE_WEB_CLIENT_ID`.
 3. **Authentication ← Settings ← Authorized domains ← Add domain**: `watch-hub-ddfg.onrender.com` (رابط موقعك بدون https).
 
+**٢-ب. تسجيل الدخول بالإيميل وكلمة المرور** (اختياري، يشتغل بجانب Google وبنفس الحساب لو نفس الإيميل)
+1. **Authentication ← Sign-in method ← Email/Password ← Enable** (خلّ «Email link» مطفي) ← **Save**. بدون هالخطوة يطلع في التطبيق والموقع «الدخول بالإيميل مو مفعّل».
+2. من سجّل بـ Google وبغى كلمة مرور: يضغط «نسيت كلمة المرور» ويحط كلمة جديدة، وتتفعّل على نفس حسابه.
+
 **٣. قاعدة البيانات**
 1. **Build ← Firestore Database ← Create database** ← اختر أقرب موقع ← **Start in production mode**.
 2. تبويب **Rules** ← امسح اللي فيه والصق محتوى ملف `firestore.rules` ← **Publish**.
@@ -108,9 +112,11 @@ deno task web   # http://localhost:8000
 `FIREBASE_API_KEY`، `FIREBASE_PROJECT_ID`، `FIREBASE_APP_ID`، `FIREBASE_ANDROID_APP_ID`، `GOOGLE_WEB_CLIENT_ID`، `GOOGLE_TV_CLIENT_ID`، `GOOGLE_TV_CLIENT_SECRET` ← **Save** (يعيد النشر).
 
 ### تسجيل الدخول
-- **الموقع:** الإعدادات ← حسابك ← «سجّل دخول بـ Google» (أو «دخول برمز» إذا ما انفتحت النافذة، مثلاً من أيقونة الشاشة الرئيسية في الآيفون).
-- **الجوال:** الإعدادات ← حسابك ← «سجّل دخول بـ Google».
-- **التلفاز:** الإعدادات ← حسابك ← «سجّل دخول برمز» ← افتح `google.com/device` من جوالك واكتب الرمز اللي على الشاشة.
+في الموقع والجوال والتلفاز: الإعدادات ← حسابك، وتختار طريقة:
+- **Google:** «سجّل دخول بـ Google» (الجوال والموقع). التلفاز يستخدم الباركود أو الرمز.
+- **الباركود:** «بالباركود» يعرض رمز QR، تصوّره بجوال داخل حسابك (التطبيق أو الموقع) وتضغط «قبول» (يحتاج `FIREBASE_SERVICE_ACCOUNT` في Render).
+- **الإيميل وكلمة المرور:** «بالإيميل وكلمة المرور» ← دخول، أو حساب جديد، أو نسيت كلمة المرور (يحتاج تفعيل Email/Password في Firebase، الخطوة ٢-ب).
+- **رمز:** «دخول برمز» ← افتح `google.com/device` من جوالك واكتب الرمز (إذا ما انفتحت نافذة Google، مثلاً من أيقونة الشاشة الرئيسية في الآيفون).
 
 التطبيق ياخذ هالإعدادات من موقعك (`/config.json`)، فما يحتاج APK جديد إذا غيّرت شي فيها. إذا موقعك برابط ثاني، غيّره من «رابط موقعك» تحت قسم حسابك.
 

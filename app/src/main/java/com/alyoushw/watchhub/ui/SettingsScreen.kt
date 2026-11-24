@@ -879,7 +879,9 @@ private fun AccountSection() {
     val tv = isTv()
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
-    var showCode by remember { mutableStateOf(false) }
+    // Which code dialog is open: "qr" (a signed-in phone scans it) or "code" (google.com/device).
+    var loginDialog by remember { mutableStateOf<String?>(null) }
+    var showEmail by remember { mutableStateOf(false) }
     var editUrl by remember(webUrl) { mutableStateOf(webUrl) }
     var showUrl by remember { mutableStateOf(false) }
 
@@ -918,12 +920,13 @@ private fun AccountSection() {
             com.alyoushw.watchhub.data.CloudSync.State.SignedOut -> {
                 GuestNote(onCleared = { message = "✓ انمسحت بيانات الزائر من هذا الجهاز" })
                 Text(
-                    "سجّل دخولك بحساب Google، وكل أجهزتك (الجوال والتلفاز والموقع) تصير على نفس القائمة ونفس «تابع المشاهدة». " +
+                    "سجّل دخولك (بـ Google أو بالباركود أو بالإيميل وكلمة المرور)، وكل أجهزتك (الجوال والتلفاز والموقع) تصير على نفس القائمة ونفس «تابع المشاهدة». " +
                         "توقف حلقة في الجوال، وتكملها في التلفاز من نفس الثانية.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Every device offers the same ways in: Google, a QR code a signed-in phone approves, or email + password.
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!tv) {
                         Button(
                             modifier = Modifier.focusFrame(),
@@ -943,12 +946,14 @@ private fun AccountSection() {
                             },
                         ) { Text(if (busy) "جاري الدخول…" else "سجّل دخول بـ Google") }
                     }
-                    if (cloud.config?.deviceLogin == true || tv) {
-                        if (tv) {
-                            Button(modifier = Modifier.focusFrame(), onClick = { showCode = true }) { Text("سجّل دخول برمز") }
-                        } else {
-                            OutlinedButton(modifier = Modifier.focusFrame(), onClick = { showCode = true }) { Text("دخول برمز") }
-                        }
+                    if (cloud.config?.qrLogin == true) {
+                        if (tv) Button(modifier = Modifier.focusFrame(), onClick = { loginDialog = "qr" }) { Text("سجّل دخول بالباركود") }
+                        else OutlinedButton(modifier = Modifier.focusFrame(), onClick = { loginDialog = "qr" }) { Text("بالباركود") }
+                    }
+                    OutlinedButton(modifier = Modifier.focusFrame(), onClick = { showEmail = !showEmail }) { Text("بالإيميل وكلمة المرور") }
+                    if (showEmail) EmailLoginForm(onDone = { showEmail = false })
+                    if (cloud.config?.deviceLogin == true) {
+                        OutlinedButton(modifier = Modifier.focusFrame(), onClick = { loginDialog = "code" }) { Text("دخول برمز (google.com/device)") }
                     }
                 }
             }
@@ -996,16 +1001,70 @@ private fun AccountSection() {
         }
     }
 
-    var googleCode by remember { mutableStateOf(false) }
     val done: (Boolean) -> Unit = { ok ->
-        showCode = false
-        googleCode = false
+        loginDialog = null
         if (ok) android.widget.Toast.makeText(context, "✓ دخلت، ونزامن الحين", android.widget.Toast.LENGTH_SHORT).show()
     }
-    when {
-        // TV with "scan to sign in" set up: a QR code a signed-in phone approves.
-        showCode && !googleCode && cloud.config?.qrLogin == true && tv -> PairingDialog(onDone = done, onUseGoogleCode = { googleCode = true })
-        showCode -> DeviceLoginDialog(onDone = done)
+    when (loginDialog) {
+        // A QR code a signed-in phone (the app or the web) scans and approves.
+        "qr" -> PairingDialog(onDone = done, onUseGoogleCode = { loginDialog = "code" })
+        "code" -> DeviceLoginDialog(onDone = done)
+    }
+}
+
+/** Email + password: sign in, create an account, or get a link to set a password (also for an account that only used Google). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun EmailLoginForm(onDone: () -> Unit) {
+    val cloud = appContainer().cloud
+    val scope = rememberCoroutineScope()
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    fun run(okText: String? = null, block: suspend () -> Unit) {
+        busy = true
+        message = null
+        scope.launch {
+            try {
+                block()
+                if (okText != null) message = okText else onDone()
+            } catch (e: com.alyoushw.watchhub.data.CloudException) {
+                message = e.message
+            }
+            busy = false
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            value = email,
+            onValueChange = { email = it },
+            label = { Text("الإيميل") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().tvTextField(),
+            keyboardOptions = tvKeyboard(androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Email)),
+        )
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            label = { Text("كلمة المرور") },
+            singleLine = true,
+            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth().tvTextField(),
+            keyboardOptions = tvKeyboard(androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Password)),
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Button(modifier = Modifier.focusFrame(), enabled = !busy, onClick = { run { cloud.signInWithEmail(email, password) } }) {
+                Text(if (busy) "جاري…" else "دخول")
+            }
+            OutlinedButton(modifier = Modifier.focusFrame(), enabled = !busy, onClick = { run { cloud.signUpWithEmail(email, password) } }) { Text("حساب جديد") }
+            TextButton(
+                modifier = Modifier.focusFrame(),
+                enabled = !busy,
+                onClick = { run("✓ أرسلنا رابط كلمة المرور لإيميلك، افتحه وحدّد كلمة مرور") { cloud.sendPasswordReset(email) } },
+            ) { Text("نسيت كلمة المرور") }
+        }
+        message?.let { Text(it, color = if (it.startsWith("✓")) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error) }
     }
 }
 
@@ -1156,7 +1215,7 @@ private fun PairingDialog(onDone: (Boolean) -> Unit, onUseGoogleCode: () -> Unit
 
     AlertDialog(
         onDismissRequest = { onDone(false) },
-        title = { Text("سجّل دخول بجوالك") },
+        title = { Text("الدخول بالباركود") },
         text = {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 val p = pairing
@@ -1164,7 +1223,7 @@ private fun PairingDialog(onDone: (Boolean) -> Unit, onUseGoogleCode: () -> Unit
                     error != null -> Text(error.orEmpty(), color = MaterialTheme.colorScheme.error)
                     p == null -> CircularProgressIndicator()
                     else -> {
-                        Text("صوّر الرمز بكاميرا جوالك:", style = MaterialTheme.typography.bodyMedium)
+                        Text("صوّر الرمز بكاميرا جوال داخل حسابك:", style = MaterialTheme.typography.bodyMedium)
                         Box(Modifier.clip(RoundedCornerShape(12.dp)).background(androidx.compose.ui.graphics.Color.White).padding(10.dp)) {
                             QrCode(p.url, Modifier.size(210.dp))
                         }
