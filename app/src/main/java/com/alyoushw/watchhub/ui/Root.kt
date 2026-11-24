@@ -269,6 +269,7 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
                         id = id,
                         onBack = { nav.popBackStack() },
                         onOpen = { t, i -> nav.openDetail(t, i) },
+                        onOpenXtreamSeries = { sid -> nav.navigate("xtream/series/${Uri.encode(sid)}") },
                     )
                 } else {
                     DetailScreen(

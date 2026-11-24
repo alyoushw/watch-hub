@@ -139,7 +139,7 @@ class AnimeDetailViewModel(private val container: AppContainer, private val id: 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AnimeDetailScreen(id: Int, onBack: () -> Unit, onOpen: (MediaType, Int) -> Unit, onOpenAnime: (AnimeLookup) -> Unit = {}, onOpenSources: (SourceLookup) -> Unit = {}) {
+fun AnimeDetailScreen(id: Int, onBack: () -> Unit, onOpen: (MediaType, Int) -> Unit, onOpenAnime: (AnimeLookup) -> Unit = {}, onOpenSources: (SourceLookup) -> Unit = {}, onOpenXtreamSeries: (String) -> Unit = {}) {
     val container = appContainer()
     val vm: AnimeDetailViewModel = viewModel { AnimeDetailViewModel(container, id) }
     val anime = vm.anime
@@ -159,7 +159,7 @@ fun AnimeDetailScreen(id: Int, onBack: () -> Unit, onOpen: (MediaType, Int) -> U
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when {
-                anime != null -> AnimeContent(vm, anime, onOpen, onOpenAnime, onOpenSources)
+                anime != null -> AnimeContent(vm, anime, onOpen, onOpenAnime, onOpenSources, onOpenXtreamSeries)
                 vm.error != null -> MessageBox(vm.error.orEmpty(), actionLabel = "حاول مرة ثانية", onAction = vm::load)
                 else -> CenteredLoading()
             }
@@ -169,7 +169,7 @@ fun AnimeDetailScreen(id: Int, onBack: () -> Unit, onOpen: (MediaType, Int) -> U
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AnimeContent(vm: AnimeDetailViewModel, anime: JAnime, onOpen: (MediaType, Int) -> Unit, onOpenAnime: (AnimeLookup) -> Unit, onOpenSources: (SourceLookup) -> Unit) {
+private fun AnimeContent(vm: AnimeDetailViewModel, anime: JAnime, onOpen: (MediaType, Int) -> Unit, onOpenAnime: (AnimeLookup) -> Unit, onOpenSources: (SourceLookup) -> Unit, onOpenXtreamSeries: (String) -> Unit = {}) {
     val container = appContainer()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -193,6 +193,20 @@ private fun AnimeContent(vm: AnimeDetailViewModel, anime: JAnime, onOpen: (Media
         } }
 
         item { Column(Modifier.padding(horizontal = 16.dp)) { AnimeifyWatchButton(anime.animeLookup(), onOpenAnime, Modifier.fillMaxWidth()) } }
+
+        // Also offer the anime from the owner's IPTV accounts when it is there (matched by title).
+        item {
+            Column(Modifier.padding(horizontal = 16.dp)) {
+                val lookup = anime.animeLookup()
+                XtreamWatchButton(
+                    isSeries = !lookup.movie,
+                    tmdbId = 0,
+                    titles = listOfNotNull(lookup.title, lookup.searchTitle, anime.displayTitle).distinct(),
+                    year = anime.year?.toString(),
+                    onOpenSeries = onOpenXtreamSeries,
+                )
+            }
+        }
 
         item {
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
