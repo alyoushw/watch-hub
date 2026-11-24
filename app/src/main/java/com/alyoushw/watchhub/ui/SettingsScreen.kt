@@ -189,7 +189,8 @@ private fun SettingsHome(onOpen: (SettingsPage) -> Unit, onOpenHistory: () -> Un
     val context = LocalContext.current
     val cloudState by container.cloud.state.collectAsStateWithLifecycle()
     if (cloudState is com.alyoushw.watchhub.data.CloudSync.State.SignedIn && container.cloud.isAdmin) {
-        SettingsGroup { SettingsRow("🛡️", "لوحة المدير", "المسجلين وسجل مشاهدتهم") { onOpen(SettingsPage.ADMIN) } }
+        val open by container.cloud.openReports.collectAsStateWithLifecycle()
+        SettingsGroup { SettingsRow("🛡️", "لوحة المدير", if (open > 0) "📨 $open بلاغ جديد" else "المسجلين وسجل مشاهدتهم") { onOpen(SettingsPage.ADMIN) } }
     }
     var reporting by remember { mutableStateOf(false) }
     if (reporting) ReportDialog { reporting = false }

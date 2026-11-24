@@ -492,6 +492,10 @@ class CloudSync(
 
     // ---------- admin (the owner's account only; Firestore rules enforce it too) ----------
 
+    private val _openReports = MutableStateFlow(0)
+    /** Problem reports nobody marked «تم» yet (the owner's account only). */
+    val openReports: StateFlow<Int> = _openReports.asStateFlow()
+
     data class AdminUser(val uid: String, val email: String?, val name: String?, val lastSeen: Long, val device: String?)
 
     /** True for the owner's account. The real lock is in firestore.rules; this only shows the page. */
@@ -627,6 +631,18 @@ class CloudSync(
             if (this@CloudSync.uid != uid) return@launch
             // 2) From now on, every change from another device arrives within a second or so.
             pushStats()
+            if (isAdmin) {
+                // The owner is told inside the app when someone sends a problem report.
+                val startedAt = System.currentTimeMillis()
+                listeners += db?.collection("reports")?.whereEqualTo("done", false)?.addSnapshotListener { snap, e ->
+                    if (e != null || snap == null) return@addSnapshotListener
+                    _openReports.value = snap.size()
+                    val fresh = snap.documentChanges.count {
+                        it.type == com.google.firebase.firestore.DocumentChange.Type.ADDED && (it.document.getLong("at") ?: 0) > startedAt - 5_000
+                    }
+                    if (fresh > 0) android.widget.Toast.makeText(context, "📨 وصلك بلاغ جديد من مستخدم (لوحة المدير)", android.widget.Toast.LENGTH_LONG).show()
+                }.let { listOfNotNull(it) }.orEmpty()
+            }
             listeners += base.collection("stats").addSnapshotListener { snap, e ->
                 if (e != null || snap == null) return@addSnapshotListener
                 snap.documentChanges.forEach { change ->
