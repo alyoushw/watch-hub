@@ -100,6 +100,12 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
     val xtream by appContainer().settings.xtream.collectAsStateWithLifecycle()
     // The YouTube tab once it is switched on (Settings › يوتيوب).
     val youtube by appContainer().settings.youtubeEnabled.collectAsStateWithLifecycle()
+    // Build the live-TV folder tree quietly in the background so «المباشر» opens instantly, even
+    // though it is rarely opened; it refreshes by itself when the cached tree gets old.
+    val savedXtream by container.settings.xtreamAccounts.collectAsStateWithLifecycle()
+    androidx.compose.runtime.LaunchedEffect(savedXtream) {
+        warmFolderCache(container.xtream, savedXtream.filter { it.isComplete } + com.alyoushw.watchhub.data.FourU.account, this)
+    }
     var homeLive by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     // Live channels fill the screen: no bottom bar or side rail (TVs keep the rail for the remote).
     val fullLive = homeLive && currentRoute == Tab.HOME.route
