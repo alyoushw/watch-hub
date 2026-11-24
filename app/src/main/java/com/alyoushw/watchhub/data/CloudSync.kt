@@ -96,6 +96,13 @@ class CloudSync(
     }
 
     private val prefs = context.getSharedPreferences("cloud", Context.MODE_PRIVATE)
+
+    /** «ملخص المشاهدات»: this device's counters go to the account, and the other devices' come back. */
+    var stats: WatchStats? = null
+        set(value) {
+            field = value
+            value?.onChange = { scheduleStatsPush() }
+        }
     private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true; encodeDefaults = true }
     private val http = OkHttpClient.Builder().callTimeout(20, TimeUnit.SECONDS).build()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -196,6 +203,7 @@ class CloudSync(
         if (from == to) return
         onProfileChange?.invoke()
         history.switchProfile(from, to, discardCurrent)
+        stats?.clearRemote()
         store.switchWatchProfile(from, to, discardCurrent)
         settings.switchProfile(from, to, discardCurrent)
         prefs.edit().putString(KEY_PROFILE, to).commit()
@@ -458,6 +466,26 @@ class CloudSync(
         }
     }
 
+    // ---------- watch statistics ----------
+
+    private var statsJob: Job? = null
+
+    /** The counters change every few seconds while playing: upload at most once in a while. */
+    private fun scheduleStatsPush() {
+        if (userDoc() == null || statsJob?.isActive == true) return
+        statsJob = scope.launch {
+            delay(STATS_EVERY_MS)
+            pushStats()
+        }
+    }
+
+    private fun pushStats() {
+        val s = stats ?: return
+        val ref = userDoc()?.collection("stats")?.document(s.deviceId) ?: return
+        ref.set(mapOf("json" to s.exportMine(), "updatedAt" to System.currentTimeMillis(), "device" to deviceName))
+            .addOnFailureListener { Log.w(TAG, "stats push failed", it) }
+    }
+
     // ---------- syncing ----------
 
     private fun userDoc() = uid?.let { db?.collection("users")?.document(it) }
@@ -486,6 +514,15 @@ class CloudSync(
             }
             if (this@CloudSync.uid != uid) return@launch
             // 2) From now on, every change from another device arrives within a second or so.
+            pushStats()
+            listeners += base.collection("stats").addSnapshotListener { snap, e ->
+                if (e != null || snap == null) return@addSnapshotListener
+                snap.documentChanges.forEach { change ->
+                    val id = change.document.id
+                    if (change.type == com.google.firebase.firestore.DocumentChange.Type.REMOVED) stats?.setRemote(id, null)
+                    else stats?.setRemote(id, change.document.getString("json"))
+                }
+            }
             listeners += base.collection("history").addSnapshotListener { snap, e ->
                 if (e != null || snap == null || snap.metadata.hasPendingWrites()) return@addSnapshotListener
                 var any = false
@@ -670,7 +707,13 @@ class CloudSync(
 
     private suspend fun mergeHistory(remote: List<DocumentSnapshot>) {
         val byKey = remote.associateBy { it.getString("key") }
-        remote.forEach { applyHistoryDoc(it) }
+        // All the account's entries at once (one disk write, not one per entry).
+        history.applyRemoteBatch(remote.mapNotNull { doc ->
+            val key = doc.getString("key") ?: return@mapNotNull null
+            val at = doc.getLong("updatedAt") ?: return@mapNotNull null
+            if (doc.getBoolean("deleted") == true) Triple(key, null, at)
+            else doc.toEntry()?.let { Triple(key, it, at) }
+        })
         val base = userDoc() ?: return
         history.entries.value.forEach { e ->
             val r = byKey[e.key]
@@ -863,6 +906,7 @@ class CloudSync(
         const val APP_NAME = "watchhub"
         const val KEY_CONFIG = "config"
         const val KEY_PROFILE = "profile"
+        const val STATS_EVERY_MS = 20_000L
         const val GUEST = "guest"
         const val PROGRESS_EVERY_MS = 10_000L
     }

@@ -162,7 +162,7 @@ class WatchHistory(context: Context) {
                 durationMs = if (entry.durationMs > 0) entry.durationMs else old?.durationMs ?: 0,
                 updatedAt = System.currentTimeMillis(),
             )
-            val next = (listOf(merged) + _entries.value.filter { it.key != entry.key }).take(MAX)
+            val next = trim(listOf(merged) + _entries.value.filter { it.key != entry.key })
             _entries.value = next
             write(next)
             forgetRemoval(entry.key)
@@ -224,8 +224,54 @@ class WatchHistory(context: Context) {
             others
         } else {
             forgetRemoval(key)
-            (others + entry.copy(updatedAt = updatedAt)).sortedByDescending { it.updatedAt }.take(MAX)
+            trim((others + entry.copy(updatedAt = updatedAt)).sortedByDescending { it.updatedAt })
         }
+        _entries.value = next
+        write(next)
+        return true
+    }
+
+    /**
+     * Newest first. Live channels are the least valuable (a few days of channel surfing, or one Kora match
+     * after another, used to push every episode out of the 80 kept, and with them their «watched» marks),
+     * so they keep a small share while episodes and films keep a large one.
+     */
+    private fun trim(newestFirst: List<WatchEntry>): List<WatchEntry> {
+        var live = 0
+        var other = 0
+        return newestFirst.filter { e -> if (e.isLive) ++live <= MAX_LIVE else ++other <= MAX_OTHER }
+    }
+
+    /**
+     * Many changes from the account at once (the first meeting after signing in): the same rules as
+     * [applyRemote], but one write at the end instead of one per entry. Each change is (key, entry or null
+     * when removed, updatedAt). True when something changed.
+     */
+    @Synchronized
+    fun applyRemoteBatch(changes: List<Triple<String, WatchEntry?, Long>>): Boolean {
+        val list = _entries.value.associateBy { it.key }.toMutableMap()
+        val gone = removals()
+        var listChanged = false
+        var goneChanged = false
+        for ((key, entry, at) in changes) {
+            val local = list[key]
+            val removedHere = gone[key]
+            if (local != null && local.updatedAt >= at) continue
+            if (local == null && removedHere != null && removedHere >= at) continue
+            if (entry == null) {
+                if (local == null) continue
+                list.remove(key)
+                gone[key] = at
+                goneChanged = true
+            } else {
+                if (gone.remove(key) != null) goneChanged = true
+                list[key] = entry.copy(updatedAt = at)
+            }
+            listChanged = true
+        }
+        if (goneChanged) storeRemovals(gone)
+        if (!listChanged) return false
+        val next = trim(list.values.sortedByDescending { it.updatedAt })
         _entries.value = next
         write(next)
         return true
@@ -346,6 +392,8 @@ class WatchHistory(context: Context) {
         const val KEY_ITEMS = "items_v2"
         const val KEY_REMOVED = "removed_v2"
         const val KEY_CW_HIDDEN = "continue_hidden_v1"
-        const val MAX = 80
+        // Live channels and everything else are limited separately (see trim).
+        const val MAX_LIVE = 25
+        const val MAX_OTHER = 600
     }
 }
