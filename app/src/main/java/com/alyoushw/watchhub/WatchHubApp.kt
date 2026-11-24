@@ -25,6 +25,8 @@ class AppContainer(context: Context) {
     // Saudi Arabia always: the region choice was removed from Settings.
     val settings = SettingsStore(context).also { if (it.region.value != "SA") it.setRegion("SA") }
     val store = LocalStore(File(context.filesDir, "watchhub.json"))
+    // The built «المباشر» folder tree, kept on disk so it opens instantly even days later.
+    val liveFolderCache = File(context.filesDir, "live_folders.json")
     val api = TmdbApi(settings)
     val links = DirectLinks()
     val jikan = JikanApi()

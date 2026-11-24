@@ -134,6 +134,7 @@ private val FolderHints = listOf(
 )
 
 /** A channel and the account it comes from (search runs over every account). */
+@kotlinx.serialization.Serializable
 data class LiveHit(val channel: XtreamItem, val account: XtreamAccount) {
     val key get() = "${account.id}:${channel.id}"
 }

@@ -104,7 +104,7 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
     // though it is rarely opened; it refreshes by itself when the cached tree gets old.
     val savedXtream by container.settings.xtreamAccounts.collectAsStateWithLifecycle()
     androidx.compose.runtime.LaunchedEffect(savedXtream) {
-        warmFolderCache(container.xtream, savedXtream.filter { it.isComplete } + com.alyoushw.watchhub.data.FourU.account, this)
+        warmFolderCache(container.xtream, savedXtream.filter { it.isComplete } + com.alyoushw.watchhub.data.FourU.account, this, container.liveFolderCache)
     }
     var homeLive by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     // Live channels fill the screen: no bottom bar or side rail (TVs keep the rail for the remote).

@@ -280,9 +280,20 @@ class WatchHistory(context: Context) {
     /** Series/films the user dropped from "تابع المشاهدة": group key → when hidden. */
     val continueHidden: StateFlow<Map<String, Long>> = _continueHidden.asStateFlow()
 
-    /** One key per series (so all its episodes share it), else the entry's own key. */
-    private fun continueGroupKey(e: WatchEntry): String =
-        if (e.isEpisode && e.seriesId != null) "${e.accountId}:${e.seriesId}" else e.key
+    /**
+     * One key per film or series, independent of the source/account, so «تابع المشاهدة» shows a
+     * single card however many providers it was watched on. Based on the TMDB id when known, else
+     * the normalized title; falls back to the entry's own key when neither is usable.
+     */
+    private fun continueGroupKey(e: WatchEntry): String {
+        val base = when {
+            e.isEpisode -> "tv"
+            e.kind == WatchEntry.MOVIE -> "movie"
+            else -> return e.key
+        }
+        val id = e.tmdbId?.toString() ?: XtreamApi.normalizeTitle(e.title).ifBlank { return e.key }
+        return "$base:$id"
+    }
 
     /**
      * Drops the whole series (or film) from "تابع المشاهدة" without touching the watch history, so
@@ -313,14 +324,17 @@ class WatchHistory(context: Context) {
         prefs.edit().putString(KEY_CW_HIDDEN, json.encodeToString(removalsSerializer, kept)).commit()
     }
 
-    /** For the "تابع المشاهدة" row: one card per series (its latest episode), finished films left out. */
+    /**
+     * For the "تابع المشاهدة" row: one card per film or series, no matter how many sources/accounts
+     * it was watched on (the most recently watched spot wins), with finished films left out.
+     */
     fun continueList(): List<WatchEntry> {
         val hidden = _continueHidden.value
-        val seenSeries = mutableSetOf<String>()
+        val seen = mutableSetOf<String>()
         return _entries.value.filter { e ->
             val keep = when {
-                e.isEpisode && e.seriesId != null -> seenSeries.add("${e.accountId}:${e.seriesId}")
-                e.kind == WatchEntry.MOVIE -> !e.finished
+                e.isEpisode -> seen.add(continueGroupKey(e))
+                e.kind == WatchEntry.MOVIE -> !e.finished && seen.add(continueGroupKey(e))
                 else -> true
             }
             // Hidden stays hidden until something newer than the moment it was hidden is watched.

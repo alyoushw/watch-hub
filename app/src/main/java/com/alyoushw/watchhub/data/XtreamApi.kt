@@ -136,6 +136,7 @@ data class XtreamAccountInfo(
 )
 
 /** The three kinds of content an Xtream Codes account has. */
+@kotlinx.serialization.Serializable
 enum class XtreamKind(val label: String, val categoriesAction: String, val listAction: String, val pathSegment: String) {
     LIVE("مباشر", "get_live_categories", "get_live_streams", "live"),
     MOVIE("الأفلام", "get_vod_categories", "get_vod_streams", "movie"),
@@ -145,6 +146,7 @@ enum class XtreamKind(val label: String, val categoriesAction: String, val listA
 data class XtreamCategory(val id: String, val name: String)
 
 /** A channel, a film or a series in the account. */
+@kotlinx.serialization.Serializable
 data class XtreamItem(
     val kind: XtreamKind,
     val id: String,
