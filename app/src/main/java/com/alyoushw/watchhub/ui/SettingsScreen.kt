@@ -94,7 +94,7 @@ private enum class SettingsPage(val title: String) {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onOpenXtream: () -> Unit = {}, onOpenHistory: () -> Unit = {}) {
+fun SettingsScreen(onOpenXtream: () -> Unit = {}, onOpenHistory: () -> Unit = {}, onOpenTitle: (com.alyoushw.watchhub.data.MediaType, Int) -> Unit = { _, _ -> }) {
     val container = appContainer()
     var page by rememberSaveable { mutableStateOf<SettingsPage?>(null) }
     androidx.activity.compose.BackHandler(enabled = page != null) { page = null }
@@ -126,7 +126,7 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}, onOpenHistory: () -> Unit = {}
             when (page) {
                 null -> SettingsHome(onOpen = { page = it }, onOpenHistory = onOpenHistory)
                 SettingsPage.ACCOUNT -> AccountSection()
-                SettingsPage.ADMIN -> AdminSection()
+                SettingsPage.ADMIN -> AdminSection(onOpenTitle)
                 SettingsPage.IPTV -> {
                     XtreamSection(onOpenXtream)
                     ChannelFoldersSection()

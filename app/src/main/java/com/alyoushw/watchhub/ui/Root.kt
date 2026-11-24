@@ -232,7 +232,7 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
                 KoraScreen(homeUrl = resolved, kora = true, autoLogin = autoLogin, onBack = { nav.switchTab(Tab.HOME.route) })
             }
             composable(Tab.YOUTUBE.route) { YouTubeLauncher() }
-            composable(Tab.SETTINGS.route) { SettingsScreen(onOpenXtream = { nav.switchTab(Tab.XTREAM.route) }, onOpenHistory = { nav.navigate("watch-history") }) }
+            composable(Tab.SETTINGS.route) { SettingsScreen(onOpenXtream = { nav.switchTab(Tab.XTREAM.route) }, onOpenHistory = { nav.navigate("watch-history") }, onOpenTitle = { t, i -> nav.openDetail(t, i) }) }
             composable("watch-history") { WatchHistoryScreen(onBack = { nav.popBackStack() }) }
             composable(Tab.XTREAM.route) {
                 XtreamScreen(

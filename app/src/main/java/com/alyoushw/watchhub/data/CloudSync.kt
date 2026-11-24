@@ -496,7 +496,7 @@ class CloudSync(
     /** Problem reports nobody marked «تم» yet (the owner's account only). */
     val openReports: StateFlow<Int> = _openReports.asStateFlow()
 
-    data class AdminUser(val uid: String, val email: String?, val name: String?, val lastSeen: Long, val device: String?)
+    data class AdminUser(val uid: String, val email: String?, val name: String?, val lastSeen: Long, val device: String?, val photo: String? = null)
 
     /** True for the owner's account. The real lock is in firestore.rules; this only shows the page. */
     val isAdmin: Boolean
@@ -507,7 +507,7 @@ class CloudSync(
         val docs = db?.collection("users")?.get()?.await()?.documents.orEmpty()
         return docs.mapNotNull { d ->
             if (d.getString("email") == null && d.getLong("lastSeen") == null) return@mapNotNull null
-            AdminUser(d.id, d.getString("email"), d.getString("name"), d.getLong("lastSeen") ?: 0, d.getString("device"))
+            AdminUser(d.id, d.getString("email"), d.getString("name"), d.getLong("lastSeen") ?: 0, d.getString("device"), d.getString("photo"))
         }.sortedByDescending { it.lastSeen }
     }
 
@@ -600,7 +600,7 @@ class CloudSync(
     private fun pushProfile(base: com.google.firebase.firestore.DocumentReference) {
         val u = auth?.currentUser ?: return
         base.set(
-            mapOf("email" to u.email, "name" to u.displayName, "lastSeen" to System.currentTimeMillis(), "device" to deviceName),
+            mapOf("email" to u.email, "name" to u.displayName, "lastSeen" to System.currentTimeMillis(), "device" to deviceName, "photo" to u.photoUrl?.toString()),
             SetOptions.merge(),
         ).addOnFailureListener { Log.w(TAG, "profile push failed", it) }
     }
