@@ -82,6 +82,8 @@ fun KoraScreen(
 ) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
+    // Lets a right-press at the page's edge leave the web view for the side tab rail (TV remote).
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val scope = rememberCoroutineScope()
     val probe = remember { StreamProbe() }
     val attemptedStreams = remember { mutableSetOf<KoraNativeStream>() }
@@ -462,6 +464,12 @@ fun KoraScreen(
                                     if (event.action == android.view.KeyEvent.ACTION_DOWN) view.evaluateJavascript(REMOTE_SCROLL.replace("DIR", "$dir"), null)
                                     return
                                 }
+                            }
+                            // Nothing left to move to on the right of the page: hand the remote to the
+                            // app's side tab rail, so the user no longer has to press back to reach it.
+                            if (code == android.view.KeyEvent.KEYCODE_DPAD_RIGHT && event.action == android.view.KeyEvent.ACTION_DOWN) {
+                                focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Right)
+                                return
                             }
                             super.onUnhandledKeyEvent(view, event)
                         }
