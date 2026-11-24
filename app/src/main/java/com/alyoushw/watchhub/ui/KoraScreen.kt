@@ -519,10 +519,10 @@ fun KoraScreen(
                             return true
                         }
                         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-                            // Kora tab: advert networks get an empty answer, so their videos never show.
-                            if (kora && KoraNativeStream.isAd(request)) {
-                                return WebResourceResponse("text/plain", "utf-8", 204, "No Content", emptyMap(), java.io.ByteArrayInputStream(ByteArray(0)))
-                            }
+                            // The match site now only unlocks a working stream after its short ad runs
+                            // (blocking it left a dead/black feed), so the Kora tab lets the ad load —
+                            // like a normal browser — and the stream then plays. JS-opened popup
+                            // windows stay blocked by the web settings.
                             (KoraNativeStream.from(request) ?: if (kora) KoraNativeStream.liveFromAnyPlayer(request) else null)
                                 ?.let { stream -> view.post { openNative(view, stream) } }
                             if (detectVideos) KoraNativeStream.anySite(request)?.let { stream ->
