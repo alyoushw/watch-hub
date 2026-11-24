@@ -1646,7 +1646,9 @@ function signInPanelHtml() {
     </div>
     <form data-si="form" style="display:none;gap:10px" autocomplete="on">
       <div class="field"><label>الإيميل</label><input class="input" type="email" name="email" autocomplete="username" inputmode="email" dir="ltr"></div>
-      <div class="field"><label>كلمة المرور</label><input class="input" type="password" name="password" autocomplete="current-password" dir="ltr"></div>
+      <div class="field"><label>كلمة المرور</label>
+        <div style="display:flex;gap:8px;align-items:center"><input class="input" type="password" name="password" autocomplete="current-password" dir="ltr" style="flex:1">
+          <button class="btn ghost small" type="button" data-si="eye" title="أظهر كلمة المرور" aria-label="أظهر كلمة المرور" style="opacity:.55">👁</button></div></div>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         <button class="btn" type="submit">دخول</button>
         <button class="btn ghost" type="button" data-si="signup">حساب جديد</button>
@@ -1692,6 +1694,12 @@ function bindSignInPanel(root, afterSignIn = async () => {}) {
     e.preventDefault();
     const [email, password] = creds();
     run(() => cloud.signInWithEmail(email, password));
+  });
+  part("eye").addEventListener("click", () => {
+    const box = form.querySelector('input[name="password"]');
+    const show = box.type === "password";
+    box.type = show ? "text" : "password";
+    part("eye").style.opacity = show ? "1" : ".55";
   });
   part("signup").addEventListener("click", () => {
     const [email, password] = creds();

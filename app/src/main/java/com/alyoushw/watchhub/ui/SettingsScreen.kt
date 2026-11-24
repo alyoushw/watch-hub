@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.border
@@ -1020,6 +1021,7 @@ private fun EmailLoginForm(onDone: () -> Unit) {
     val scope = rememberCoroutineScope()
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     fun run(okText: String? = null, block: suspend () -> Unit) {
@@ -1049,7 +1051,14 @@ private fun EmailLoginForm(onDone: () -> Unit) {
             onValueChange = { password = it },
             label = { Text("كلمة المرور") },
             singleLine = true,
-            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+            visualTransformation = if (showPassword) androidx.compose.ui.text.input.VisualTransformation.None
+            else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+            // The eye shows the password so it can be checked while typing (no eye icon in the icon set we use).
+            trailingIcon = {
+                IconButton(modifier = Modifier.focusFrame(CircleShape), onClick = { showPassword = !showPassword }) {
+                    Text("👁", fontSize = 20.sp, modifier = Modifier.alpha(if (showPassword) 1f else 0.45f))
+                }
+            },
             modifier = Modifier.fillMaxWidth().tvTextField(),
             keyboardOptions = tvKeyboard(androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Password)),
         )

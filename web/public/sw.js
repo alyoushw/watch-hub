@@ -1,9 +1,9 @@
 // Keeps Watch Hub's own files on the device, so the app opens at once even while the free
 // server is still waking up (instead of the host's loading page). Files are refreshed in the
 // background on every visit; a reply that is not ours (e.g. the host's wake-up page) is ignored.
-const CACHE = "watchhub-v26";
+const CACHE = "watchhub-v27";
 const SHELL = ["./", "index.html", "styles.css", "js/app.js", "js/store.js", "js/tmdb.js", "js/xtream.js", "js/player.js", "js/cloud.js", "js/smart.js", "js/translate.js", "js/foryou.js", "js/fouru.js", "js/features.js", "js/sources.js", "js/downloads.js", "js/qr.js",
-  "manifest.webmanifest", "icon.svg", "icon-180.png", "icon-512.png"].map((path) => /\.(js|css)$/.test(path) ? `${path}?v=${["js/app.js", "js/cloud.js", "js/qr.js"].includes(path) ? "20261125a" : "20261118d"}` : path);
+  "manifest.webmanifest", "icon.svg", "icon-180.png", "icon-512.png"].map((path) => /\.(js|css)$/.test(path) ? `${path}?v=${path === "js/app.js" ? "20261125b" : ["js/cloud.js", "js/qr.js"].includes(path) ? "20261125a" : "20261118d"}` : path);
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).catch(() => {}).then(() => self.skipWaiting()));
