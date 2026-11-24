@@ -54,6 +54,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -310,6 +311,9 @@ fun TitleRow(
     onSeeAll: (() -> Unit)? = null,
     onOpen: (SearchResult) -> Unit,
 ) {
+    // TV: «عرض الكل» sits at the end of the row instead of the heading, so it can only be reached sideways
+    // and never steals «up» / «down» from the cards (it made the remote jump to it from some columns only).
+    val seeAllInRow = isTv()
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
             Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
@@ -323,7 +327,7 @@ fun TitleRow(
                     Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            if (onSeeAll != null) {
+            if (onSeeAll != null && !seeAllInRow) {
                 TextButton(modifier = Modifier.focusFrame(), onClick = onSeeAll) { Text("عرض الكل") }
             }
         }
@@ -336,6 +340,13 @@ fun TitleRow(
                     BackdropCard(item) { onOpen(item) }
                 } else {
                     PosterCard(item, rank = if (ranked) index + 1 else null) { onOpen(item) }
+                }
+            }
+            if (onSeeAll != null && seeAllInRow) {
+                item(key = "see-all") {
+                    Box(Modifier.height(if (wide) 120.dp else 200.dp).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+                        OutlinedButton(modifier = Modifier.focusFrame(), onClick = onSeeAll) { Text("عرض الكل") }
+                    }
                 }
             }
         }

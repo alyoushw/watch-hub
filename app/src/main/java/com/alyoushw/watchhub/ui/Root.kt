@@ -35,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -76,6 +77,7 @@ private fun NavHostController.switchTab(route: String) = navigate(route) {
     launchSingleTop = true
 }
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
     val container = appContainer()
@@ -158,7 +160,11 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
             NavigationRail(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 tabs.forEach { tab ->
                     NavigationRailItem(
-                    modifier = Modifier.focusFrame(),
+                    modifier = Modifier
+                        // On the home page «left» from the rail's first item goes to the home tabs (the chosen
+                        // one), not to whichever banner button happens to be nearest.
+                        .then(if (tab == Tab.HOME && currentRoute == Tab.HOME.route) Modifier.focusProperties { left = HomeTabsFocus } else Modifier)
+                        .focusFrame(),
                         selected = currentRoute == tab.route,
                         onClick = { nav.switchTab(tab.route) },
                         icon = { Icon(tab.icon, contentDescription = null) },

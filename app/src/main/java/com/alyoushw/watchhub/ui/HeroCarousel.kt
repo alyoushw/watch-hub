@@ -71,6 +71,12 @@ import com.alyoushw.watchhub.data.countryLabel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+/**
+ * The chosen tab of the home bar (مباشر · مسلسلات · أفلام · أنمي). One shared requester so the side rail's
+ * first item, the banner and the rows can all send the remote to exactly that tab.
+ */
+internal val HomeTabsFocus = androidx.compose.ui.focus.FocusRequester()
+
 /** Tabs drawn over the hero: text with a gold underline on the selected one. */
 @Composable
 fun HeroTabs(
@@ -81,6 +87,11 @@ fun HeroTabs(
     onLive: (() -> Unit)? = null,
     /** Attached to the chosen tab, so the remote's «up» from the banner or the rows lands exactly on it. */
     selectedFocus: androidx.compose.ui.focus.FocusRequester? = null,
+    /**
+     * TV: set when OK is pressed on a tab. Choosing a tab rebuilds the page under it, which dropped the
+     * remote's focus to the side rail; the chosen tab asks for the focus back once it exists again.
+     */
+    restoreFocus: androidx.compose.runtime.MutableState<Boolean>? = null,
 ) {
     val narrow = LocalConfiguration.current.screenWidthDp < 600
     Row(
@@ -106,6 +117,15 @@ fun HeroTabs(
             ) {
                 entries.forEach { (type, label) ->
                     val on = if (type == null) live else !live && type == selected
+                    if (on && restoreFocus != null && selectedFocus != null) {
+                        androidx.compose.runtime.LaunchedEffect(restoreFocus.value) {
+                            if (restoreFocus.value) {
+                                delay(80) // the new page is built; the chosen tab exists again
+                                runCatching { selectedFocus.requestFocus() }
+                                restoreFocus.value = false
+                            }
+                        }
+                    }
                     Text(
                         label,
                         color = if (on) Color(0xFF1C1206) else Color.White.copy(alpha = 0.85f),
@@ -119,7 +139,10 @@ fun HeroTabs(
                             .focusFrame(CircleShape)
                             .clip(CircleShape)
                             .background(if (on) Gold else Color.Transparent)
-                            .clickable { if (type == null) onLive?.invoke() else onSelect(type) }
+                            .clickable {
+                                restoreFocus?.value = true
+                                if (type == null) onLive?.invoke() else onSelect(type)
+                            }
                             .padding(horizontal = if (narrow) 13.dp else 16.dp, vertical = 6.dp),
                     )
                 }

@@ -442,8 +442,11 @@ fun HomeScreen(
         MediaType.MOVIE -> setOf(WatchEntry.MOVIE, WatchEntry.ANIME)
         else -> setOf(WatchEntry.ANIME)
     }
-    // The chosen tab, so the remote's «up» from the banner / first row lands exactly on it.
-    val tabFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    // The chosen tab, so the remote's «up» from the banner / first row (and «left» from the side rail's
+    // first item) lands exactly on it.
+    val tabFocus = HomeTabsFocus
+    // TV: after OK on a tab the page is rebuilt; keep the remote on that tab instead of the side rail.
+    val restoreTabFocus = remember { mutableStateOf(false) }
     val header: @Composable () -> Unit = {
         HeroTabs(
             selected = vm.type,
@@ -452,6 +455,7 @@ fun HomeScreen(
             live = live,
             onLive = { live = true },
             selectedFocus = tabFocus,
+            restoreFocus = if (isTv()) restoreTabFocus else null,
         )
     }
     // A sideways swipe on empty space moves to the next tab (مباشر · مسلسلات · أفلام · أنمي), so

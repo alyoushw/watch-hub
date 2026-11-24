@@ -163,7 +163,8 @@ fun AnimeUpdatesRow(vm: AnimeUpdatesViewModel, currentlyAiring: Boolean, onOpen:
                 Text(if (currentlyAiring) "أعمال جارية من أنمي فاي · رقم آخر حلقة متاحة" else "آخر تحديثات أنمي فاي · أرقام الحلقات المنشورة",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            TextButton(onClick = { expanded = true }, modifier = Modifier.focusFrame()) { Text("عرض الكل") }
+            // TV: «عرض الكل» sits at the end of the row (sideways only), so it never steals up / down from the cards.
+            if (!isTv()) TextButton(onClick = { expanded = true }, modifier = Modifier.focusFrame()) { Text("عرض الكل") }
         }
         if (loading && data.isEmpty()) CircularProgressIndicator(Modifier.padding(horizontal = 16.dp).size(24.dp), color = Gold)
         if (error != null) Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -175,6 +176,11 @@ fun AnimeUpdatesRow(vm: AnimeUpdatesViewModel, currentlyAiring: Boolean, onOpen:
             items(data.take(20), key = { "${it.title.id}:${it.episode.number}" }) { update ->
                 AnimeUpdateCard(update, currentlyAiring, Modifier.width(if (isTv()) 176.dp else 148.dp),
                     onClick = { choose(update, false) }, onLongClick = { choose(update, true) })
+            }
+            if (isTv() && data.isNotEmpty()) item(key = "see-all") {
+                Box(Modifier.height(260.dp).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+                    OutlinedButton(onClick = { expanded = true }, modifier = Modifier.focusFrame()) { Text("عرض الكل") }
+                }
             }
         }
     }
