@@ -471,6 +471,13 @@ fun KoraScreen(
                                     return
                                 }
                             }
+                            // OK on a dialog button the remote moved onto (a plain element the page never made
+                            // clickable by keyboard): press it for the user.
+                            if ((code == android.view.KeyEvent.KEYCODE_DPAD_CENTER || code == android.view.KeyEvent.KEYCODE_ENTER ||
+                                    code == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER)) {
+                                if (event.action == android.view.KeyEvent.ACTION_DOWN) view.evaluateJavascript(REMOTE_CLICK, null)
+                                return
+                            }
                             // Nothing left to move to on the right of the page: hand the remote to the
                             // app's side tab rail, so the user no longer has to press back to reach it.
                             if (code == android.view.KeyEvent.KEYCODE_DPAD_RIGHT && event.action == android.view.KeyEvent.ACTION_DOWN) {
@@ -727,6 +734,9 @@ private class RemoteWebView(context: android.content.Context) : WebView(context)
     }
 }
 
+/** Presses the element the remote moved onto inside a dialog (marked by REMOTE_SCROLL), if there is one. */
+private val REMOTE_CLICK = "(function(){var a=document.activeElement;if(a&&a.getAttribute&&a.getAttribute('data-wh')==='1'){a.click();return 1;}return 0;})();"
+
 /**
  * Scrolls by about half a screen; DIR is -1 (up) or 1 (down). It picks the first thing that can really
  * still move that way: the scroll box around the focused element, then the page itself, then the
@@ -736,6 +746,42 @@ private class RemoteWebView(context: android.content.Context) : WebView(context)
 private val REMOTE_SCROLL = """
     (function(d){
       var h=Math.round(innerHeight*0.45)*d,root=document.scrollingElement||document.documentElement,t=null;
+      function vis(e){var r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden';}
+      // A dialog open above the page (ad gate, server picker…): Up/Down walks ITS buttons, never the page behind.
+      var ov=null,dl=document.querySelectorAll('dialog[open],[role=dialog],[aria-modal=true]');
+      for(var k=0;k<dl.length;k++){if(vis(dl[k]))ov=dl[k];}
+      if(!ov){
+        var c=document.elementFromPoint(innerWidth/2,innerHeight/2);
+        for(var q=c;q&&q!==document.body&&q!==document.documentElement;q=q.parentElement){
+          var cs0=getComputedStyle(q);
+          if(cs0.position==='fixed'&&(parseInt(cs0.zIndex,10)||0)>=10)ov=q;
+        }
+      }
+      if(ov){
+        var items=[],all=ov.querySelectorAll('*');
+        for(var i=0;i<all.length;i++){
+          var e=all[i];
+          if(!vis(e)||e.disabled)continue;
+          var tg=e.tagName,cs=getComputedStyle(e);
+          var nat=/^(BUTTON|INPUT|SELECT|TEXTAREA)${'$'}/.test(tg)||(tg==='A'&&e.hasAttribute('href'))||(e.hasAttribute('tabindex')&&e.tabIndex>=0)||e.getAttribute('role')==='button';
+          var ptr=cs.cursor==='pointer'&&e.parentElement&&getComputedStyle(e.parentElement).cursor!=='pointer';
+          if(nat||ptr)items.push(e);
+        }
+        if(items.length){
+          var act=document.activeElement,cur=-1;
+          for(var j=0;j<items.length;j++){if(items[j]===act||items[j].contains(act))cur=j;}
+          var nx=cur<0?(d>0?0:items.length-1):cur+d;
+          if(nx<0||nx>=items.length)return cur>0?1000000:0;
+          var el=items[nx];
+          if(!el.hasAttribute('tabindex'))el.setAttribute('tabindex','0');
+          el.setAttribute('data-wh','1');
+          el.style.outline='3px solid #e8a33d';el.style.outlineOffset='2px';
+          el.addEventListener('blur',function(ev){ev.target.style.outline='';},{once:true});
+          el.focus();
+          el.scrollIntoView({block:'nearest'});
+          return nx>0?1000000:0;
+        }
+      }
       function movable(n){var m=n.scrollHeight-n.clientHeight;return d>0?n.scrollTop<m-1:n.scrollTop>1;}
       function scroller(n){return /(auto|scroll|overlay)/.test(getComputedStyle(n).overflowY)&&n.scrollHeight>n.clientHeight+8;}
       for(var n=document.activeElement;n&&n!==document.documentElement;n=n.parentElement){if(n!==root&&scroller(n)&&movable(n)){t=n;break;}}
