@@ -152,6 +152,7 @@ fun AnimeUpdatesRow(vm: AnimeUpdatesViewModel, currentlyAiring: Boolean, onOpen:
     val error = if (currentlyAiring) vm.airingError else vm.latestError
     val moreLoading = if (currentlyAiring) vm.airingMoreLoading else vm.latestMoreLoading
     val hasMore = if (currentlyAiring) vm.airingHasMore else vm.latestHasMore
+    val tvRow = isTv()
     var expanded by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<AnimeifyUpdate?>(null) }
     var showDetails by remember { mutableStateOf(false) }
@@ -164,7 +165,7 @@ fun AnimeUpdatesRow(vm: AnimeUpdatesViewModel, currentlyAiring: Boolean, onOpen:
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             // TV: «عرض الكل» sits at the end of the row (sideways only), so it never steals up / down from the cards.
-            if (!isTv()) TextButton(onClick = { expanded = true }, modifier = Modifier.focusFrame()) { Text("عرض الكل") }
+            if (!tvRow) TextButton(onClick = { expanded = true }, modifier = Modifier.focusFrame()) { Text("عرض الكل") }
         }
         if (loading && data.isEmpty()) CircularProgressIndicator(Modifier.padding(horizontal = 16.dp).size(24.dp), color = Gold)
         if (error != null) Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -177,7 +178,7 @@ fun AnimeUpdatesRow(vm: AnimeUpdatesViewModel, currentlyAiring: Boolean, onOpen:
                 AnimeUpdateCard(update, currentlyAiring, Modifier.width(if (isTv()) 176.dp else 148.dp),
                     onClick = { choose(update, false) }, onLongClick = { choose(update, true) })
             }
-            if (isTv() && data.isNotEmpty()) item(key = "see-all") {
+            if (tvRow && data.isNotEmpty()) item(key = "see-all") {
                 Box(Modifier.height(260.dp).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
                     OutlinedButton(onClick = { expanded = true }, modifier = Modifier.focusFrame()) { Text("عرض الكل") }
                 }
