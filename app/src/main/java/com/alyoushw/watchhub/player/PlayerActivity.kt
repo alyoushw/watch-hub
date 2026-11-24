@@ -66,6 +66,7 @@ class PlayerActivity : ComponentActivity() {
     private var queue: List<QueueItem> = emptyList()
     private var position = 0
     private var urlIndex = 0
+    private val reportCtx = androidx.compose.runtime.mutableStateOf<com.alyoushw.watchhub.ui.ReportContext?>(null)
     private var resolveJob: Job? = null
     private var activeSourceUri: String? = null
     @Volatile private var sourceHttpHeaders: Pair<String, Map<String, String>>? = null
@@ -313,6 +314,17 @@ class PlayerActivity : ComponentActivity() {
                     onAttachSubtitleFile = ::attachSubtitleFile,
                     onDismissSlow = { session.slowNet = null },
                     onPlayNow = ::playNowAfterPreload,
+                    onReport = { info ->
+                        val e = entry
+                        if (e != null) {
+                            val sec = player.currentPosition / 1000
+                            val base = com.alyoushw.watchhub.ui.reportContextFor(e, "المشغّل")
+                            val details = info?.rows?.joinToString("، ") { (k, v) -> "$k $v" }.orEmpty()
+                            reportCtx.value = base.copy(place = base.place + " · عند %d:%02d".format(sec / 60, sec % 60) +
+                                (if (details.isNotBlank()) " · $details" else "") +
+                                (current?.urls?.getOrNull(urlIndex)?.let { u -> " · " + (runCatching { android.net.Uri.parse(u).host }.getOrNull() ?: "") }.orEmpty()))
+                        }
+                    },
                     castButton = phoneCast?.let { controller ->
                         val button: @Composable () -> Unit = { PhoneCastButton(controller) }
                         button
@@ -326,6 +338,7 @@ class PlayerActivity : ComponentActivity() {
                     },
                 )
                 phoneCast?.let { PhoneCastPanel(it) }
+                reportCtx.value?.let { c -> com.alyoushw.watchhub.ui.ReportDialog(c) { reportCtx.value = null } }
                 }
             }
             }

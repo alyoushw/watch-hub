@@ -896,6 +896,8 @@ fun ContinueWatchingRow(
     val entries by container.history.entries.collectAsStateWithLifecycle()
     val hidden by container.history.continueHidden.collectAsStateWithLifecycle()
     var menuFor by remember { mutableStateOf<WatchEntry?>(null) }
+    var reportFor by remember { mutableStateOf<WatchEntry?>(null) }
+    reportFor?.let { ReportDialog(reportContextFor(it)) { reportFor = null } }
     var streamShare by remember { mutableStateOf<Pair<String, String>?>(null) }
     streamShare?.let { (t, u) -> StreamShareDialog(t, u) { streamShare = null } }
     val list = remember(entries, hidden, accounts, kinds, animeMovies) {
@@ -1027,6 +1029,10 @@ fun ContinueWatchingRow(
                             },
                         ) { Text("↗ مشاركة") }
                     }
+                    OutlinedButton(
+                        modifier = Modifier.fillMaxWidth().focusFrame(),
+                        onClick = { menuFor = null; reportFor = e },
+                    ) { Text("📨 أرسل مشكلة عن هذا العمل") }
                     OutlinedButton(
                         modifier = Modifier.fillMaxWidth().focusFrame(),
                         onClick = {

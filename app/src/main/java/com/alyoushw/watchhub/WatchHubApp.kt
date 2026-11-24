@@ -21,6 +21,8 @@ import java.io.File
 /** Simple manual dependency container shared by the whole app. */
 class AppContainer(context: Context) {
     // One pending request from a Watch Next card; consumed after navigation.
+    // A tap on the owner's «بلاغ جديد» notification: open the admin page.
+    val openAdmin = kotlinx.coroutines.flow.MutableStateFlow(false)
     val watchNextRequest = kotlinx.coroutines.flow.MutableStateFlow<Pair<MediaType, Int>?>(null)
     // Saudi Arabia always: the region choice was removed from Settings.
     val settings = SettingsStore(context).also { if (it.region.value != "SA") it.setRegion("SA") }
@@ -128,5 +130,6 @@ class WatchHubApp : Application() {
         container.cloud.start()
         runCatching { container.updater.scheduleBackgroundChecks() }
         runCatching { com.alyoushw.watchhub.data.NewEpisodesWorker.schedule(this) }
+        runCatching { com.alyoushw.watchhub.data.AdminReportsWorker.schedule(this) }
     }
 }

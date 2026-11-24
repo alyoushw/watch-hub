@@ -203,6 +203,7 @@ class CloudSync(
         if (from == to) return
         onProfileChange?.invoke()
         history.switchProfile(from, to, discardCurrent)
+        stats?.switchProfile(from, to)
         stats?.clearRemote()
         store.switchWatchProfile(from, to, discardCurrent)
         settings.switchProfile(from, to, discardCurrent)
@@ -565,7 +566,8 @@ class CloudSync(
     // ---- problem reports (anyone signed in sends; only the owner reads)
 
     data class Report(val id: String, val uid: String, val email: String?, val name: String?, val text: String,
-        val problem: String?, val device: String?, val version: String?, val at: Long, val done: Boolean)
+        val problem: String?, val device: String?, val version: String?, val at: Long, val done: Boolean,
+        val place: String? = null, val targetType: String? = null, val targetId: Int? = null)
 
     /** The last playback failure on this device, attached to the next report so nobody has to describe it. */
     fun noteProblem(text: String) {
@@ -577,7 +579,7 @@ class CloudSync(
         return prefs.getString("last_problem", null)?.takeIf { System.currentTimeMillis() - at < 24 * 3600_000 }
     }
 
-    suspend fun sendReport(text: String, withProblem: Boolean) {
+    suspend fun sendReport(text: String, withProblem: Boolean, place: String? = null, targetType: String? = null, targetId: Int? = null) {
         val u = auth?.currentUser ?: throw CloudException("سجّل دخولك أول عشان توصل رسالتك")
         val col = db?.collection("reports") ?: throw CloudException("الخدمة مب جاهزة")
         col.add(mapOf(
@@ -585,13 +587,15 @@ class CloudSync(
             "problem" to if (withProblem) lastProblem() else null,
             "device" to deviceName, "version" to com.alyoushw.watchhub.BuildConfig.VERSION_NAME,
             "at" to System.currentTimeMillis(), "done" to false,
+            "place" to place, "targetType" to targetType, "targetId" to targetId,
         )).await()
     }
 
     suspend fun adminReports(): List<Report> =
         db?.collection("reports")?.get()?.await()?.documents.orEmpty().map { d ->
             Report(d.id, d.getString("uid").orEmpty(), d.getString("email"), d.getString("name"), d.getString("text").orEmpty(),
-                d.getString("problem"), d.getString("device"), d.getString("version"), d.getLong("at") ?: 0, d.getBoolean("done") == true)
+                d.getString("problem"), d.getString("device"), d.getString("version"), d.getLong("at") ?: 0, d.getBoolean("done") == true,
+                d.getString("place"), d.getString("targetType"), d.getLong("targetId")?.toInt())
         }.sortedByDescending { it.at }
 
     suspend fun adminReportDone(id: String, done: Boolean) { db?.collection("reports")?.document(id)?.update("done", done)?.await() }

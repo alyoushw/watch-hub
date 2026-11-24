@@ -97,6 +97,15 @@ private enum class SettingsPage(val title: String) {
 fun SettingsScreen(onOpenXtream: () -> Unit = {}, onOpenHistory: () -> Unit = {}, onOpenTitle: (com.alyoushw.watchhub.data.MediaType, Int) -> Unit = { _, _ -> }) {
     val container = appContainer()
     var page by rememberSaveable { mutableStateOf<SettingsPage?>(null) }
+    // A tap on the «بلاغ جديد» notification opens the owner's page on its reports tab.
+    var adminReportsFirst by remember { mutableStateOf(false) }
+    val openAdmin by container.openAdmin.collectAsStateWithLifecycle()
+    LaunchedEffect(openAdmin) {
+        if (openAdmin) {
+            container.openAdmin.value = false
+            if (container.cloud.isAdmin) { adminReportsFirst = true; page = SettingsPage.ADMIN }
+        }
+    }
     androidx.activity.compose.BackHandler(enabled = page != null) { page = null }
 
     Scaffold(
@@ -126,7 +135,7 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}, onOpenHistory: () -> Unit = {}
             when (page) {
                 null -> SettingsHome(onOpen = { page = it }, onOpenHistory = onOpenHistory)
                 SettingsPage.ACCOUNT -> AccountSection()
-                SettingsPage.ADMIN -> AdminSection(onOpenTitle)
+                SettingsPage.ADMIN -> AdminSection(startOnReports = adminReportsFirst, onOpenTitle = onOpenTitle)
                 SettingsPage.IPTV -> {
                     XtreamSection(onOpenXtream)
                     ChannelFoldersSection()

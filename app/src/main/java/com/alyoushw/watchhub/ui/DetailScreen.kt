@@ -445,6 +445,8 @@ fun DetailScreen(
     val listState = rememberLazyListState()
     val tv = isTv()
     var backFocused by remember { mutableStateOf(false) }
+    var reporting by remember { mutableStateOf(false) }
+    if (reporting) ReportDialog(ReportContext("صفحة ${type.label}: «$title»", type.path, id)) { reporting = false }
     LaunchedEffect(backFocused, tv) {
         // The fixed back button sits outside the list; TV focus alone cannot reveal its header.
         if (tv && backFocused) listState.scrollToItem(0)
@@ -455,6 +457,9 @@ fun DetailScreen(
         topBar = {
             TopAppBar(
                 title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                actions = {
+                    TextButton(modifier = Modifier.focusFrame(), onClick = { reporting = true }) { Text("📨 مشكلة") }
+                },
                 navigationIcon = {
                     IconButton(modifier = Modifier.onFocusChanged { backFocused = it.hasFocus }.focusFrame(), onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع")

@@ -52,7 +52,7 @@ private fun whenText(ms: Long): String =
     if (ms <= 0) "—" else SimpleDateFormat("d/M/yyyy  HH:mm", Locale.ENGLISH).format(Date(ms))
 
 /** The title page an entry belongs to, when it has one (live channels have none). */
-private fun target(e: WatchEntry): Pair<MediaType, Int>? {
+internal fun entryTarget(e: WatchEntry): Pair<MediaType, Int>? {
     e.animeRef?.let { r -> MediaType.fromPath(r.detailType)?.let { return it to r.detailId } }
     val id = e.tmdbId ?: return null
     return (if (e.kind == WatchEntry.MOVIE) MediaType.MOVIE else MediaType.TV) to id
@@ -97,7 +97,7 @@ private fun Bar(percent: Int, modifier: Modifier = Modifier) {
 
 /** Owner only: who is registered, and each person's account laid out like the app, tap a title to open it. */
 @Composable
-fun AdminSection(onOpenTitle: (MediaType, Int) -> Unit = { _, _ -> }) {
+fun AdminSection(startOnReports: Boolean = false, onOpenTitle: (MediaType, Int) -> Unit = { _, _ -> }) {
     val cloud = appContainer().cloud
     var users by remember { mutableStateOf<List<CloudSync.AdminUser>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -120,7 +120,7 @@ fun AdminSection(onOpenTitle: (MediaType, Int) -> Unit = { _, _ -> }) {
     }
 
     var reports by remember { mutableStateOf<List<CloudSync.Report>>(emptyList()) }
-    var showReports by remember { mutableStateOf(false) }
+    var showReports by remember { mutableStateOf(startOnReports) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(reload) { runCatching { cloud.adminReports() }.onSuccess { reports = it } }
     val openCount = reports.count { !it.done }
@@ -141,11 +141,15 @@ fun AdminSection(onOpenTitle: (MediaType, Int) -> Unit = { _, _ -> }) {
                     }
                 }
                 Text(r.text.ifBlank { "(بدون نص)" })
+                r.place?.let { Text("📍 المكان: $it", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary) }
                 r.problem?.let { Text("آخر مشكلة تشغيل: $it", fontSize = 12.sp, color = MaterialTheme.colorScheme.error) }
                 Row {
                     TextButton(modifier = Modifier.focusFrame(), onClick = {
                         scope.launch { runCatching { cloud.adminReportDone(r.id, !r.done) }; reload++ }
                     }) { Text(if (r.done) "أعد فتحه" else "تم") }
+                    MediaType.fromPath(r.targetType)?.let { t -> r.targetId?.let { id ->
+                        TextButton(modifier = Modifier.focusFrame(), onClick = { onOpenTitle(t, id) }) { Text("افتح المكان") }
+                    } }
                     if (who != null) TextButton(modifier = Modifier.focusFrame(), onClick = { open = who }) { Text("افتح حسابه") }
                     TextButton(modifier = Modifier.focusFrame(), onClick = {
                         scope.launch { runCatching { cloud.adminReportDelete(r.id) }; reload++ }
@@ -220,7 +224,7 @@ private fun AdminUserPage(user: CloudSync.AdminUser, onOpenTitle: (MediaType, In
 
     fun fmt(m: Long) = if (m >= 60) "${m / 60} س ${m % 60} د" else "$m د"
     val kindNames = mapOf("live" to "بث مباشر", "movie" to "أفلام", "episode" to "مسلسلات", "anime_episode" to "أنمي", "anime" to "أنمي")
-    val open: (WatchEntry) -> Unit = { e -> target(e)?.let { (t, id) -> onOpenTitle(t, id) } }
+    val open: (WatchEntry) -> Unit = { e -> entryTarget(e)?.let { (t, id) -> onOpenTitle(t, id) } }
     val remove: (WatchEntry) -> Unit = { e ->
         scope.launch { runCatching { cloud.adminRemove(user.uid, listOf(e.key)) }; history = history?.filter { x -> x.key != e.key } }
     }
@@ -238,7 +242,7 @@ private fun AdminUserPage(user: CloudSync.AdminUser, onOpenTitle: (MediaType, In
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(recent, key = { it.key }) { e ->
                         Column(
-                            Modifier.width(110.dp).focusFrame(RoundedCornerShape(10.dp)).clickable(enabled = target(e) != null) { open(e) },
+                            Modifier.width(110.dp).focusFrame(RoundedCornerShape(10.dp)).clickable(enabled = entryTarget(e) != null) { open(e) },
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
                             AdminPoster(e.image, 110.dp, 160.dp)
@@ -330,7 +334,7 @@ private fun AdminUserPage(user: CloudSync.AdminUser, onOpenTitle: (MediaType, In
 
 @Composable
 private fun EntryRow(e: WatchEntry, big: Boolean, onOpen: () -> Unit, onRemove: () -> Unit) {
-    val canOpen = target(e) != null
+    val canOpen = entryTarget(e) != null
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(start = 10.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -353,9 +357,19 @@ private fun EntryRow(e: WatchEntry, big: Boolean, onOpen: () -> Unit, onRemove: 
     }
 }
 
-/** «أرسل مشكلة أو ملاحظة»: goes to the owner, with the last playback failure attached. */
+/** Where a report comes from: shown to the owner, and used to open that title for him. */
+data class ReportContext(val place: String, val targetType: String? = null, val targetId: Int? = null)
+
+fun reportContextFor(e: WatchEntry, where: String = "تابع المشاهدة"): ReportContext {
+    val t = entryTarget(e)
+    val ep = e.subtitle?.let { " · $it" }.orEmpty()
+    val src = when { e.animeRef != null -> " · أنمي فاي"; e.fourURef != null -> " · 4U"; e.sourceRef != null -> " · مصدر خارجي"; e.accountId != null -> " · حساب IPTV"; else -> "" }
+    return ReportContext("$where: «${e.title}»$ep$src", t?.first?.path, t?.second)
+}
+
+/** «أرسل مشكلة أو ملاحظة»: goes to the owner, with the place it came from and the last playback failure attached. */
 @Composable
-fun ReportDialog(onClose: () -> Unit) {
+fun ReportDialog(context0: ReportContext? = null, onClose: () -> Unit) {
     val cloud = appContainer().cloud
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -368,6 +382,7 @@ fun ReportDialog(onClose: () -> Unit) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("اكتب المشكلة أو اقتراحك.", fontSize = 13.sp)
+                context0?.let { Text("📍 ${it.place}", fontSize = 12.sp) }
                 androidx.compose.material3.OutlinedTextField(
                     value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth().tvTextField(),
                     keyboardOptions = tvKeyboard(), minLines = 3,
@@ -379,7 +394,7 @@ fun ReportDialog(onClose: () -> Unit) {
             TextButton(enabled = !busy && (text.isNotBlank() || problem != null), onClick = {
                 busy = true
                 scope.launch {
-                    runCatching { cloud.sendReport(text, withProblem = true) }
+                    runCatching { cloud.sendReport(text, withProblem = true, place = context0?.place, targetType = context0?.targetType, targetId = context0?.targetId) }
                         .onSuccess { android.widget.Toast.makeText(context, "وصلت رسالتك للمدير، شكراً", android.widget.Toast.LENGTH_LONG).show(); onClose() }
                         .onFailure { busy = false; android.widget.Toast.makeText(context, it.message ?: "ما انرسلت", android.widget.Toast.LENGTH_LONG).show() }
                 }

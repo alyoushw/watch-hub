@@ -77,6 +77,29 @@ class WatchStats(context: Context) {
         if (json == null) remote.edit().remove(deviceId).apply() else remote.edit().putString(deviceId, json).apply()
     }
 
+    /**
+     * The counters belong to the account that was signed in while watching, like the history: this puts [from]'s
+     * counters aside and brings [to]'s back (empty if none), so one account's minutes never land in another's summary.
+     */
+    @Synchronized
+    fun switchProfile(from: String, to: String) {
+        val current = prefs.all.filterKeys { it != KEY_DEVICE && !it.startsWith("@") }
+        val stashed = prefs.all.filterKeys { it.startsWith("@$to|") }
+        val e = prefs.edit()
+        current.forEach { (k, v) -> e.remove(k); put(e, "@$from|$k", v) }
+        stashed.forEach { (k, v) -> e.remove(k); put(e, k.removePrefix("@$to|"), v) }
+        e.commit()
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun put(e: android.content.SharedPreferences.Editor, key: String, v: Any?) {
+        when (v) {
+            is Long -> e.putLong(key, v)
+            is Set<*> -> e.putStringSet(key, v as Set<String>)
+            is String -> e.putString(key, v)
+        }
+    }
+
     /** Forgets the other devices' copies (when the account on this device changes). */
     fun clearRemote() {
         remote.edit().clear().apply()
