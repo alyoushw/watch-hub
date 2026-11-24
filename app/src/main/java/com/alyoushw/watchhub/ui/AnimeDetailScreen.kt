@@ -201,10 +201,12 @@ private fun AnimeContent(vm: AnimeDetailViewModel, anime: JAnime, onOpen: (Media
                 XtreamWatchButton(
                     isSeries = !lookup.movie,
                     tmdbId = 0,
-                    titles = listOfNotNull(lookup.title, lookup.searchTitle, anime.displayTitle).distinct(),
+                    // Try every known name (English, romaji, Japanese) so it is found however the
+                    // account lists it; the button stays visible and keeps checking either way.
+                    titles = listOfNotNull(anime.titleEnglish, anime.title, anime.titleJapanese, anime.displayTitle)
+                        .map { it.trim() }.filter { it.isNotBlank() }.distinct(),
                     year = anime.year?.toString(),
                     onOpenSeries = onOpenXtreamSeries,
-                    hideWhenEmpty = true,
                 )
             }
         }
