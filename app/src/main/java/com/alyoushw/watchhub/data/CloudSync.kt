@@ -513,16 +513,42 @@ class CloudSync(
         return docs.filter { it.getBoolean("deleted") != true }.mapNotNull { it.toEntry() }.sortedByDescending { it.updatedAt }
     }
 
-    /** Minutes watched this month, from every device of that person. */
-    suspend fun adminMinutes(uid: String): Long {
-        val docs = db?.collection("users")?.document(uid)?.collection("stats")?.get()?.await()?.documents.orEmpty()
+    /** Everything in one person's account except the history, as it is stored. */
+    data class AdminProfile(
+        val list: List<WatchItem>,
+        val accounts: List<XtreamAccount>,
+        val koraUrl: String?,
+        val vipUser: String?,
+        val vipPass: String?,
+        val devices: List<String>,
+        val byKind: Map<String, Long>,
+        val topTitles: List<Pair<String, Long>>,
+        val finished: Int,
+    )
+
+    suspend fun adminProfile(uid: String): AdminProfile {
+        val base = db?.collection("users")?.document(uid) ?: error("no db")
+        val list = base.collection("watchlist").get().await().documents
+            .filter { it.getBoolean("deleted") != true }.mapNotNull { it.toWatchItem() }
+            .sortedByDescending { it.updatedAt }
+        val accounts = runCatching { base.collection("meta").document("xtream").get().await().toAccounts() }.getOrDefault(emptyList())
+        val kora = runCatching { base.collection("meta").document("kora").get().await() }.getOrNull()
         val m = java.time.YearMonth.now().toString()
-        var ms = 0L
-        docs.forEach { d ->
+        val kinds = mutableMapOf<String, Long>()
+        val titles = mutableMapOf<String, Long>()
+        val done = mutableSetOf<String>()
+        val devices = mutableListOf<String>()
+        base.collection("stats").get().await().documents.forEach { d ->
+            d.getString("device")?.let { devices += it }
             val month = runCatching { org.json.JSONObject(d.getString("json").orEmpty()).optJSONObject(m) }.getOrNull() ?: return@forEach
-            month.optJSONObject("kind")?.let { o -> o.keys().forEach { k -> ms += o.optLong(k) } }
+            month.optJSONObject("kind")?.let { o -> o.keys().forEach { k -> kinds.merge(k, o.optLong(k), Long::plus) } }
+            month.optJSONObject("title")?.let { o -> o.keys().forEach { k -> titles.merge(k, o.optLong(k), Long::plus) } }
+            month.optJSONArray("done")?.let { arr -> for (i in 0 until arr.length()) done += arr.optString(i) }
         }
-        return ms / 60_000
+        return AdminProfile(
+            list, accounts, kora?.getString("url"), kora?.getString("vipUser"), kora?.getString("vipPass"), devices.distinct(),
+            kinds, titles.entries.sortedByDescending { it.value }.take(5).map { it.key to it.value }, done.size,
+        )
     }
 
     /** Removes entries from that person's account (their devices drop them on the next sync). */

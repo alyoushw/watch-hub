@@ -80,58 +80,106 @@ fun AdminSection() {
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun AdminUserPage(user: CloudSync.AdminUser) {
     val cloud = appContainer().cloud
     val scope = rememberCoroutineScope()
     var history by remember { mutableStateOf<List<WatchEntry>?>(null) }
-    var minutes by remember { mutableStateOf<Long?>(null) }
+    var profile by remember { mutableStateOf<CloudSync.AdminProfile?>(null) }
+    var tab by remember { mutableIntStateOf(0) }
+    var showPass by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var confirmAll by remember { mutableStateOf(false) }
     var reload by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(user.uid, reload) {
         runCatching { cloud.adminHistory(user.uid) }.onSuccess { history = it }.onFailure { error = "ما قدرنا نقرأ السجل (${it.message?.take(80)})" }
-        runCatching { cloud.adminMinutes(user.uid) }.onSuccess { minutes = it }
+        runCatching { cloud.adminProfile(user.uid) }.onSuccess { profile = it }
     }
 
     Text(user.name?.takeIf { it.isNotBlank() } ?: user.email ?: user.uid.take(8), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
     user.email?.let { Text(it) }
     Text("آخر دخول: ${whenText(user.lastSeen)}${user.device?.let { " · $it" }.orEmpty()}", fontSize = 13.sp)
-    minutes?.let { Text("شاهد هالشهر: ${if (it >= 60) "${it / 60} س ${it % 60} د" else "$it د"}") }
     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
-    val list = history
-    if (list == null) { if (error == null) Text("نحمّل السجل…"); return }
-    Text("السجل: ${list.size}", fontWeight = FontWeight.Bold)
-    if (list.isNotEmpty()) {
-        TextButton(modifier = Modifier.focusFrame(), onClick = { confirmAll = true }) {
-            Text("مسح كل سجله", color = MaterialTheme.colorScheme.error)
+    val tabs = listOf("نظرة عامة", "تابع المشاهدة", "السجل", "قائمته", "حساباته")
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        tabs.forEachIndexed { i, t ->
+            androidx.compose.material3.FilterChip(modifier = Modifier.focusFrame(), selected = tab == i, onClick = { tab = i }, label = { Text(t) })
         }
     }
-    list.forEach { e ->
-        Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(start = 14.dp, top = 8.dp, bottom = 8.dp, end = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(e.title.ifBlank { e.key }, fontWeight = FontWeight.Bold, maxLines = 2)
-                val kind = when {
-                    e.isLive -> "بث مباشر"
-                    e.isEpisode -> "حلقة"
-                    else -> "فيلم"
-                }
-                val pct = if (e.durationMs > 0) " · ${(e.positionMs * 100 / e.durationMs).coerceIn(0, 100)}%" else ""
-                Text("$kind${e.subtitle?.let { " · $it" }.orEmpty()}$pct", fontSize = 12.sp)
-                Text(whenText(e.updatedAt), fontSize = 11.sp)
+
+    val list = history
+    val p = profile
+    if (list == null || p == null) { if (error == null) Text("نحمّل بياناته…"); return }
+
+    fun mins(ms: Long) = ms / 60_000
+    fun fmt(m: Long) = if (m >= 60) "${m / 60} س ${m % 60} د" else "$m د"
+    val kindNames = mapOf("live" to "بث مباشر", "movie" to "أفلام", "episode" to "مسلسلات", "anime" to "أنمي")
+
+    @Composable
+    fun card(content: @Composable () -> Unit) = Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) { content() }
+
+    when (tab) {
+        0 -> {
+            card {
+                Text("أجهزته: ${p.devices.joinToString("، ").ifBlank { "—" }}")
+                Text("المسجّل في سجله: ${list.size} · في قائمته: ${p.list.size} · حسابات IPTV: ${p.accounts.size}")
+                Text("شاهد هالشهر: ${fmt(mins(p.byKind.values.sum()))} · أنهى ${p.finished}")
             }
-            TextButton(modifier = Modifier.focusFrame(), onClick = {
-                scope.launch {
-                    runCatching { cloud.adminRemove(user.uid, listOf(e.key)) }
-                    history = history?.filter { it.key != e.key }
+            if (p.byKind.isNotEmpty()) card {
+                Text("حسب النوع", fontWeight = FontWeight.Bold)
+                p.byKind.entries.sortedByDescending { it.value }.forEach { Text("${kindNames[it.key] ?: it.key}: ${fmt(mins(it.value))}") }
+            }
+            if (p.topTitles.isNotEmpty()) card {
+                Text("الأكثر مشاهدة", fontWeight = FontWeight.Bold)
+                p.topTitles.forEach { Text("${it.first}: ${fmt(mins(it.second))}") }
+            }
+        }
+        1 -> {
+            // «تابع المشاهدة» as he sees it: the newest unfinished item of each title.
+            val cont = list.filter { !it.isLive && it.durationMs > 0 && it.positionMs * 100 / it.durationMs < 95 }
+                .distinctBy { it.seriesId ?: it.tmdbId?.toString() ?: it.title }.take(20)
+            if (cont.isEmpty()) Text("ما عنده شي يكمله")
+            cont.forEach { e -> historyRow(e, scope, cloud, user.uid) { history = history?.filter { x -> x.key != e.key } } }
+        }
+        2 -> {
+            Text("السجل: ${list.size}", fontWeight = FontWeight.Bold)
+            if (list.isNotEmpty()) TextButton(modifier = Modifier.focusFrame(), onClick = { confirmAll = true }) {
+                Text("مسح كل سجله", color = MaterialTheme.colorScheme.error)
+            }
+            list.forEach { e -> historyRow(e, scope, cloud, user.uid) { history = history?.filter { x -> x.key != e.key } } }
+        }
+        3 -> {
+            if (p.list.isEmpty()) Text("قائمته فاضية")
+            p.list.forEach { w ->
+                card {
+                    Text(w.title, fontWeight = FontWeight.Bold)
+                    val st = when (w.status) {
+                        com.alyoushw.watchhub.data.WatchStatus.PLANNED -> "يبي يشوفه"
+                        com.alyoushw.watchhub.data.WatchStatus.WATCHING -> "يتابعه"
+                        com.alyoushw.watchhub.data.WatchStatus.DONE -> "خلّصه"
+                    }
+                    Text("$st${w.progress?.let { " · موسم ${it.season} حلقة ${it.episode}" }.orEmpty()}", fontSize = 12.sp)
                 }
-            }) { Text("حذف", color = MaterialTheme.colorScheme.error) }
+            }
+        }
+        else -> {
+            card {
+                Text("كورة: ${p.koraUrl ?: "الافتراضي"}")
+                if (p.vipUser != null) Text("VIP: ${p.vipUser} / ${if (showPass) p.vipPass.orEmpty() else "••••••"}")
+            }
+            p.accounts.forEach { a ->
+                card {
+                    Text(a.name.ifBlank { a.host }, fontWeight = FontWeight.Bold)
+                    Text("${a.host} · ${a.username} / ${if (showPass) a.password else "••••••"}", fontSize = 12.sp)
+                }
+            }
+            TextButton(modifier = Modifier.focusFrame(), onClick = { showPass = !showPass }) { Text(if (showPass) "أخفِ كلمات المرور" else "أظهر كلمات المرور") }
         }
     }
 
@@ -148,4 +196,28 @@ private fun AdminUserPage(user: CloudSync.AdminUser) {
         },
         dismissButton = { TextButton(onClick = { confirmAll = false }) { Text("إلغاء") } },
     )
+}
+
+@Composable
+private fun historyRow(e: WatchEntry, scope: kotlinx.coroutines.CoroutineScope, cloud: CloudSync, uid: String, onGone: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(start = 14.dp, top = 8.dp, bottom = 8.dp, end = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(e.title.ifBlank { e.key }, fontWeight = FontWeight.Bold, maxLines = 2)
+            val kind = when {
+                e.isLive -> "بث مباشر"
+                e.isEpisode -> "حلقة"
+                else -> "فيلم"
+            }
+            val pct = if (e.durationMs > 0) " · ${(e.positionMs * 100 / e.durationMs).coerceIn(0, 100)}%" else ""
+            Text("$kind${e.subtitle?.let { " · $it" }.orEmpty()}$pct", fontSize = 12.sp)
+            Text(whenText(e.updatedAt), fontSize = 11.sp)
+        }
+        TextButton(modifier = Modifier.focusFrame(), onClick = {
+            scope.launch { runCatching { cloud.adminRemove(uid, listOf(e.key)) }; onGone() }
+        }) { Text("حذف", color = MaterialTheme.colorScheme.error) }
+    }
 }
