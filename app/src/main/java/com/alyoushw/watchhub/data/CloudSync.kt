@@ -558,6 +558,41 @@ class CloudSync(
         keys.forEach { col.document(docId(it)).set(mapOf("key" to it, "deleted" to true, "updatedAt" to at)).await() }
     }
 
+    // ---- problem reports (anyone signed in sends; only the owner reads)
+
+    data class Report(val id: String, val uid: String, val email: String?, val name: String?, val text: String,
+        val problem: String?, val device: String?, val version: String?, val at: Long, val done: Boolean)
+
+    /** The last playback failure on this device, attached to the next report so nobody has to describe it. */
+    fun noteProblem(text: String) {
+        prefs.edit().putString("last_problem", text).putLong("last_problem_at", System.currentTimeMillis()).apply()
+    }
+
+    fun lastProblem(): String? {
+        val at = prefs.getLong("last_problem_at", 0)
+        return prefs.getString("last_problem", null)?.takeIf { System.currentTimeMillis() - at < 24 * 3600_000 }
+    }
+
+    suspend fun sendReport(text: String, withProblem: Boolean) {
+        val u = auth?.currentUser ?: throw CloudException("سجّل دخولك أول عشان توصل رسالتك")
+        val col = db?.collection("reports") ?: throw CloudException("الخدمة مب جاهزة")
+        col.add(mapOf(
+            "uid" to u.uid, "email" to u.email, "name" to u.displayName, "text" to text.trim(),
+            "problem" to if (withProblem) lastProblem() else null,
+            "device" to deviceName, "version" to com.alyoushw.watchhub.BuildConfig.VERSION_NAME,
+            "at" to System.currentTimeMillis(), "done" to false,
+        )).await()
+    }
+
+    suspend fun adminReports(): List<Report> =
+        db?.collection("reports")?.get()?.await()?.documents.orEmpty().map { d ->
+            Report(d.id, d.getString("uid").orEmpty(), d.getString("email"), d.getString("name"), d.getString("text").orEmpty(),
+                d.getString("problem"), d.getString("device"), d.getString("version"), d.getLong("at") ?: 0, d.getBoolean("done") == true)
+        }.sortedByDescending { it.at }
+
+    suspend fun adminReportDone(id: String, done: Boolean) { db?.collection("reports")?.document(id)?.update("done", done)?.await() }
+    suspend fun adminReportDelete(id: String) { db?.collection("reports")?.document(id)?.delete()?.await() }
+
     private fun pushProfile(base: com.google.firebase.firestore.DocumentReference) {
         val u = auth?.currentUser ?: return
         base.set(

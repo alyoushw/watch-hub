@@ -60,6 +60,41 @@ fun AdminSection() {
         return
     }
 
+    var reports by remember { mutableStateOf<List<CloudSync.Report>>(emptyList()) }
+    var showReports by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(reload) { runCatching { cloud.adminReports() }.onSuccess { reports = it } }
+    val openCount = reports.count { !it.done }
+    androidx.compose.foundation.layout.Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        androidx.compose.material3.FilterChip(modifier = Modifier.focusFrame(), selected = !showReports, onClick = { showReports = false }, label = { Text("المسجلين") })
+        androidx.compose.material3.FilterChip(modifier = Modifier.focusFrame(), selected = showReports, onClick = { showReports = true }, label = { Text("البلاغات" + if (openCount > 0) " ($openCount)" else "") })
+    }
+    if (showReports) {
+        if (reports.isEmpty()) Text("ما فيه بلاغات")
+        reports.forEach { r ->
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Text((if (r.done) "✓ " else "● ") + (r.name?.takeIf { it.isNotBlank() } ?: r.email ?: r.uid.take(8)), fontWeight = FontWeight.Bold)
+                Text(r.text.ifBlank { "(بدون نص)" })
+                r.problem?.let { Text("آخر مشكلة تشغيل: $it", fontSize = 12.sp, color = MaterialTheme.colorScheme.error) }
+                Text("${whenText(r.at)} · ${r.device.orEmpty()} · نسخة ${r.version.orEmpty()}", fontSize = 11.sp)
+                Row {
+                    TextButton(modifier = Modifier.focusFrame(), onClick = {
+                        scope.launch { runCatching { cloud.adminReportDone(r.id, !r.done) }; reload++ }
+                    }) { Text(if (r.done) "أعد فتحه" else "تم") }
+                    users?.firstOrNull { it.uid == r.uid }?.let { u ->
+                        TextButton(modifier = Modifier.focusFrame(), onClick = { open = u }) { Text("افتح حسابه") }
+                    }
+                    TextButton(modifier = Modifier.focusFrame(), onClick = {
+                        scope.launch { runCatching { cloud.adminReportDelete(r.id) }; reload++ }
+                    }) { Text("حذف", color = MaterialTheme.colorScheme.error) }
+                }
+            }
+        }
+        return
+    }
     Text("المسجلين (يظهر الشخص هنا بعد ما يفتح نسخة التطبيق الجديدة)", style = MaterialTheme.typography.bodySmall)
     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     if (users == null && error == null) Text("نحمّل…")
@@ -220,4 +255,40 @@ private fun historyRow(e: WatchEntry, scope: kotlinx.coroutines.CoroutineScope, 
             scope.launch { runCatching { cloud.adminRemove(uid, listOf(e.key)) }; onGone() }
         }) { Text("حذف", color = MaterialTheme.colorScheme.error) }
     }
+}
+
+/** «أرسل مشكلة أو ملاحظة»: goes to the owner, with the last playback failure attached. */
+@Composable
+fun ReportDialog(onClose: () -> Unit) {
+    val cloud = appContainer().cloud
+    val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var text by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    val problem = remember { cloud.lastProblem() }
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("أرسل للمدير") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("اكتب المشكلة أو اقتراحك.", fontSize = 13.sp)
+                androidx.compose.material3.OutlinedTextField(
+                    value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth().tvTextField(),
+                    keyboardOptions = tvKeyboard(), minLines = 3,
+                )
+                if (problem != null) Text("بنرسل معها: $problem", fontSize = 12.sp)
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = !busy && (text.isNotBlank() || problem != null), onClick = {
+                busy = true
+                scope.launch {
+                    runCatching { cloud.sendReport(text, withProblem = true) }
+                        .onSuccess { android.widget.Toast.makeText(context, "وصلت رسالتك للمدير، شكراً", android.widget.Toast.LENGTH_LONG).show(); onClose() }
+                        .onFailure { busy = false; android.widget.Toast.makeText(context, it.message ?: "ما انرسلت", android.widget.Toast.LENGTH_LONG).show() }
+                }
+            }) { Text("إرسال") }
+        },
+        dismissButton = { TextButton(onClick = onClose) { Text("إلغاء") } },
+    )
 }

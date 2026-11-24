@@ -191,7 +191,10 @@ private fun SettingsHome(onOpen: (SettingsPage) -> Unit, onOpenHistory: () -> Un
     if (cloudState is com.alyoushw.watchhub.data.CloudSync.State.SignedIn && container.cloud.isAdmin) {
         SettingsGroup { SettingsRow("🛡️", "لوحة المدير", "المسجلين وسجل مشاهدتهم") { onOpen(SettingsPage.ADMIN) } }
     }
+    var reporting by remember { mutableStateOf(false) }
+    if (reporting) ReportDialog { reporting = false }
     SettingsGroup {
+        SettingsRow("📨", "أرسل مشكلة أو ملاحظة", "للمدير، ويوصله معها تفاصيل آخر مشكلة تشغيل") { reporting = true }
         SettingsRow("📤", "مشاركة التطبيق", "أرسل رابط التحميل لأصحابك") { shareApp(context) }
     }
 }

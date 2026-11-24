@@ -243,7 +243,8 @@ class PlayerActivity : ComponentActivity() {
                     // The real reason (HTTP code, codec, timeout) so a device-specific failure can be reported.
                     val http = (error.cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
                     val detail = http?.let { "رد السيرفر $it" } ?: error.errorCodeName
-                    Toast.makeText(this@PlayerActivity, "ما قدرنا نشغّل «${entry?.title.orEmpty()}» ($detail)", Toast.LENGTH_LONG).show()
+                    runCatching { (application as com.alyoushw.watchhub.WatchHubApp).container.cloud.noteProblem("ما اشتغل «${entry?.title.orEmpty()}» ${entry?.subtitle.orEmpty()} · $detail") }
+                    Toast.makeText(this@PlayerActivity, "ما قدرنا نشغّل «${entry?.title.orEmpty()}» ($detail) — من الإعدادات تقدر ترسل المشكلة للمدير", Toast.LENGTH_LONG).show()
                 }
             }
 
