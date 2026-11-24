@@ -107,6 +107,37 @@ class WatchHistory(context: Context) {
     fun get(key: String): WatchEntry? = _entries.value.firstOrNull { it.key == key }
 
     /**
+     * A source-independent identity for the same film or episode, so the saved position carries
+     * across providers and across Xtream accounts (Voltra, Strong, 4U, web sources…). Built from
+     * the TMDB id when known, otherwise the normalized title, plus the season/episode for a series.
+     * Live channels have none (nothing to resume).
+     */
+    private fun contentKeyOf(e: WatchEntry): String? = when {
+        e.isLive -> null
+        e.isEpisode -> {
+            val s = Regex("الموسم\\s*(\\d+)").find(e.subtitle.orEmpty())?.groupValues?.getOrNull(1)?.toIntOrNull()
+            val ep = Regex("الحلقة\\s*(\\d+)").find(e.subtitle.orEmpty())?.groupValues?.getOrNull(1)?.toIntOrNull()
+            if (s == null || ep == null) return null
+            val base = e.tmdbId?.let { "tmdb:$it" } ?: XtreamApi.normalizeTitle(e.title).ifBlank { return null }.let { "name:$it" }
+            "tv:$base:s$s:e$ep"
+        }
+        e.kind == WatchEntry.MOVIE -> e.tmdbId?.let { "movie:tmdb:$it" }
+            ?: XtreamApi.normalizeTitle(e.title).ifBlank { return null }.let { "movie:name:$it" }
+        else -> null
+    }
+
+    /**
+     * The furthest position already watched for the same film/episode from ANY source, so switching
+     * provider or account keeps playing from where the user stopped. 0 when there is nothing to resume.
+     */
+    fun crossResumePosition(e: WatchEntry): Long {
+        val ck = contentKeyOf(e) ?: return 0L
+        return _entries.value.asSequence()
+            .filter { !it.isLive && !it.finished && it.positionMs > 10_000 && contentKeyOf(it) == ck }
+            .maxOfOrNull { it.positionMs } ?: 0L
+    }
+
+    /**
      * Called after every change made on this device, for the account sync: the entry (or the
      * removed key), and whether it is worth sending at once (start, pause, stop) rather than
      * with the next periodic update.

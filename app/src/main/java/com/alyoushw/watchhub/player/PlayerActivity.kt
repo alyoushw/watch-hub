@@ -404,7 +404,10 @@ class PlayerActivity : ComponentActivity() {
             // first (at most ~2 s; offline or signed out, this device's own copy is used).
             if (item.recordHistory) cloud.refreshEntry(e.key)
             val saved = if (item.recordHistory) history.get(e.key) else null
-            val resumeAt = saved?.takeIf { !it.isLive && !it.finished && it.positionMs > 10_000 }?.positionMs ?: 0L
+            val ownAt = saved?.takeIf { !it.isLive && !it.finished && it.positionMs > 10_000 }?.positionMs ?: 0L
+            // Also pick up where the same film/episode was left from a different source or account.
+            val crossAt = if (item.recordHistory) history.crossResumePosition(e) else 0L
+            val resumeAt = maxOf(ownAt, crossAt)
             if (item.recordHistory) history.save(e, important = true)
             setMedia(resumeAt)
             started = true
