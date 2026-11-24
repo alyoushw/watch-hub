@@ -112,18 +112,26 @@ class WatchHistory(context: Context) {
      * the TMDB id when known, otherwise the normalized title, plus the season/episode for a series.
      * Live channels have none (nothing to resume).
      */
-    private fun contentKeyOf(e: WatchEntry): String? = when {
-        e.isLive -> null
-        e.isEpisode -> {
+    private fun contentKeyOf(e: WatchEntry): String? {
+        if (e.isLive) return null
+        if (e.isEpisode) {
             val s = Regex("الموسم\\s*(\\d+)").find(e.subtitle.orEmpty())?.groupValues?.getOrNull(1)?.toIntOrNull()
             val ep = Regex("الحلقة\\s*(\\d+)").find(e.subtitle.orEmpty())?.groupValues?.getOrNull(1)?.toIntOrNull()
             if (s == null || ep == null) return null
-            val base = e.tmdbId?.let { "tmdb:$it" } ?: XtreamApi.normalizeTitle(e.title).ifBlank { return null }.let { "name:$it" }
-            "tv:$base:s$s:e$ep"
+            val tmdb = e.tmdbId
+            val base = if (tmdb != null) "tmdb:$tmdb" else {
+                val name = XtreamApi.normalizeTitle(e.title)
+                if (name.isBlank()) return null else "name:$name"
+            }
+            return "tv:$base:s$s:e$ep"
         }
-        e.kind == WatchEntry.MOVIE -> e.tmdbId?.let { "movie:tmdb:$it" }
-            ?: XtreamApi.normalizeTitle(e.title).ifBlank { return null }.let { "movie:name:$it" }
-        else -> null
+        if (e.kind == WatchEntry.MOVIE) {
+            val tmdb = e.tmdbId
+            if (tmdb != null) return "movie:tmdb:$tmdb"
+            val name = XtreamApi.normalizeTitle(e.title)
+            return if (name.isBlank()) null else "movie:name:$name"
+        }
+        return null
     }
 
     /**
