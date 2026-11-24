@@ -490,9 +490,60 @@ class CloudSync(
 
     private fun userDoc() = uid?.let { db?.collection("users")?.document(it) }
 
+    // ---------- admin (the owner's account only; Firestore rules enforce it too) ----------
+
+    data class AdminUser(val uid: String, val email: String?, val name: String?, val lastSeen: Long, val device: String?)
+
+    /** True for the owner's account. The real lock is in firestore.rules; this only shows the page. */
+    val isAdmin: Boolean
+        get() = (state.value as? State.SignedIn)?.email.equals(ADMIN_EMAIL, ignoreCase = true)
+
+    /** Every person who opened the app since profiles were added, newest first. */
+    suspend fun adminUsers(): List<AdminUser> {
+        val docs = db?.collection("users")?.get()?.await()?.documents.orEmpty()
+        return docs.mapNotNull { d ->
+            if (d.getString("email") == null && d.getLong("lastSeen") == null) return@mapNotNull null
+            AdminUser(d.id, d.getString("email"), d.getString("name"), d.getLong("lastSeen") ?: 0, d.getString("device"))
+        }.sortedByDescending { it.lastSeen }
+    }
+
+    /** One person's history as they see it (newest first, removed entries left out). */
+    suspend fun adminHistory(uid: String): List<WatchEntry> {
+        val docs = db?.collection("users")?.document(uid)?.collection("history")?.get()?.await()?.documents.orEmpty()
+        return docs.filter { it.getBoolean("deleted") != true }.mapNotNull { it.toEntry() }.sortedByDescending { it.updatedAt }
+    }
+
+    /** Minutes watched this month, from every device of that person. */
+    suspend fun adminMinutes(uid: String): Long {
+        val docs = db?.collection("users")?.document(uid)?.collection("stats")?.get()?.await()?.documents.orEmpty()
+        val m = java.time.YearMonth.now().toString()
+        var ms = 0L
+        docs.forEach { d ->
+            val month = runCatching { org.json.JSONObject(d.getString("json").orEmpty()).optJSONObject(m) }.getOrNull() ?: return@forEach
+            month.optJSONObject("kind")?.let { o -> o.keys().forEach { k -> ms += o.optLong(k) } }
+        }
+        return ms / 60_000
+    }
+
+    /** Removes entries from that person's account (their devices drop them on the next sync). */
+    suspend fun adminRemove(uid: String, keys: List<String>) {
+        val col = db?.collection("users")?.document(uid)?.collection("history") ?: return
+        val at = System.currentTimeMillis()
+        keys.forEach { col.document(docId(it)).set(mapOf("key" to it, "deleted" to true, "updatedAt" to at)).await() }
+    }
+
+    private fun pushProfile(base: com.google.firebase.firestore.DocumentReference) {
+        val u = auth?.currentUser ?: return
+        base.set(
+            mapOf("email" to u.email, "name" to u.displayName, "lastSeen" to System.currentTimeMillis(), "device" to deviceName),
+            SetOptions.merge(),
+        ).addOnFailureListener { Log.w(TAG, "profile push failed", it) }
+    }
+
     private fun startSyncing(uid: String) {
         stopListening()
         val base = db?.collection("users")?.document(uid) ?: return
+        pushProfile(base)
         scope.launch {
             try {
                 // 1) First meeting: send what only this device has (or has newer), take the rest.
@@ -903,6 +954,7 @@ class CloudSync(
 
     private companion object {
         const val TAG = "CloudSync"
+        const val ADMIN_EMAIL = "alyoushw@gmail.com"
         const val APP_NAME = "watchhub"
         const val KEY_CONFIG = "config"
         const val KEY_PROFILE = "profile"

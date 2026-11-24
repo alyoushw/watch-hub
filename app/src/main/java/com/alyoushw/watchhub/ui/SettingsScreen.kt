@@ -85,7 +85,7 @@ private val Regions = listOf(
 private enum class SettingsPage(val title: String) {
     ACCOUNT("حسابك"), IPTV("حسابات IPTV"), TV_ROW("متابعة المشاهدة على التلفزيون"), APPEARANCE("المظهر"),
     YOUTUBE("اشتراكاتي"), ABOUT("التحديثات وعن التطبيق"), CLAUDE("البحث الذكي بـ Claude"),
-    KORA("رابط كوره"), APPS("تطبيقاتي الإضافية"),
+    KORA("رابط كوره"), APPS("تطبيقاتي الإضافية"), ADMIN("لوحة المدير"),
 }
 
 /**
@@ -126,6 +126,7 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}, onOpenHistory: () -> Unit = {}
             when (page) {
                 null -> SettingsHome(onOpen = { page = it }, onOpenHistory = onOpenHistory)
                 SettingsPage.ACCOUNT -> AccountSection()
+                SettingsPage.ADMIN -> AdminSection()
                 SettingsPage.IPTV -> {
                     XtreamSection(onOpenXtream)
                     ChannelFoldersSection()
@@ -186,6 +187,10 @@ private fun SettingsHome(onOpen: (SettingsPage) -> Unit, onOpenHistory: () -> Un
         SettingsRow("🧩", "تطبيقاتي الإضافية", if (apps.isEmpty()) "ما فيه" else "${apps.size} تطبيقات") { onOpen(SettingsPage.APPS) }
     }
     val context = LocalContext.current
+    val cloudState by container.cloud.state.collectAsStateWithLifecycle()
+    if (cloudState is com.alyoushw.watchhub.data.CloudSync.State.SignedIn && container.cloud.isAdmin) {
+        SettingsGroup { SettingsRow("🛡️", "لوحة المدير", "المسجلين وسجل مشاهدتهم") { onOpen(SettingsPage.ADMIN) } }
+    }
     SettingsGroup {
         SettingsRow("📤", "مشاركة التطبيق", "أرسل رابط التحميل لأصحابك") { shareApp(context) }
     }
