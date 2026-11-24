@@ -146,6 +146,14 @@ fun KoraScreen(
         }
         CookieManager.getInstance().setAcceptThirdPartyCookies(view, true)
         view.setDownloadListener { url, _, _, _, _ -> openBrowser(url) }
+        // A page that takes the arrow keys for itself (VIP) never reports them as unused, so the remote
+        // could not leave it. When Up/Right changed nothing in the page, leave it for the app's bar / tabs.
+        (view as? RemoteWebView)?.onEdge = { code ->
+            focusManager.moveFocus(
+                if (code == android.view.KeyEvent.KEYCODE_DPAD_UP) androidx.compose.ui.focus.FocusDirection.Up
+                else androidx.compose.ui.focus.FocusDirection.Right,
+            )
+        }
     }
     fun activateWindow(window: WebView) {
         if (window !in windows || web == window) return
@@ -481,6 +489,7 @@ fun KoraScreen(
                             // Nothing left to move to on the right of the page: hand the remote to the
                             // app's side tab rail, so the user no longer has to press back to reach it.
                             if (code == android.view.KeyEvent.KEYCODE_DPAD_RIGHT && event.action == android.view.KeyEvent.ACTION_DOWN) {
+                                (view as? RemoteWebView)?.lastEscape = android.os.SystemClock.uptimeMillis()
                                 focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Right)
                                 return
                             }
@@ -723,8 +732,37 @@ private class RemoteWebView(context: android.content.Context) : WebView(context)
         evaluateJavascript(REMOTE_SCROLL.replace("DIR", "$dir")) { r -> scrolledTo = r?.trim('"')?.toDoubleOrNull() ?: -1.0 }
     }
 
+    /** Set by the screen: leave the page in this direction (the key code) for the app's bar / tabs. */
+    var onEdge: ((Int) -> Unit)? = null
+
+    /** When the unused-key path already left the page for this key, the check below must not leave twice. */
+    @Volatile var lastEscape = 0L
+
+    /**
+     * Some pages take the arrow keys for themselves and never report one as unused, so the app could not
+     * tell the user had reached the page's edge. For Right (and Up at the top) compare what the page shows
+     * before and just after the key: if nothing moved (focus, position, scroll boxes, dialog), the key
+     * had no use there, so the remote leaves the page.
+     */
+    private fun watchEdge(code: Int) {
+        val t0 = android.os.SystemClock.uptimeMillis()
+        evaluateJavascript(PAGE_SNAPSHOT) { before ->
+            postDelayed({
+                evaluateJavascript(PAGE_SNAPSHOT) { after ->
+                    if (before == after && lastEscape < t0) {
+                        lastEscape = android.os.SystemClock.uptimeMillis()
+                        onEdge?.invoke(code)
+                    }
+                }
+            }, 180)
+        }
+    }
+
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
         val code = event.keyCode
+        if (event.action == android.view.KeyEvent.ACTION_DOWN && event.repeatCount == 0 && onEdge != null &&
+            (code == android.view.KeyEvent.KEYCODE_DPAD_RIGHT ||
+                (code == android.view.KeyEvent.KEYCODE_DPAD_UP && !canScrollVertically(-1) && scrolledTo <= 8.0))) watchEdge(code)
         if (code != android.view.KeyEvent.KEYCODE_DPAD_UP && code != android.view.KeyEvent.KEYCODE_DPAD_DOWN) return super.dispatchKeyEvent(event)
         if (super.dispatchKeyEvent(event)) return true
         val dir = if (code == android.view.KeyEvent.KEYCODE_DPAD_UP) -1 else 1
@@ -733,6 +771,19 @@ private class RemoteWebView(context: android.content.Context) : WebView(context)
         return true
     }
 }
+
+/**
+ * A fingerprint of what the page shows: the focused element and where it is, the window scroll, the sum of
+ * every scroll box's position and the number of open dialogs. Two equal fingerprints around a key press mean
+ * the page did nothing with that key.
+ */
+private val PAGE_SNAPSHOT = """
+    (function(){
+      var a=document.activeElement,r=a&&a.getBoundingClientRect?a.getBoundingClientRect():null,s=0,all=document.querySelectorAll('*');
+      for(var i=0;i<all.length;i++){s+=all[i].scrollTop||0;}
+      return (a?a.tagName+'#'+(a.id||''):'')+'|'+(r?Math.round(r.left)+','+Math.round(r.top):'')+'|'+Math.round(window.scrollX)+','+Math.round(window.scrollY)+'|'+Math.round(s)+'|'+document.querySelectorAll('dialog[open],[role=dialog]').length;
+    })()
+""".trimIndent()
 
 /** Presses the element the remote moved onto inside a dialog (marked by REMOTE_SCROLL), if there is one. */
 private val REMOTE_CLICK = "(function(){var a=document.activeElement;if(a&&a.getAttribute&&a.getAttribute('data-wh')==='1'){a.click();return 1;}return 0;})();"

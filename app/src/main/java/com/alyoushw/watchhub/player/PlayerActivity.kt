@@ -290,6 +290,8 @@ class PlayerActivity : ComponentActivity() {
         onBackPressedDispatcher.addCallback(this, filterBack)
 
         setContent {
+            // TV: the keyboard opens only after OK on a text box (the subtitle link box).
+            com.alyoushw.watchhub.ui.TvKeyboardGate {
             WatchHubTheme(forceDark = true) {
                 Box {
                 PlayerScreen(
@@ -324,6 +326,7 @@ class PlayerActivity : ComponentActivity() {
                 )
                 phoneCast?.let { PhoneCastPanel(it) }
                 }
+            }
             }
         }
     }

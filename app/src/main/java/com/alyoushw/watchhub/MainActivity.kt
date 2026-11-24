@@ -22,7 +22,8 @@ class MainActivity : ComponentActivity() {
                 androidx.compose.runtime.CompositionLocalProvider(
                     androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides androidx.compose.runtime.remember(margin) { com.alyoushw.watchhub.ui.CalmBringIntoView(margin) },
                 ) {
-                    WatchHubRoot()
+                    // TV: the keyboard opens only after OK on a text box, not when the remote lands on it.
+                    com.alyoushw.watchhub.ui.TvKeyboardGate { WatchHubRoot() }
                 }
             }
         }
