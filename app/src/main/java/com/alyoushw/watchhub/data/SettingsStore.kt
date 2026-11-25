@@ -335,7 +335,18 @@ class SettingsStore(context: Context) {
         // A profile without accounts starts empty (not from the single account of old versions).
         if (prefs.getString("$KEY_XTREAM_ACCOUNTS@$to", null) == null) e.putString(KEY_XTREAM_ACCOUNTS, "[]")
         e.remove(KEY_XTREAM_HOST).remove(KEY_XTREAM_USER).remove(KEY_XTREAM_PASS)
+        // The Kora VIP login is a person's own: it must not follow the device to another account.
+        for (k in listOf("kora_vip_user", "kora_vip_pass")) {
+            if (discard) e.remove("$k@$from") else e.putString("$k@$from", prefs.getString(k, null))
+            e.putString(k, prefs.getString("$k@$to", null))
+            e.remove("$k@$to")
+        }
+        if (discard) e.remove("kora_vip_at@$from") else e.putLong("kora_vip_at@$from", prefs.getLong("kora_vip_at", 0))
+        e.putLong("kora_vip_at", prefs.getLong("kora_vip_at@$to", 0))
+        e.remove("kora_vip_at@$to")
         e.commit()
+        _koraVipUser.value = prefs.getString("kora_vip_user", "").orEmpty()
+        _koraVipPass.value = prefs.getString("kora_vip_pass", "").orEmpty()
         reloadProfile()
     }
 
