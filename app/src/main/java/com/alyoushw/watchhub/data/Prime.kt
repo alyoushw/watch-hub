@@ -22,6 +22,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
+import java.util.zip.ZipFile
 import java.util.concurrent.TimeUnit
 
 /** Only identities go into history/cloud. Session URLs, cookies and access keys stay out. */
@@ -41,6 +42,8 @@ object Prime {
     private var configuredAt = 0L
     private var catalog: Pair<JsonArray, JsonArray>? = null
     private var catalogAt = 0L
+    private var packageNames: Map<String, String> = emptyMap()
+    @Volatile private var responseSalt: String? = null
     private val cookies = object : CookieJar {
         private val values = mutableMapOf<String, List<Cookie>>()
         @Synchronized override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
@@ -160,7 +163,12 @@ object Prime {
         val data = coroutineScope {
             val channels = async { table("channels", c) }
             val sources = async { table("channel_sources", c) }
-            channels.await() to sources.await()
+            val packages = async { table("packages", c) }
+            val rows = channels.await() to sources.await()
+            // A still-active channel may retain an older package ID; keep its folder label.
+            packageNames = packages.await().mapNotNull { it as? JsonObject }
+                .associate { it.text("id") to it.text("name").trim() }
+            rows
         }
         catalog = data; catalogAt = System.currentTimeMillis(); data
     }
@@ -170,8 +178,25 @@ object Prime {
             val row = element as? JsonObject ?: return@mapNotNull null
             if (!row.active()) return@mapNotNull null
             PrimeChannel(row.text("id"), row.text("name"), row.text("logo_url").takeIf { it.isNotBlank() },
-                row.text("category").ifBlank { "عام" })
+                channelGroup(packageNames[row.text("package_id")].orEmpty().ifBlank { row.text("category") }))
         }.filter { it.id.isNotBlank() && it.name.isNotBlank() }
+    }
+
+    private fun channelGroup(packageName: String): String {
+        val name = packageName.trim().replace(Regex("\\s+"), " ")
+        val key = name.lowercase(java.util.Locale.ROOT)
+        return when {
+            key.contains("bein") && (key.contains("sport") || key.contains("sp ") || key.contains("backup")) -> "beIN SPORTS"
+            key.contains("bein") && key.contains("ent") -> "beIN الترفيهية"
+            key.contains("alwan") && key.contains("sport") -> "ALWAN SPORTS"
+            key.contains("solo") -> "SOLO SPORTS"
+            key.contains("mbc") -> "قنوات MBC"
+            key.contains("news") -> "القنوات الإخبارية"
+            key.contains("kids") -> "قنوات الأطفال"
+            key.contains("documentary") -> "القنوات الوثائقية"
+            key.contains("arabic") -> "القنوات العربية"
+            else -> name.ifBlank { "قنوات أخرى" }
+        }
     }
 
     suspend fun resolve(ref: PrimeRef): PrimeStream = withContext(Dispatchers.IO) {
@@ -193,8 +218,46 @@ object Prime {
         }
         val query = ref.query ?: throw SourceException("بيانات العمل في Prime ناقصة")
         if (query.tmdbId <= 0 || query.type !in setOf(MediaType.TV, MediaType.MOVIE)) throw SourceException("تعذّر تحديد العمل في Prime")
-        val base = config().text("vixsrc_base_url").trimEnd('/').takeIf { it.startsWith("https://") }
-            ?: throw SourceException("مزوّد الأفلام في Prime متوقف حالياً")
+        val settings = config()
+        try { return@withContext resolveVixsrc(query, settings) }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { /* Prime has several providers, including titles absent from Prime A. */ }
+        val base = settings.text("vidnest_base_url").trimEnd('/')
+        if (base.isNotBlank()) {
+            PrimeMirrors.resolve(base, query, clientResponseSalt(), UA)?.let { return@withContext it }
+        }
+        throw SourceException("تعذّر الحصول على فيديو لهذا العمل من مزوّدات Prime؛ حاول مرة ثانية")
+    }
+
+    /** Read Prime's client response configuration from its pinned original APK. The value is
+     * never copied into source, preferences or cloud records. Only its fingerprint is pinned. */
+    @Synchronized
+    private fun clientResponseSalt(): String {
+        responseSalt?.let { return it }
+        val pattern = Regex("""\|[A-Za-z0-9_-]{40,80}\x00""")
+        ZipFile(File(context.filesDir, "prime-client-2.4.5.apk")).use { zip ->
+            val entries = zip.entries()
+            while (entries.hasMoreElements()) {
+                val entry = entries.nextElement()
+                if (!entry.name.matches(Regex("""classes\d*\.dex"""))) continue
+                val text = zip.getInputStream(entry).use { it.readBytes() }.toString(Charsets.ISO_8859_1)
+                for (match in pattern.findAll(text)) {
+                    val candidate = match.value.dropLast(1)
+                    val hash = MessageDigest.getInstance("SHA-256").digest(candidate.toByteArray(Charsets.UTF_8))
+                        .joinToString("") { "%02x".format(it.toInt() and 255) }
+                    if (hash == "9bebc09f46e2c7539855211744a961001509ded8305ee6b78a6f4a7b2e686a5d") {
+                        responseSalt = candidate
+                        return candidate
+                    }
+                }
+            }
+        }
+        throw SourceException("تعذّر قراءة إعدادات مزوّدات Prime البديلة")
+    }
+
+    private fun resolveVixsrc(query: SourceQuery, settings: JsonObject): PrimeStream {
+        val base = settings.text("vixsrc_base_url").trimEnd('/').takeIf { it.startsWith("https://") }
+            ?: throw SourceException("مزوّد Prime الأساسي متوقف حالياً")
         val path = if (query.type == MediaType.MOVIE) "/api/movie/${query.tmdbId}" else "/api/tv/${query.tmdbId}/${query.season ?: 1}/${query.episode ?: 1}"
         fun request(url: String, referer: String) = Request.Builder().url(url).header("User-Agent", UA).header("Referer", referer).build()
         val result = json.parseToJsonElement(read(request("$base$path?lang=en&_=${System.currentTimeMillis()}", "$base/"))).jsonObject
@@ -227,7 +290,7 @@ object Prime {
             put("User-Agent", UA); put("Referer", embed.toString())
             cookies.loadForRequest(stream).takeIf { it.isNotEmpty() }?.let { put("Cookie", it.joinToString("; ") { c -> "${c.name}=${c.value}" }) }
         }
-        PrimeStream(stream.toString(), headers, "application/x-mpegURL")
+        return PrimeStream(stream.toString(), headers, "application/x-mpegURL")
     }
 
     private fun JsonObject.text(key: String): String = (this[key] as? JsonPrimitive)?.contentOrNull.orEmpty()

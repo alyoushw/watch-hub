@@ -1,5 +1,6 @@
 package com.alyoushw.watchhub.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -132,21 +133,36 @@ fun PrimeLiveChannels() {
         catch (_: Exception) { error = "تعذّر تحميل Prime؛ تحقق من الاتصال وحاول مرة ثانية" }
         finally { loading = false }
     }
-    val visible = remember(channels, search, group) { channels.filter { (group.isBlank() || it.group == group) && it.name.contains(search, true) } }
+    LaunchedEffect(channels) { if (channels.isNotEmpty() && channels.none { it.group == group }) group = "" }
+    BackHandler(enabled = group.isNotEmpty()) { group = "" }
+    val folders = remember(channels, search) {
+        channels.groupBy { it.group }.toSortedMap().filter { (name, rows) ->
+            search.isBlank() || name.contains(search, true) || rows.any { it.name.contains(search, true) }
+        }
+    }
+    val visible = remember(channels, search, group) {
+        channels.filter { it.group == group && (search.isBlank() || group.contains(search, true) || it.name.contains(search, true)) }
+    }
     fun entry(row: PrimeChannel) = WatchEntry("prime:live:${row.id}", WatchEntry.LIVE, row.id, row.name,
         image = row.image, subtitle = "Prime · ${row.group}", accountId = "prime", primeRef = PrimeRef(channelId = row.id))
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
         if (loading) { Text("جاري تحميل Prime… التهيئة الأولى قد تستغرق وقتاً", color = Gold); LinearProgressIndicator(Modifier.fillMaxWidth()) }
         error?.let { Text(it); TextButton(onClick = { retry++ }, modifier = Modifier.focusFrame()) { Text("حاول مرة ثانية") } }
         OutlinedTextField(search, { search = it }, label = { Text("ابحث عن قناة في Prime") }, singleLine = true, modifier = Modifier.fillMaxWidth().tvTextField())
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            item { FilterChip(group.isEmpty(), { group = "" }, label = { Text("الكل") }, modifier = Modifier.focusFrame()) }
-            items(channels.map { it.group }.distinct(), key = { it }) { name ->
-                FilterChip(group == name, { group = name }, label = { Text(name) }, modifier = Modifier.focusFrame())
-            }
+        if (group.isNotEmpty()) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            TextButton(onClick = { group = "" }, modifier = Modifier.focusFrame()) { Text("رجوع للمجلدات") }
+            Text(group, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(vertical = 12.dp))
         }
         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (!loading && error == null && visible.isEmpty()) item { Text("لا توجد قنوات مطابقة") }
+            if (group.isEmpty()) {
+                if (!loading && error == null && folders.isEmpty()) item { Text("لا توجد مجلدات مطابقة") }
+                items(folders.keys.toList(), key = { it }) { name ->
+                    OutlinedButton(onClick = { group = name }, modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).focusFrame()) {
+                        Text("📁  $name", Modifier.weight(1f))
+                        Text("${folders[name].orEmpty().size} قناة")
+                    }
+                }
+            } else if (!loading && error == null && visible.isEmpty()) item { Text("لا توجد قنوات مطابقة") }
             items(visible, key = { it.id }) { row ->
                 OutlinedButton(onClick = { PlayerActivity.start(context, visible.map { QueueItem(emptyList(), entry(it)) }, visible.indexOf(row)) }, modifier = Modifier.fillMaxWidth().focusFrame()) {
                     row.image?.let { AsyncImage(it, null, modifier = Modifier.size(40.dp)); Spacer(Modifier.width(12.dp)) }; Text(row.name)
