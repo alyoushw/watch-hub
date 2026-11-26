@@ -180,6 +180,35 @@ object Prime {
             PrimeChannel(row.text("id"), row.text("name"), row.text("logo_url").takeIf { it.isNotBlank() },
                 channelGroup(packageNames[row.text("package_id")].orEmpty().ifBlank { row.text("category") }))
         }.filter { it.id.isNotBlank() && it.name.isNotBlank() }
+            .sortedWith(compareBy<PrimeChannel>({ channelNumber(it.name) }, { naturalChannelName(it.name) }, { it.id }))
+    }
+
+    fun folderOrder(name: String): Int {
+        val key = name.lowercase(java.util.Locale.ROOT)
+        return when {
+            name == "beIN SPORTS" -> 0
+            key.contains("thmanyah") || key.contains("ثمانية") || key.contains("ثمانيه") -> 1
+            key.contains("alwan") || key.contains("ألوان") || key.contains("الوان") -> 2
+            else -> 3
+        }
+    }
+
+    private fun naturalChannelName(value: String): String = java.text.Normalizer.normalize(value, java.text.Normalizer.Form.NFKC)
+        .lowercase(java.util.Locale.ROOT).map { c -> Character.digit(c, 10).takeIf { it >= 0 }?.digitToChar() ?: c }.joinToString("")
+
+    /** Keep every variant of channel 1 together before 2, without mistaking 4K/1080p for a channel. */
+    private fun channelNumber(value: String): Int {
+        val name = naturalChannelName(value)
+        for (match in Regex("""\d+""").findAll(name)) {
+            val number = match.value.toIntOrNull() ?: continue
+            val suffix = name.substring(match.range.last + 1)
+            if (Regex("""^\s*(?:k|p|fps)(?=$|[\W\d])""").containsMatchIn(suffix)) continue
+            if (number in setOf(480, 576, 720, 1080, 1440, 2160, 4320)) continue
+            val prefix = name.substring(0, match.range.first)
+            if (number in setOf(264, 265, 266) && Regex("""(?:h\.?|x)\s*$""").containsMatchIn(prefix)) continue
+            return number
+        }
+        return Int.MAX_VALUE
     }
 
     private fun channelGroup(packageName: String): String {

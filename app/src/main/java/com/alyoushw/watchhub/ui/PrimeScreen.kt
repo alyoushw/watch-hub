@@ -136,7 +136,7 @@ fun PrimeLiveChannels() {
     LaunchedEffect(channels) { if (channels.isNotEmpty() && channels.none { it.group == group }) group = "" }
     BackHandler(enabled = group.isNotEmpty()) { group = "" }
     val folders = remember(channels, search) {
-        channels.groupBy { it.group }.toSortedMap().filter { (name, rows) ->
+        channels.groupBy { it.group }.toSortedMap(compareBy<String>({ Prime.folderOrder(it) }, { it })).filter { (name, rows) ->
             search.isBlank() || name.contains(search, true) || rows.any { it.name.contains(search, true) }
         }
     }

@@ -28,9 +28,10 @@ import kotlin.coroutines.resumeWithException
  * normal API envelope, not video DRM. Session headers and URLs never enter saved history. */
 internal object PrimeMirrors {
     private val json = Json { ignoreUnknownKeys = true }
+    // Resolving an uncached episode can take longer than probing an already-known media URL.
     private val http = OkHttpClient.Builder().connectTimeout(5, TimeUnit.SECONDS)
-        .callTimeout(12, TimeUnit.SECONDS).build()
-    private val probe = StreamProbe(http)
+        .readTimeout(35, TimeUnit.SECONDS).callTimeout(35, TimeUnit.SECONDS).build()
+    private val probe = StreamProbe(http.newBuilder().readTimeout(12, TimeUnit.SECONDS).callTimeout(12, TimeUnit.SECONDS).build())
     private val random = SecureRandom()
 
     suspend fun resolve(base: String, query: SourceQuery, responseSalt: String, userAgent: String): PrimeStream? = coroutineScope {
