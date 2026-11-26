@@ -363,7 +363,7 @@ data class ReportContext(val place: String, val targetType: String? = null, val 
 fun reportContextFor(e: WatchEntry, where: String = "تابع المشاهدة"): ReportContext {
     val t = entryTarget(e)
     val ep = e.subtitle?.let { " · $it" }.orEmpty()
-    val src = when { e.animeRef != null -> " · أنمي فاي"; e.fourURef != null -> " · 4U"; e.sourceRef != null -> " · مصدر خارجي"; e.accountId != null -> " · حساب IPTV"; else -> "" }
+    val src = when { e.primeRef != null -> " · Prime"; e.animeRef != null -> " · أنمي فاي"; e.fourURef != null -> " · 4U"; e.sourceRef != null -> " · مصدر خارجي"; e.accountId != null -> " · حساب IPTV"; else -> "" }
     return ReportContext("$where: «${e.title}»$ep$src", t?.first?.path, t?.second)
 }
 

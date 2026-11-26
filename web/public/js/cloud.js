@@ -321,11 +321,11 @@ async function startSyncing() {
 
 // ---- history
 
-const HISTORY_FIELDS = ["key", "kind", "itemId", "title", "subtitle", "image", "ext", "seriesId", "positionMs", "durationMs", "updatedAt", "accountId", "tmdbId", "animeRef", "sourceRef", "fourURef"];
+const HISTORY_FIELDS = ["key", "kind", "itemId", "title", "subtitle", "image", "ext", "seriesId", "positionMs", "durationMs", "updatedAt", "accountId", "tmdbId", "animeRef", "sourceRef", "fourURef", "primeRef"];
 
 function historyDoc(e) {
   const out = { deleted: false, device: "المتصفح" };
-  for (const f of HISTORY_FIELDS) out[f] = ["animeRef", "sourceRef", "fourURef"].includes(f) && e[f] && typeof e[f] !== "string" ? JSON.stringify(e[f]) : e[f] ?? null;
+  for (const f of HISTORY_FIELDS) out[f] = ["animeRef", "sourceRef", "fourURef", "primeRef"].includes(f) && e[f] && typeof e[f] !== "string" ? JSON.stringify(e[f]) : e[f] ?? null;
   return out;
 }
 
@@ -335,7 +335,7 @@ function applyHistoryDoc(d) {
   const e = {};
   for (const f of HISTORY_FIELDS) if (d[f] !== null && d[f] !== undefined) {
     e[f] = d[f];
-    if (["animeRef", "sourceRef", "fourURef"].includes(f) && typeof e[f] === "string") try { e[f] = JSON.parse(e[f]); } catch { e[f] = null; }
+    if (["animeRef", "sourceRef", "fourURef", "primeRef"].includes(f) && typeof e[f] === "string") try { e[f] = JSON.parse(e[f]); } catch { e[f] = null; }
   }
   return history.applyRemote(d.key, e, d.updatedAt);
 }

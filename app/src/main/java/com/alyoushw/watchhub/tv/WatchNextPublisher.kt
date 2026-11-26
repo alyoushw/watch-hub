@@ -36,7 +36,7 @@ class WatchNextPublisher(private val context: Context, private val container: Ap
                     val recent = entries.sortedByDescending { it.updatedAt }.filter { e ->
                         !e.isEpisode || e.seriesId == null || seen.add("${e.accountId}:${e.seriesId}")
                     }.filter { e -> !e.isLive && !e.finished && e.positionMs >= 10_000 &&
-                        (e.animeRef != null || e.sourceRef != null || e.fourURef != null || accounts.any { it.id == e.accountId && it.isComplete }) }
+                        (e.animeRef != null || e.sourceRef != null || e.fourURef != null || e.primeRef != null || accounts.any { it.id == e.accountId && it.isComplete }) }
                     val identities = recent.mapNotNull(::identity).toSet()
                     val watching = data.watchlist.filter { it.canPublishWatchNext() && it.key !in identities }
                         .sortedByDescending { it.updatedAt }.take(20)
@@ -62,7 +62,8 @@ class WatchNextPublisher(private val context: Context, private val container: Ap
         }
     }
 
-    private fun identity(e: WatchEntry): String? = e.sourceRef?.let { "${it.query.type.path}:${it.query.tmdbId}" }
+    private fun identity(e: WatchEntry): String? = e.primeRef?.query?.let { "${it.type.path}:${it.tmdbId}" }
+        ?: e.sourceRef?.let { "${it.query.type.path}:${it.query.tmdbId}" }
         ?: e.animeRef?.takeIf { it.detailId > 0 }?.let { "${it.detailType}:${it.detailId}" }
         ?: e.fourURef?.let { ref -> ref.detailId?.let { "${ref.detailType}:$it" } }
         ?: e.tmdbId?.takeIf { !e.isEpisode }?.let { "movie:$it" }

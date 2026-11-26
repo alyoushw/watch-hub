@@ -59,7 +59,7 @@ class MainActivity : ComponentActivity() {
                 android.widget.Toast.makeText(this, "هذا العمل لم يعد ضمن متابعة المشاهدة", android.widget.Toast.LENGTH_SHORT).show()
                 return
             }
-            val sourced = e.animeRef != null || e.sourceRef != null || e.fourURef != null
+            val sourced = e.animeRef != null || e.sourceRef != null || e.fourURef != null || e.primeRef != null
             if (!sourced && container.settings.xtreamAccount(e.accountId)?.isComplete != true) {
                 android.widget.Toast.makeText(this, "أضف حساب المشاهدة من الإعدادات أولاً", android.widget.Toast.LENGTH_LONG).show()
                 return

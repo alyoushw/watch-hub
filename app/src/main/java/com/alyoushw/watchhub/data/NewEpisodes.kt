@@ -39,8 +39,9 @@ class NewEpisodesWorker(context: Context, params: WorkerParameters) : CoroutineW
         val since = System.currentTimeMillis() - 45L * 86_400_000
         val recent = container.history.entries.value.filter { it.updatedAt > since }
         recent.filter { it.kind == WatchEntry.EPISODE }
-            .distinctBy { it.sourceRef?.query?.tmdbId ?: it.fourURef?.detailId ?: it.seriesId ?: it.title }.take(20).forEach { e ->
-                val known = e.sourceRef?.query?.takeIf { it.type == MediaType.TV }?.tmdbId
+            .distinctBy { it.primeRef?.query?.tmdbId ?: it.sourceRef?.query?.tmdbId ?: it.fourURef?.detailId ?: it.seriesId ?: it.title }.take(20).forEach { e ->
+                val known = e.primeRef?.query?.takeIf { it.type == MediaType.TV }?.tmdbId
+                    ?: e.sourceRef?.query?.takeIf { it.type == MediaType.TV }?.tmdbId
                     ?: e.fourURef?.takeIf { it.detailType == MediaType.TV.path }?.detailId
                 val id = known ?: container.recommender.tmdbIdFor(MediaType.TV, e.title)
                 id?.let { series[it] = XtreamApi.normalizeTitle(e.title).ifBlank { e.title } }

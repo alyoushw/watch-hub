@@ -67,6 +67,7 @@ fun SourceWatchScreen(
     sources: WatchSources? = null,
     onPlay: ((WatchSourceRef) -> Unit)? = null,
 ) {
+    if (lookup.providerId == "prime") { PrimeScreen(lookup, onBack); return }
     if (lookup.providerId == "4u") { FourUScreen(lookup, onBack); return }
     val tuktuk = lookup.providerId == "tuktuk"
     if (tuktuk && lookup.query.type != MediaType.TV) {

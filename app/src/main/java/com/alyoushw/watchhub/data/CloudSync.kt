@@ -800,6 +800,7 @@ class CloudSync(
         "animeRef" to animeRef?.let { json.encodeToString(AnimeEpisodeRef.serializer(), it) },
         "sourceRef" to sourceRef?.let { json.encodeToString(WatchSourceRef.serializer(), it) },
         "fourURef" to fourURef?.let { json.encodeToString(FourURef.serializer(), it) },
+        "primeRef" to primeRef?.let { json.encodeToString(PrimeRef.serializer(), it) },
     )
 
     private fun DocumentSnapshot.toEntry(): WatchEntry? {
@@ -818,6 +819,9 @@ class CloudSync(
             updatedAt = getLong("updatedAt") ?: 0,
             accountId = getString("accountId"),
             tmdbId = getLong("tmdbId")?.toInt(),
+            primeRef = getString("primeRef")?.let { raw ->
+                runCatching { json.decodeFromString(PrimeRef.serializer(), raw) }.getOrNull()
+            },
             fourURef = getString("fourURef")?.let { raw ->
                 runCatching { json.decodeFromString(FourURef.serializer(), raw) }.getOrNull()
             },

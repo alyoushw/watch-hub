@@ -905,7 +905,7 @@ fun ContinueWatchingRow(
         container.history.continueList().filter { e ->
             e.kind in kinds && if (e.animeRef != null) {
                 animeMovies == null || (e.animeRef.type == "MOVIE") == animeMovies
-            } else if (e.sourceRef != null || e.fourURef != null) true else e.accountId in ids
+            } else if (e.sourceRef != null || e.fourURef != null || e.primeRef != null) true else e.accountId in ids
         }.take(20)
     }
     if (list.isEmpty()) return
@@ -929,6 +929,7 @@ fun ContinueWatchingRow(
     }
 
     fun openSeries(e: WatchEntry) {
+        e.primeRef?.query?.let { onOpenTitle(it.type, it.tmdbId); return }
         e.fourURef?.let { ref ->
             if (ref.detailId != null) { onOpenTitle(MediaType.fromPath(ref.detailType.orEmpty()) ?: MediaType.TV, ref.detailId); return }
         }
@@ -940,6 +941,7 @@ fun ContinueWatchingRow(
 
     /** The title's page on the platform side (TMDB): its known id, else found by its name. */
     fun openPlatformPage(e: WatchEntry) {
+        e.primeRef?.query?.let { onOpenTitle(it.type, it.tmdbId); return }
         e.fourURef?.let { ref ->
             if (ref.detailId != null) { onOpenTitle(MediaType.fromPath(ref.detailType.orEmpty()) ?: MediaType.TV, ref.detailId); return }
         }
@@ -1004,7 +1006,7 @@ fun ContinueWatchingRow(
                             },
                         ) { Text("صفحة المسلسل (المنصة)") }
                     }
-                    if (e.sourceRef == null && e.fourURef == null) {
+                    if (e.sourceRef == null && e.fourURef == null && e.primeRef == null) {
                         OutlinedButton(
                             modifier = Modifier.fillMaxWidth().focusFrame(),
                             onClick = {
@@ -1054,7 +1056,7 @@ fun ContinueWatchingRow(
             items(list, key = { it.key }) { e ->
                 val shape = RoundedCornerShape(12.dp)
                 val resume = {
-                    if (e.sourceRef != null || e.fourURef != null) {
+                    if (e.sourceRef != null || e.fourURef != null || e.primeRef != null) {
                         if (e.finished) openPlatformPage(e)
                         else PlayerActivity.start(context, listOf(com.alyoushw.watchhub.player.QueueItem(emptyList(), e)), 0)
                     } else if (e.animeRef != null) {

@@ -36,6 +36,7 @@ data class WatchEntry(
     val animeRef: AnimeEpisodeRef? = null,
     val sourceRef: WatchSourceRef? = null,
     val fourURef: FourURef? = null,
+    val primeRef: PrimeRef? = null,
 ) {
     val isLive: Boolean get() = kind == LIVE
     val isEpisode: Boolean get() = kind == EPISODE || kind == ANIME

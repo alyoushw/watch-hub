@@ -384,7 +384,7 @@ class PlayerActivity : ComponentActivity() {
             if (queue[i].urls.firstOrNull() != local) queue = queue.toMutableList().also { it[i] = it[i].copy(urls = listOf(local) + it[i].urls) }
         }
         if (started) saveProgress(important = true)
-        if (queue[i].entry.animeRef != null || entry?.animeRef != null || queue[i].entry.sourceRef != null || entry?.sourceRef != null) {
+        if (queue[i].entry.animeRef != null || entry?.animeRef != null || queue[i].entry.sourceRef != null || entry?.sourceRef != null || queue[i].entry.primeRef != null || entry?.primeRef != null) {
             started = false
             player.stop()
             player.clearMediaItems()
@@ -480,6 +480,24 @@ class PlayerActivity : ComponentActivity() {
                     session.sourceMessage = e.message ?: "تعذّر تشغيل المصدر؛ اختر مصدراً آخر"
                     Toast.makeText(this@PlayerActivity, session.sourceMessage, Toast.LENGTH_LONG).show()
                 } finally { if (isActive) session.preparingSource = false }
+            }
+            return
+        }
+        entry?.primeRef?.let { prime ->
+            resolveJob?.cancel()
+            val key = entry?.key
+            session.preparingSource = true
+            session.sourceMessage = "جاري تجهيز Prime… التهيئة الأولى قد تستغرق وقتاً"
+            resolveJob = lifecycleScope.launch {
+                try {
+                    val stream = com.alyoushw.watchhub.data.Prime.resolve(prime)
+                    if (entry?.key != key) return@launch
+                    queue = queue.toMutableList().also { it[position] = it[position].copy(urls = listOf(stream.url), httpHeaders = stream.headers, mimeType = stream.mimeType) }
+                    urlIndex = 0
+                    setResolvedMedia(startAt)
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (e: Exception) { Toast.makeText(this@PlayerActivity, e.message ?: "تعذّر تشغيل Prime", Toast.LENGTH_LONG).show() }
+                finally { if (entry?.key == key) { session.preparingSource = false; session.sourceMessage = null } }
             }
             return
         }
@@ -901,7 +919,7 @@ class PlayerActivity : ComponentActivity() {
         /** Plays [items] starting at [index]: left/right (channels) or next episode move through them. */
         fun start(context: Context, items: List<QueueItem>, index: Int, preview: LivePreviewLease? = null) {
             val selected = items.getOrNull(index) ?: return
-            if (selected.urls.isEmpty() && selected.entry.animeRef == null && selected.entry.sourceRef == null && selected.entry.fourURef == null) return
+            if (selected.urls.isEmpty() && selected.entry.animeRef == null && selected.entry.sourceRef == null && selected.entry.fourURef == null && selected.entry.primeRef == null) return
             PlayerQueue.items = items
             PlayerQueue.index = index
             val token = preview?.takeIf { selected.entry.isLive && it.readyFor(selected.entry.key) }?.let(LivePreviewLease::offer)

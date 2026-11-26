@@ -522,6 +522,8 @@ private fun DetailContent(
 
         item { Column(Modifier.padding(horizontal = 16.dp)) {
             SourceWatchButton(info.sourceLookup().copy(providerId = "4u"), onOpenSources, Modifier.fillMaxWidth(), label = "4U")
+            Spacer(Modifier.height(12.dp))
+            SourceWatchButton(info.sourceLookup().copy(providerId = "prime"), onOpenSources, Modifier.fillMaxWidth(), label = "Prime")
         } }
 
         if (!isAnime) {

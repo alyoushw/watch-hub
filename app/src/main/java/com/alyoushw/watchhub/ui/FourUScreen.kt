@@ -29,6 +29,7 @@ fun FourULiveChannels() {
     val active by settings.xtream.collectAsStateWithLifecycle()
     val usable = accounts.filter { it.isComplete }
     var fourU by rememberSaveable { mutableStateOf(!active.isComplete) }
+    var prime by rememberSaveable { mutableStateOf(false) }
     // Held sideways the account chips sit beside the search, so the lists keep the height.
     val sideways = isWideShort()
     val chips: @Composable () -> Unit = {
@@ -38,17 +39,18 @@ fun FourULiveChannels() {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items(usable, key = { it.id }) { acc ->
-                FilterChip(selected = !fourU && active.id == acc.id,
-                    onClick = { fourU = false; settings.setActiveXtream(acc.id) },
+                FilterChip(selected = !prime && !fourU && active.id == acc.id,
+                    onClick = { prime = false; fourU = false; settings.setActiveXtream(acc.id) },
                     label = { Text(acc.label) }, modifier = Modifier.focusFrame())
             }
-            item { FilterChip(selected = fourU || usable.isEmpty(), onClick = { fourU = true }, label = { Text("4U") }, modifier = Modifier.focusFrame()) }
+            item { FilterChip(selected = !prime && (fourU || usable.isEmpty()), onClick = { prime = false; fourU = true }, label = { Text("4U") }, modifier = Modifier.focusFrame()) }
+            item { FilterChip(selected = prime, onClick = { prime = true }, label = { Text("Prime") }, modifier = Modifier.focusFrame()) }
         }
     }
     Column(Modifier.fillMaxSize()) {
-        if (!sideways) chips()
+        if (!sideways || prime) chips()
         Box(Modifier.weight(1f)) {
-            LiveChannels(showAccounts = false, accountOverride = FourU.account.takeIf { fourU || usable.isEmpty() }, leading = if (sideways) chips else null)
+            if (prime) PrimeLiveChannels() else LiveChannels(showAccounts = false, accountOverride = FourU.account.takeIf { fourU || usable.isEmpty() }, leading = if (sideways) chips else null)
         }
     }
 }

@@ -122,6 +122,7 @@ class WatchHubApp : Application() {
             }
             previous?.uncaughtException(thread, error)
         }
+        com.alyoushw.watchhub.data.Prime.initialize(this)
         com.alyoushw.watchhub.data.FourU.initialize(this)
         com.alyoushw.watchhub.data.FourU.warm()
         container = AppContainer(this)

@@ -190,6 +190,10 @@ private fun AnimeContent(vm: AnimeDetailViewModel, anime: JAnime, onOpen: (Media
             SourceWatchButton(SourceLookup(SourceQuery(if (lookup.movie) MediaType.MOVIE else MediaType.ANIME, anime.malId, lookup.searchTitle,
                 0, searchTitle = lookup.title), lookup.title, lookup.overview, lookup.overviewIsEnglish, lookup.poster, providerId = "4u"),
                 onOpenSources, Modifier.fillMaxWidth(), label = "4U")
+            Spacer(Modifier.height(12.dp))
+            SourceWatchButton(SourceLookup(SourceQuery(if (lookup.movie) MediaType.MOVIE else MediaType.ANIME, anime.malId, lookup.searchTitle,
+                0, searchTitle = lookup.title), lookup.title, lookup.overview, lookup.overviewIsEnglish, lookup.poster, providerId = "prime"),
+                onOpenSources, Modifier.fillMaxWidth(), label = "Prime")
         } }
 
         item { Column(Modifier.padding(horizontal = 16.dp)) { AnimeifyWatchButton(anime.animeLookup(), onOpenAnime, Modifier.fillMaxWidth()) } }

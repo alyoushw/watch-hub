@@ -97,6 +97,8 @@ class WatchlistViewModel(private val container: AppContainer) : ViewModel() {
             val fromSubtitle = episodeNo.find(e.subtitle.orEmpty())?.let { EpisodeMark(it.groupValues[1].toInt(), it.groupValues[2].toInt()) }
             val ref = e.animeRef
             when {
+                e.primeRef?.query != null -> e.primeRef.query.takeIf { it.type == MediaType.TV && it.episode != null }
+                    ?.let { q -> keep(q.tmdbId, EpisodeMark(q.season ?: 1, q.episode!!)) }
                 e.sourceRef != null -> e.sourceRef.query.takeIf { it.type == MediaType.TV && it.episode != null }
                     ?.let { q -> keep(q.tmdbId, EpisodeMark(q.season ?: 1, q.episode!!)) }
                 e.fourURef != null -> {
