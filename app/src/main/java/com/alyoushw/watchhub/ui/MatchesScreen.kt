@@ -117,17 +117,27 @@ fun MatchesScreen(onOpenMatchSettings: () -> Unit) {
     var openMatch by remember { mutableStateOf<LiveMatch?>(null) }
     var club by remember { mutableStateOf<ClubRef?>(null) }
 
-    LaunchedEffect(favTeams) {
+    // One board per league per day (the feed refuses date ranges), only for the leagues that matter to you; the
+    // next 7 days load in turn, and each club's own page adds its coming match. Scores refresh every minute.
+    LaunchedEffect(favLeagues, favTeams) {
+        val leagueList = ScoresApi.relevant(favLeagues, favTeams)
+        val store = HashMap<String, LiveMatch>()
+        var round = 0
         while (true) {
-            runCatching { ScoresApi.fetch() }.onSuccess { board ->
-                // Each chosen club's own schedule too, so its matches show even when the league board misses them.
+            if (round % 5 == 0) {
                 val own = coroutineScope {
                     favTeams.map { k -> async { runCatching { ScoresApi.teamMatches(k.substringBefore(':'), k.substringAfter(':')) }.getOrDefault(emptyList()) } }
                         .map { it.await() }.flatten()
                 }
-                all = (board + own).distinctBy { it.id }.sortedBy { it.startMs }
-                failed = false
-            }.onFailure { if (all == null) failed = true }
+                own.forEach { store.putIfAbsent(it.id, it) }
+            }
+            for (off in 0..6) {
+                runCatching { ScoresApi.fetchDay(LocalDate.now().plusDays(off.toLong()), leagueList) }
+                    .onSuccess { list -> list.forEach { store[it.id] = it }; failed = false }
+                    .onFailure { if (store.isEmpty()) failed = true }
+                all = store.values.sortedBy { it.startMs }
+            }
+            round++
             delay(60_000)
         }
     }

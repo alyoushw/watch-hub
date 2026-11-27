@@ -74,21 +74,44 @@ object ScoresApi {
         }
     }
 
-    /** Matches from yesterday to [days] days ahead, every league (a league that fails is skipped). */
-    suspend fun fetch(days: Int = 7): List<LiveMatch> = coroutineScope {
-        val from = LocalDate.now().minusDays(1)
-        val range = "${from.format(day)}-${from.plusDays((days + 1).toLong()).format(day)}"
-        val results = leagues.map { l -> async { runCatching { leagueMatches(l, range) } } }.map { it.await() }
-        // Every league failing means the feed itself is unreachable: say so instead of showing "no matches".
-        if (results.all { it.isFailure }) throw (results.first().exceptionOrNull() ?: java.io.IOException("scores"))
-        results.mapNotNull { it.getOrNull() }.flatten().distinctBy { it.leagueSlug + it.id }.sortedBy { it.startMs }
+    /** Which leagues' boards are worth asking: the chosen leagues, the leagues of the chosen clubs, and the cups when clubs are chosen. */
+    fun relevant(favLeagues: Set<String>, favTeams: Set<String>): List<LeagueInfo> {
+        val slugs = HashSet<String>(favLeagues)
+        favTeams.forEach { slugs += it.substringBefore(':') }
+        if (favTeams.isNotEmpty()) leagues.filter { !isDomestic(it.slug) }.forEach { slugs += it.slug }
+        return leagues.filter { it.slug in slugs }
     }
 
-    private suspend fun leagueMatches(l: LeagueInfo, range: String): List<LiveMatch> {
-        val j = get("$BASE/${l.slug}/scoreboard?dates=$range&limit=300") ?: return emptyList()
+    private val boards = ConcurrentHashMap<String, Pair<Long, List<LiveMatch>>>()
+
+    /**
+     * One league's board for one ESPN day. (A date range makes the feed answer 400, so each day is asked on its
+     * own.) Today's board is refreshed often (scores), the rest is kept for a while.
+     */
+    private suspend fun board(l: LeagueInfo, espnDay: LocalDate, fresh: Long): List<LiveMatch> {
+        val key = l.slug + "|" + espnDay.format(day)
+        boards[key]?.let { (at, list) -> if (System.currentTimeMillis() - at < fresh) return list }
+        val j = get("$BASE/${l.slug}/scoreboard?dates=${espnDay.format(day)}") ?: return boards[key]?.second.orEmpty()
         j.optJSONArray("leagues")?.optJSONObject(0)?.optJSONArray("logos")?.optJSONObject(0)?.optString("href")
             ?.takeIf { it.isNotBlank() }?.let { leagueLogos[l.slug] = it }
-        return parseEvents(j.optJSONArray("events"), l)
+        val list = parseEvents(j.optJSONArray("events"), l)
+        boards[key] = System.currentTimeMillis() to list
+        return list
+    }
+
+    /**
+     * The matches of one local day for [leagueList]. ESPN counts days in US time, so a late-evening or after-midnight
+     * kick-off here can sit on the day before: both days are asked, and the caller keeps the ones of its own day.
+     */
+    suspend fun fetchDay(localDay: LocalDate, leagueList: List<LeagueInfo>): List<LiveMatch> = coroutineScope {
+        val today = LocalDate.now()
+        val tasks = leagueList.flatMap { l -> listOf(localDay.minusDays(1), localDay).map { d ->
+            async { runCatching { board(l, d, if (d >= today.minusDays(1) && d <= today) 60_000L else 15 * 60_000L) } }
+        } }
+        val results = tasks.map { it.await() }
+        // Every request failing means the feed itself is unreachable: say so instead of showing "no matches".
+        if (results.isNotEmpty() && results.all { it.isFailure }) throw (results.first().exceptionOrNull() ?: java.io.IOException("scores"))
+        results.mapNotNull { it.getOrNull() }.flatten().distinctBy { it.id }.sortedBy { it.startMs }
     }
 
     private fun parseEvents(events: JSONArray?, l: LeagueInfo): List<LiveMatch> {
@@ -185,11 +208,12 @@ object ScoresApi {
         }.sortedBy { it.pos }
     }
 
-    /** A team's matches (finished and coming) from its schedule. */
+    /** A team's matches: the finished ones from its schedule, and the coming one(s) from its page ("nextEvent"). */
     suspend fun teamMatches(slug: String, teamId: String): List<LiveMatch> {
         val l = league(slug) ?: return emptyList()
-        val j = get("$BASE/$slug/teams/$teamId/schedule") ?: return emptyList()
-        return parseEvents(j.optJSONArray("events"), l).sortedBy { it.startMs }
+        val past = runCatching { get("$BASE/$slug/teams/$teamId/schedule")?.optJSONArray("events") }.getOrNull()
+        val next = runCatching { get("$BASE/$slug/teams/$teamId")?.optJSONObject("team")?.optJSONArray("nextEvent") }.getOrNull()
+        return (parseEvents(past, l) + parseEvents(next, l)).distinctBy { it.id }.sortedBy { it.startMs }
     }
 }
 
@@ -199,7 +223,7 @@ object ArabicNames {
         "alhilal" to "الهلال", "alnassr" to "النصر", "alittihad" to "الاتحاد", "alahli" to "الأهلي", "alahlisaudi" to "الأهلي",
         "alshabab" to "الشباب", "alfateh" to "الفتح", "altaawoun" to "التعاون", "alraed" to "الرائد", "alkhaleej" to "الخليج",
         "alhazem" to "الحزم", "damac" to "ضمك", "alqadsiah" to "القادسية", "alfayha" to "الفيحاء", "alokhdood" to "الأخدود",
-        "alriyadh" to "الرياض", "alkholood" to "الخلود", "alettifaq" to "الاتفاق", "alettifaqfc" to "الاتفاق", "neom" to "نيوم",
+        "alriyadh" to "الرياض", "abha" to "أبها", "aldiriyah" to "الدرعية", "alfaisaly" to "الفيصلي", "neomsc" to "نيوم", "alkholood" to "الخلود", "alettifaq" to "الاتفاق", "alettifaqfc" to "الاتفاق", "neom" to "نيوم",
         "realmadrid" to "ريال مدريد", "barcelona" to "برشلونة", "atleticomadrid" to "أتلتيكو مدريد", "sevilla" to "إشبيلية",
         "valencia" to "فالنسيا", "villarreal" to "فياريال", "athleticclub" to "أتلتيك بلباو", "realsociedad" to "ريال سوسيداد",
         "realbetis" to "ريال بيتيس", "alaves" to "ألافيس", "girona" to "جيرونا",
