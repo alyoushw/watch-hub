@@ -33,7 +33,11 @@ data class LiveMatch(
     val startMs: Long,
     /** The channels the feed says carry it, when it says (often empty or not the ones in this region). */
     val broadcasts: List<String>,
+    val goals: List<GoalEvent> = emptyList(),
 )
+
+/** One goal of a match, from the feed's match details ("scoringPlay"). */
+data class GoalEvent(val teamId: String, val player: String, val minute: String, val penalty: Boolean, val own: Boolean)
 
 /** League → name shown, and the channel names usually carrying it here (only a starting point). */
 data class LeagueInfo(val slug: String, val name: String, val keywords: List<String>)
@@ -59,14 +63,29 @@ object ScoresApi {
         LeagueInfo("afc.champions", "دوري أبطال آسيا", listOf("ssc", "bein")),
     )
 
-    fun league(slug: String) = leagues.firstOrNull { it.slug == slug }
+    /** The cups played next to the leagues (shown only for the clubs you chose). */
+    val cups = listOf(
+        LeagueInfo("ksa.kings.cup", "كأس خادم الحرمين الشريفين", listOf("ssc", "ثمانية")),
+        LeagueInfo("afc.cup", "دوري أبطال آسيا 2", listOf("ssc", "bein")),
+        LeagueInfo("fifa.intercontinental_cup", "كأس الإنتركونتيننتال", listOf("bein")),
+        LeagueInfo("uefa.europa.conf", "دوري المؤتمر الأوروبي", listOf("bein")),
+        LeagueInfo("eng.fa", "كأس الاتحاد الإنجليزي", listOf("bein")),
+        LeagueInfo("eng.league_cup", "كأس الرابطة الإنجليزية", listOf("bein")),
+        LeagueInfo("ita.coppa_italia", "كأس إيطاليا", listOf("bein")),
+        LeagueInfo("esp.copa_del_rey", "كأس ملك إسبانيا", listOf("bein")),
+        LeagueInfo("ger.dfb_pokal", "كأس ألمانيا", listOf("bein")),
+        LeagueInfo("fra.coupe_de_france", "كأس فرنسا", listOf("bein")),
+    )
+
+    fun league(slug: String): LeagueInfo? = leagues.firstOrNull { it.slug == slug } ?: cups.firstOrNull { it.slug == slug }
 
     /** League crests the feed gave us (filled while loading matches). */
     val leagueLogos = ConcurrentHashMap<String, String>()
 
     private const val BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer"
-    private val client = OkHttpClient.Builder().callTimeout(15, TimeUnit.SECONDS).build()
-    private val day = DateTimeFormatter.ofPattern("yyyyMMdd")
+    private val client = OkHttpClient.Builder().callTimeout(20, TimeUnit.SECONDS).build()
+    private val ymd = DateTimeFormatter.ofPattern("yyyyMMdd")
+    private val ym = DateTimeFormatter.ofPattern("yyyyMM")
 
     private suspend fun get(url: String): JSONObject? = withContext(Dispatchers.IO) {
         client.newCall(Request.Builder().url(url).build()).execute().use { r ->
@@ -74,40 +93,48 @@ object ScoresApi {
         }
     }
 
-    /** Which leagues' boards are worth asking: the chosen leagues, the leagues of the chosen clubs, and the cups when clubs are chosen. */
+    /**
+     * Which competitions are worth asking: the chosen leagues, the leagues of the chosen clubs, and — when clubs are
+     * chosen — the cups and continental games those clubs play (Saudi clubs: the King's Cup and Asia; the others: Europe
+     * and their own cups).
+     */
     fun relevant(favLeagues: Set<String>, favTeams: Set<String>): List<LeagueInfo> {
         val slugs = HashSet<String>(favLeagues)
         favTeams.forEach { slugs += it.substringBefore(':') }
-        if (favTeams.isNotEmpty()) leagues.filter { !isDomestic(it.slug) }.forEach { slugs += it.slug }
-        return leagues.filter { it.slug in slugs }
+        val countries = slugs.map { it.substringBefore('.') }.toSet()
+        val out = leagues.filter { it.slug in slugs }.toMutableList()
+        if (favTeams.isNotEmpty()) {
+            out += leagues.filter { it.slug !in slugs && !isDomestic(it.slug) && (if ("ksa" in countries) it.slug.startsWith("afc.") else it.slug.startsWith("uefa.")) }
+            out += cups.filter { it.slug.substringBefore('.') in countries || (it.slug.startsWith("uefa.") && countries.any { c -> c != "ksa" }) || (it.slug.startsWith("fifa.") && "ksa" in countries) }
+        }
+        return out.distinctBy { it.slug }
     }
 
-    private val boards = ConcurrentHashMap<String, Pair<Long, List<LiveMatch>>>()
+    private class Board(val at: Long, val ttl: Long, val list: List<LiveMatch>)
+    private val boards = ConcurrentHashMap<String, Board>()
 
     /**
-     * One league's board for one ESPN day. (A date range makes the feed answer 400, so each day is asked on its
-     * own.) Today's board is refreshed often (scores), the rest is kept for a while.
+     * One competition's board for a whole month (the feed refuses date ranges but gives a month in one answer). A board with
+     * a match on now is asked again every minute (scores); the others are kept for a quarter of an hour.
      */
-    private suspend fun board(l: LeagueInfo, espnDay: LocalDate, fresh: Long): List<LiveMatch> {
-        val key = l.slug + "|" + espnDay.format(day)
-        boards[key]?.let { (at, list) -> if (System.currentTimeMillis() - at < fresh) return list }
-        val j = get("$BASE/${l.slug}/scoreboard?dates=${espnDay.format(day)}") ?: return boards[key]?.second.orEmpty()
+    private suspend fun board(l: LeagueInfo, month: String): List<LiveMatch> {
+        val key = l.slug + "|" + month
+        boards[key]?.let { b -> if (System.currentTimeMillis() - b.at < b.ttl) return b.list }
+        val j = get("$BASE/${l.slug}/scoreboard?dates=$month&limit=500") ?: return boards[key]?.list.orEmpty()
         j.optJSONArray("leagues")?.optJSONObject(0)?.optJSONArray("logos")?.optJSONObject(0)?.optString("href")
             ?.takeIf { it.isNotBlank() }?.let { leagueLogos[l.slug] = it }
         val list = parseEvents(j.optJSONArray("events"), l)
-        boards[key] = System.currentTimeMillis() to list
+        val now = System.currentTimeMillis()
+        val live = list.any { it.state == "in" || kotlin.math.abs(it.startMs - now) < 3 * 3600_000L }
+        boards[key] = Board(now, if (live) 60_000L else 15 * 60_000L, list)
         return list
     }
 
-    /**
-     * The matches of one local day for [leagueList]. ESPN counts days in US time, so a late-evening or after-midnight
-     * kick-off here can sit on the day before: both days are asked, and the caller keeps the ones of its own day.
-     */
-    suspend fun fetchDay(localDay: LocalDate, leagueList: List<LeagueInfo>): List<LiveMatch> = coroutineScope {
+    /** Every match of the months that hold the next [days] days, for [leagueList]. */
+    suspend fun fetchMonths(days: Int, leagueList: List<LeagueInfo>): List<LiveMatch> = coroutineScope {
         val today = LocalDate.now()
-        val tasks = leagueList.flatMap { l -> listOf(localDay.minusDays(1), localDay).map { d ->
-            async { runCatching { board(l, d, if (d >= today.minusDays(1) && d <= today) 60_000L else 15 * 60_000L) } }
-        } }
+        val months = listOf(today.minusDays(1), today.plusDays(days.toLong())).map { it.format(ym) }.distinct()
+        val tasks = leagueList.flatMap { l -> months.map { m -> async { runCatching { board(l, m) } } } }
         val results = tasks.map { it.await() }
         // Every request failing means the feed itself is unreachable: say so instead of showing "no matches".
         if (results.isNotEmpty() && results.all { it.isFailure }) throw (results.first().exceptionOrNull() ?: java.io.IOException("scores"))
@@ -134,17 +161,30 @@ object ScoresApi {
                 val st = e.optJSONObject("status") ?: c.optJSONObject("status")
                 val names = mutableListOf<String>()
                 c.optJSONArray("broadcasts")?.let { b -> for (j in 0 until b.length()) b.getJSONObject(j).optJSONArray("names")?.let { n -> for (k in 0 until n.length()) names += n.getString(k) } }
+                val goals = mutableListOf<GoalEvent>()
+                c.optJSONArray("details")?.let { d ->
+                    for (g in 0 until d.length()) {
+                        val x = d.optJSONObject(g) ?: continue
+                        if (!x.optBoolean("scoringPlay") || x.optBoolean("shootout")) continue
+                        val who = x.optJSONArray("athletesInvolved")?.optJSONObject(0)
+                        goals += GoalEvent(
+                            x.optJSONObject("team")?.optString("id").orEmpty(),
+                            who?.optString("shortName")?.ifBlank { null } ?: who?.optString("displayName").orEmpty(),
+                            x.optJSONObject("clock")?.optString("displayValue").orEmpty(), x.optBoolean("penaltyKick"), x.optBoolean("ownGoal"),
+                        )
+                    }
+                }
                 add(LiveMatch(
-                    id = e.optString("id"), league = l.name, leagueSlug = l.slug,
+                    id = e.optString("id"), league = KulliqNames.competitions[l.slug]?.first ?: l.name, leagueSlug = l.slug,
                     homeId = ht?.optString("id").orEmpty(), awayId = at?.optString("id").orEmpty(),
-                    home = ArabicNames.of(ht?.optString("shortDisplayName").orEmpty().ifBlank { ht?.optString("displayName").orEmpty() }),
-                    away = ArabicNames.of(at?.optString("shortDisplayName").orEmpty().ifBlank { at?.optString("displayName").orEmpty() }),
+                    home = ArabicNames.of(ht?.optString("shortDisplayName").orEmpty().ifBlank { ht?.optString("displayName").orEmpty() }, ht?.optString("id")),
+                    away = ArabicNames.of(at?.optString("shortDisplayName").orEmpty().ifBlank { at?.optString("displayName").orEmpty() }, at?.optString("id")),
                     homeLogo = logoOf(ht), awayLogo = logoOf(at),
                     homeScore = scoreOf(home), awayScore = scoreOf(away),
                     state = st?.optJSONObject("type")?.optString("state").orEmpty().ifBlank { "pre" },
                     clock = st?.optString("displayClock").orEmpty(),
                     startMs = runCatching { Instant.parse(e.optString("date").let { if (it.length == 17) it.dropLast(1) + ":00Z" else it }).toEpochMilli() }.getOrDefault(0L),
-                    broadcasts = names.distinct(),
+                    broadcasts = names.distinct(), goals = goals,
                 ))
             }
         }
@@ -175,7 +215,7 @@ object ScoresApi {
                 val t = arr.optJSONObject(i)?.optJSONObject("team") ?: continue
                 add(TeamInfo(
                     id = t.optString("id"),
-                    name = ArabicNames.of(t.optString("shortDisplayName").ifBlank { t.optString("displayName") }),
+                    name = ArabicNames.of(t.optString("shortDisplayName").ifBlank { t.optString("displayName") }, t.optString("id")),
                     logo = t.optJSONArray("logos")?.optJSONObject(0)?.optString("href")?.ifBlank { null } ?: t.optString("logo").ifBlank { null },
                     colorHex = t.optString("color").ifBlank { null }?.let { "#$it" },
                     leagueSlug = slug,
@@ -198,7 +238,7 @@ object ScoresApi {
                 e.optJSONArray("stats")?.let { s -> for (k in 0 until s.length()) s.optJSONObject(k)?.let { stats[it.optString("name")] = it.optDouble("value", 0.0) } }
                 add(StandingRow(
                     pos = (stats["rank"] ?: (i + 1).toDouble()).toInt(), teamId = team.optString("id"),
-                    team = ArabicNames.of(team.optString("shortDisplayName").ifBlank { team.optString("displayName") }),
+                    team = ArabicNames.of(team.optString("shortDisplayName").ifBlank { team.optString("displayName") }, team.optString("id")),
                     logo = team.optJSONArray("logos")?.optJSONObject(0)?.optString("href")?.ifBlank { null },
                     played = (stats["gamesPlayed"] ?: 0.0).toInt(), won = (stats["wins"] ?: 0.0).toInt(),
                     drawn = (stats["ties"] ?: 0.0).toInt(), lost = (stats["losses"] ?: 0.0).toInt(),
@@ -240,8 +280,9 @@ object ArabicNames {
         "benfica" to "بنفيكا", "porto" to "بورتو", "ajax" to "أياكس", "celtic" to "سلتيك",
     )
 
-    fun of(name: String): String {
+    fun of(name: String, id: String? = null): String {
         if (name.isBlank()) return name
+        if (!id.isNullOrBlank()) KulliqNames.teams[id]?.let { return it }
         val key = name.lowercase().replace(Regex("[^\\p{L}\\p{Nd}]+"), "").removeSuffix("fc").removeSuffix("cf")
         return map[key] ?: map[name.lowercase().replace(Regex("[^\\p{L}\\p{Nd}]+"), "")] ?: name
     }

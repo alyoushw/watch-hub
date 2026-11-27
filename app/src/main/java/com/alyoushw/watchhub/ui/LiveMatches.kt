@@ -72,7 +72,7 @@ private class Source(val account: com.alyoushw.watchhub.data.XtreamAccount, val 
 internal fun MatchSourcesDialog(m: LiveMatch, onClose: () -> Unit) {
     val container = appContainer()
     val context = LocalContext.current
-    val league = remember { ScoresApi.leagues.firstOrNull { it.slug == m.leagueSlug } }
+    val league = remember { ScoresApi.league(m.leagueSlug) }
     val keywords = remember { league?.keywords.orEmpty() }
     var query by remember { mutableStateOf(keywords.firstOrNull().orEmpty()) }
     var all by remember { mutableStateOf<List<Source>?>(null) }

@@ -117,8 +117,8 @@ fun MatchesScreen(onOpenMatchSettings: () -> Unit) {
     var openMatch by remember { mutableStateOf<LiveMatch?>(null) }
     var club by remember { mutableStateOf<ClubRef?>(null) }
 
-    // One board per league per day (the feed refuses date ranges), only for the leagues that matter to you; the
-    // next 7 days load in turn, and each club's own page adds its coming match. Scores refresh every minute.
+    // One board per competition per month (the feed refuses date ranges but gives a month at once), only for the
+    // competitions that matter to you; each club's own page adds its coming match. A live match refreshes every minute.
     LaunchedEffect(favLeagues, favTeams) {
         val leagueList = ScoresApi.relevant(favLeagues, favTeams)
         val store = HashMap<String, LiveMatch>()
@@ -131,12 +131,10 @@ fun MatchesScreen(onOpenMatchSettings: () -> Unit) {
                 }
                 own.forEach { store.putIfAbsent(it.id, it) }
             }
-            for (off in 0..6) {
-                runCatching { ScoresApi.fetchDay(LocalDate.now().plusDays(off.toLong()), leagueList) }
-                    .onSuccess { list -> list.forEach { store[it.id] = it }; failed = false }
-                    .onFailure { if (store.isEmpty()) failed = true }
-                all = store.values.sortedBy { it.startMs }
-            }
+            runCatching { ScoresApi.fetchMonths(7, leagueList) }
+                .onSuccess { list -> list.forEach { store[it.id] = it }; failed = false }
+                .onFailure { if (store.isEmpty()) failed = true }
+            all = store.values.sortedBy { it.startMs }
             round++
             delay(60_000)
         }
@@ -243,6 +241,20 @@ private fun MatchRow(m: LiveMatch, favIds: Set<String>, onClick: () -> Unit) {
             TeamLine(m.awayLogo, m.away, if (m.state == "pre") "" else m.awayScore, m.awayId in favIds)
         }
         Text("المصادر ›", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+    }
+    GoalsLine(m)
+}
+
+/** Who scored and when, under a started match: «Mitrovic 23', 41' · Jota 58'». */
+@Composable
+private fun GoalsLine(m: LiveMatch) {
+    if (m.state == "pre" || m.goals.isEmpty()) return
+    fun side(id: String) = m.goals.filter { it.teamId == id }.groupBy { it.player }
+        .map { (p, g) -> p + " " + g.joinToString("، ") { x -> x.minute + (if (x.penalty) " (ج)" else "") + (if (x.own) " (عكسي)" else "") } }
+    val h = side(m.homeId); val a = side(m.awayId)
+    Column(Modifier.fillMaxWidth().padding(start = 78.dp, end = 14.dp, bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        if (h.isNotEmpty()) Text("⚽ " + m.home + ": " + h.joinToString(" · "), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (a.isNotEmpty()) Text("⚽ " + m.away + ": " + a.joinToString(" · "), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
