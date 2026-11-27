@@ -423,6 +423,9 @@ fun HomeScreen(
     }
 
     var live by rememberSaveable { mutableStateOf(false) }
+    // «مباريات»: the matches, tables and clubs tab (full page, like «مباشر»).
+    var matchesTab by rememberSaveable { mutableStateOf(false) }
+    androidx.activity.compose.BackHandler(enabled = matchesTab) { matchesTab = false }
     // «مباشر» takes the whole screen (no bottom bar); Back returns to the series tab.
     LaunchedEffect(live) { onLiveChange(live) }
     androidx.activity.compose.BackHandler(enabled = live) { live = false }
@@ -450,10 +453,12 @@ fun HomeScreen(
     val header: @Composable () -> Unit = {
         HeroTabs(
             selected = vm.type,
-            onSelect = { live = false; vm.selectType(it) },
+            onSelect = { live = false; matchesTab = false; vm.selectType(it) },
             onRefresh = { vm.refresh(); if (vm.type == MediaType.ANIME && !live) animeUpdates.refresh(true) },
             live = live,
-            onLive = { live = true },
+            onLive = { live = true; matchesTab = false },
+            matches = matchesTab,
+            onMatches = { matchesTab = true; live = false },
             selectedFocus = tabFocus,
             restoreFocus = if (isTv()) restoreTabFocus else null,
         )
@@ -462,6 +467,7 @@ fun HomeScreen(
     // a car screen needs no aim at the small tab names. Rows that scroll sideways keep their swipe.
     val order = listOf<MediaType?>(null, MediaType.TV, MediaType.MOVIE, MediaType.ANIME)
     fun moveTab(step: Int) {
+        if (matchesTab) return
         val now = if (live) 0 else order.indexOf(vm.type).coerceAtLeast(1)
         val next = (now + step).coerceIn(0, order.lastIndex)
         if (next == now) return
@@ -491,6 +497,11 @@ fun HomeScreen(
         when {
             // Phones: «مباشر» fills the screen alone; Back brings the tabs again. TVs keep the tabs.
             // «مباشر» keeps the home tabs on top (one tap to series/films); held sideways the lists take the full height.
+            matchesTab -> Column(Modifier.fillMaxSize()) {
+                header()
+                MatchesScreen(onOpenMatchSettings = { container.openMatchSettings.value = true })
+            }
+
             live -> Column(if (tv || !isWideShort()) Modifier else Modifier.statusBarsPadding()) {
                 if (tv || !isWideShort()) header()
                 XtreamLiveChannels(onOpenSettings)
@@ -554,7 +565,6 @@ fun HomeScreen(
                     item(key = "continue") { ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true },
                     onOpenAnime = { onOpenAnime(it.animeLookup()) },
                     animeMovies = when (vm.type) { MediaType.TV -> false; MediaType.MOVIE -> true; else -> null }) }
-                    item(key = "matches") { LiveMatchesRow() }
                     item(key = "foryou") { ForYouRow(vm.type, onOpen) }
                     if (vm.type == MediaType.ANIME) {
                         item(key = "animeify-latest") {

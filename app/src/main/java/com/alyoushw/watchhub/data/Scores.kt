@@ -6,15 +6,22 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
-/** One football match for the home row. [state] is "in" (playing), "pre" (not started) or "post" (finished). */
+/** One football match. [state] is "in" (playing), "pre" (not started) or "post" (finished). */
 data class LiveMatch(
     val id: String,
     val league: String,
     val leagueSlug: String,
+    val homeId: String,
+    val awayId: String,
+    /** Arabic when known, else the feed's name. */
     val home: String,
     val away: String,
     val homeLogo: String?,
@@ -28,10 +35,17 @@ data class LiveMatch(
     val broadcasts: List<String>,
 )
 
-/** League → name shown, and the channel names usually carrying it here (editable later; only a starting point). */
+/** League → name shown, and the channel names usually carrying it here (only a starting point). */
 data class LeagueInfo(val slug: String, val name: String, val keywords: List<String>)
 
-/** Today's matches from ESPN's public scoreboard (unofficial, no key). */
+data class TeamInfo(val id: String, val name: String, val logo: String?, val colorHex: String?, val leagueSlug: String)
+
+data class StandingRow(
+    val pos: Int, val teamId: String, val team: String, val logo: String?,
+    val played: Int, val won: Int, val drawn: Int, val lost: Int, val diff: Int, val points: Int,
+)
+
+/** Matches, tables and teams from ESPN's public football feed (unofficial, no key). */
 object ScoresApi {
     val leagues = listOf(
         LeagueInfo("ksa.1", "الدوري السعودي", listOf("ssc", "ثمانية")),
@@ -45,24 +59,43 @@ object ScoresApi {
         LeagueInfo("afc.champions", "دوري أبطال آسيا", listOf("ssc", "bein")),
     )
 
-    private val client = OkHttpClient.Builder().callTimeout(15, TimeUnit.SECONDS).build()
+    fun league(slug: String) = leagues.firstOrNull { it.slug == slug }
 
-    suspend fun fetch(): List<LiveMatch> = coroutineScope {
-        val results = leagues.map { l -> async { runCatching { league(l) } } }.map { it.await() }
-        // Every league failing means the feed itself is unreachable: say so instead of showing "no matches".
-        if (results.all { it.isFailure }) throw (results.first().exceptionOrNull() ?: java.io.IOException("scores"))
-        results.mapNotNull { it.getOrNull() }.flatten()
-            .sortedWith(compareBy<LiveMatch> { when (it.state) { "in" -> 0; "pre" -> 1; else -> 2 } }.thenBy { it.startMs })
+    /** League crests the feed gave us (filled while loading matches). */
+    val leagueLogos = ConcurrentHashMap<String, String>()
+
+    private const val BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer"
+    private val client = OkHttpClient.Builder().callTimeout(15, TimeUnit.SECONDS).build()
+    private val day = DateTimeFormatter.ofPattern("yyyyMMdd")
+
+    private suspend fun get(url: String): JSONObject? = withContext(Dispatchers.IO) {
+        client.newCall(Request.Builder().url(url).build()).execute().use { r ->
+            if (!r.isSuccessful) null else r.body?.string()?.let { JSONObject(it) }
+        }
     }
 
-    private suspend fun league(l: LeagueInfo): List<LiveMatch> = withContext(Dispatchers.IO) {
-        val url = "https://site.api.espn.com/apis/site/v2/sports/soccer/${l.slug}/scoreboard"
-        val body = client.newCall(Request.Builder().url(url).build()).execute().use { if (!it.isSuccessful) return@use null else it.body?.string() }
-            ?: return@withContext emptyList()
-        val events = JSONObject(body).optJSONArray("events") ?: return@withContext emptyList()
-        buildList {
+    /** Matches from yesterday to [days] days ahead, every league (a league that fails is skipped). */
+    suspend fun fetch(days: Int = 7): List<LiveMatch> = coroutineScope {
+        val from = LocalDate.now().minusDays(1)
+        val range = "${from.format(day)}-${from.plusDays((days + 1).toLong()).format(day)}"
+        val results = leagues.map { l -> async { runCatching { leagueMatches(l, range) } } }.map { it.await() }
+        // Every league failing means the feed itself is unreachable: say so instead of showing "no matches".
+        if (results.all { it.isFailure }) throw (results.first().exceptionOrNull() ?: java.io.IOException("scores"))
+        results.mapNotNull { it.getOrNull() }.flatten().distinctBy { it.leagueSlug + it.id }.sortedBy { it.startMs }
+    }
+
+    private suspend fun leagueMatches(l: LeagueInfo, range: String): List<LiveMatch> {
+        val j = get("$BASE/${l.slug}/scoreboard?dates=$range&limit=300") ?: return emptyList()
+        j.optJSONArray("leagues")?.optJSONObject(0)?.optJSONArray("logos")?.optJSONObject(0)?.optString("href")
+            ?.takeIf { it.isNotBlank() }?.let { leagueLogos[l.slug] = it }
+        return parseEvents(j.optJSONArray("events"), l)
+    }
+
+    private fun parseEvents(events: JSONArray?, l: LeagueInfo): List<LiveMatch> {
+        if (events == null) return emptyList()
+        return buildList {
             for (i in 0 until events.length()) {
-                val e = events.getJSONObject(i)
+                val e = events.optJSONObject(i) ?: continue
                 val c = e.optJSONArray("competitions")?.optJSONObject(0) ?: continue
                 val teams = c.optJSONArray("competitors") ?: continue
                 var home: JSONObject? = null
@@ -72,24 +105,106 @@ object ScoresApi {
                     if (team.optString("homeAway") == "home") home = team else away = team
                 }
                 if (home == null || away == null) continue
+                val ht = home.optJSONObject("team")
+                val at = away.optJSONObject("team")
                 val st = e.optJSONObject("status")
-                val state = st?.optJSONObject("type")?.optString("state").orEmpty().ifBlank { "pre" }
                 val names = mutableListOf<String>()
                 c.optJSONArray("broadcasts")?.let { b -> for (j in 0 until b.length()) b.getJSONObject(j).optJSONArray("names")?.let { n -> for (k in 0 until n.length()) names += n.getString(k) } }
                 add(LiveMatch(
-                    id = e.optString("id"),
-                    league = l.name, leagueSlug = l.slug,
-                    home = home.optJSONObject("team")?.optString("shortDisplayName").orEmpty(),
-                    away = away.optJSONObject("team")?.optString("shortDisplayName").orEmpty(),
-                    homeLogo = home.optJSONObject("team")?.optString("logo")?.ifBlank { null },
-                    awayLogo = away.optJSONObject("team")?.optString("logo")?.ifBlank { null },
+                    id = e.optString("id"), league = l.name, leagueSlug = l.slug,
+                    homeId = ht?.optString("id").orEmpty(), awayId = at?.optString("id").orEmpty(),
+                    home = ArabicNames.of(ht?.optString("shortDisplayName").orEmpty().ifBlank { ht?.optString("displayName").orEmpty() }),
+                    away = ArabicNames.of(at?.optString("shortDisplayName").orEmpty().ifBlank { at?.optString("displayName").orEmpty() }),
+                    homeLogo = ht?.optString("logo")?.ifBlank { null }, awayLogo = at?.optString("logo")?.ifBlank { null },
                     homeScore = home.optString("score", "0"), awayScore = away.optString("score", "0"),
-                    state = state,
+                    state = st?.optJSONObject("type")?.optString("state").orEmpty().ifBlank { "pre" },
                     clock = st?.optString("displayClock").orEmpty(),
                     startMs = runCatching { Instant.parse(e.optString("date").let { if (it.length == 17) it.dropLast(1) + ":00Z" else it }).toEpochMilli() }.getOrDefault(0L),
                     broadcasts = names.distinct(),
                 ))
             }
         }
+    }
+
+    private val teamCache = ConcurrentHashMap<String, List<TeamInfo>>()
+
+    /** Every team of a league (for choosing favourites and for club colours). */
+    suspend fun teams(slug: String): List<TeamInfo> {
+        teamCache[slug]?.let { return it }
+        val arr = get("$BASE/$slug/teams?limit=100")?.optJSONArray("sports")?.optJSONObject(0)?.optJSONArray("leagues")?.optJSONObject(0)?.optJSONArray("teams")
+            ?: return emptyList()
+        val out = buildList {
+            for (i in 0 until arr.length()) {
+                val t = arr.optJSONObject(i)?.optJSONObject("team") ?: continue
+                add(TeamInfo(
+                    id = t.optString("id"),
+                    name = ArabicNames.of(t.optString("shortDisplayName").ifBlank { t.optString("displayName") }),
+                    logo = t.optJSONArray("logos")?.optJSONObject(0)?.optString("href")?.ifBlank { null } ?: t.optString("logo").ifBlank { null },
+                    colorHex = t.optString("color").ifBlank { null }?.let { "#$it" },
+                    leagueSlug = slug,
+                ))
+            }
+        }
+        if (out.isNotEmpty()) teamCache[slug] = out
+        return out
+    }
+
+    /** The league table. */
+    suspend fun standings(slug: String): List<StandingRow> {
+        val entries = get("https://site.api.espn.com/apis/v2/sports/soccer/$slug/standings")
+            ?.optJSONArray("children")?.optJSONObject(0)?.optJSONObject("standings")?.optJSONArray("entries") ?: return emptyList()
+        return buildList {
+            for (i in 0 until entries.length()) {
+                val e = entries.optJSONObject(i) ?: continue
+                val team = e.optJSONObject("team") ?: continue
+                val stats = HashMap<String, Double>()
+                e.optJSONArray("stats")?.let { s -> for (k in 0 until s.length()) s.optJSONObject(k)?.let { stats[it.optString("name")] = it.optDouble("value", 0.0) } }
+                add(StandingRow(
+                    pos = (stats["rank"] ?: (i + 1).toDouble()).toInt(), teamId = team.optString("id"),
+                    team = ArabicNames.of(team.optString("shortDisplayName").ifBlank { team.optString("displayName") }),
+                    logo = team.optJSONArray("logos")?.optJSONObject(0)?.optString("href")?.ifBlank { null },
+                    played = (stats["gamesPlayed"] ?: 0.0).toInt(), won = (stats["wins"] ?: 0.0).toInt(),
+                    drawn = (stats["ties"] ?: 0.0).toInt(), lost = (stats["losses"] ?: 0.0).toInt(),
+                    diff = (stats["pointDifferential"] ?: 0.0).toInt(), points = (stats["points"] ?: 0.0).toInt(),
+                ))
+            }
+        }.sortedBy { it.pos }
+    }
+
+    /** A team's matches (finished and coming) from its schedule. */
+    suspend fun teamMatches(slug: String, teamId: String): List<LiveMatch> {
+        val l = league(slug) ?: return emptyList()
+        val j = get("$BASE/$slug/teams/$teamId/schedule") ?: return emptyList()
+        return parseEvents(j.optJSONArray("events"), l).sortedBy { it.startMs }
+    }
+}
+
+/** Arabic names for the clubs people look for most; the rest show the feed's name. */
+object ArabicNames {
+    private val map = mapOf(
+        "alhilal" to "الهلال", "alnassr" to "النصر", "alittihad" to "الاتحاد", "alahli" to "الأهلي", "alahlisaudi" to "الأهلي",
+        "alshabab" to "الشباب", "alfateh" to "الفتح", "altaawoun" to "التعاون", "alraed" to "الرائد", "alkhaleej" to "الخليج",
+        "alhazem" to "الحزم", "damac" to "ضمك", "alqadsiah" to "القادسية", "alfayha" to "الفيحاء", "alokhdood" to "الأخدود",
+        "alriyadh" to "الرياض", "alkholood" to "الخلود", "alettifaq" to "الاتفاق", "alettifaqfc" to "الاتفاق", "neom" to "نيوم",
+        "realmadrid" to "ريال مدريد", "barcelona" to "برشلونة", "atleticomadrid" to "أتلتيكو مدريد", "sevilla" to "إشبيلية",
+        "valencia" to "فالنسيا", "villarreal" to "فياريال", "athleticclub" to "أتلتيك بلباو", "realsociedad" to "ريال سوسيداد",
+        "realbetis" to "ريال بيتيس", "alaves" to "ألافيس", "girona" to "جيرونا",
+        "manchestercity" to "مانشستر سيتي", "manchesterunited" to "مانشستر يونايتد", "liverpool" to "ليفربول", "arsenal" to "أرسنال",
+        "chelsea" to "تشيلسي", "tottenhamhotspur" to "توتنهام", "tottenham" to "توتنهام", "newcastleunited" to "نيوكاسل",
+        "astonvilla" to "أستون فيلا", "brighton" to "برايتون", "westhamunited" to "وست هام", "brentford" to "برينتفورد",
+        "everton" to "إيفرتون", "fulham" to "فولهام", "crystalpalace" to "كريستال بالاس", "wolverhamptonwanderers" to "وولفرهامبتون",
+        "bayernmunich" to "بايرن ميونخ", "bayernmünchen" to "بايرن ميونخ", "borussiadortmund" to "دورتموند", "bayerleverkusen" to "ليفركوزن",
+        "rbleipzig" to "لايبزيغ", "hamburgsv" to "هامبورغ", "hamburger" to "هامبورغ",
+        "parissaintgermain" to "باريس سان جيرمان", "psg" to "باريس سان جيرمان", "marseille" to "مارسيليا", "lyon" to "ليون",
+        "monaco" to "موناكو", "lille" to "ليل", "lorient" to "لوريان",
+        "juventus" to "يوفنتوس", "intermilan" to "إنتر ميلان", "internazionale" to "إنتر ميلان", "inter" to "إنتر ميلان",
+        "acmilan" to "ميلان", "milan" to "ميلان", "napoli" to "نابولي", "roma" to "روما", "lazio" to "لاتسيو", "atalanta" to "أتالانتا",
+        "benfica" to "بنفيكا", "porto" to "بورتو", "ajax" to "أياكس", "celtic" to "سلتيك",
+    )
+
+    fun of(name: String): String {
+        if (name.isBlank()) return name
+        val key = name.lowercase().replace(Regex("[^\\p{L}\\p{Nd}]+"), "").removeSuffix("fc").removeSuffix("cf")
+        return map[key] ?: map[name.lowercase().replace(Regex("[^\\p{L}\\p{Nd}]+"), "")] ?: name
     }
 }

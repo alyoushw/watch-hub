@@ -132,6 +132,7 @@ class CloudSync(
         store.onWatchChanged = { item, key, removedAt -> pushWatch(item, key, removedAt) }
         settings.onXtreamAccountsChanged = { list, at -> pushXtream(list, at) }
         settings.onKoraChanged = { pushKora() }
+        settings.onMatchPrefsChanged = { pushMatchPrefs() }
         config?.let { connect(it) }
         // Refresh the settings in the background (they rarely change; the cached copy works offline).
         scope.launch { refreshConfig() }
@@ -620,6 +621,7 @@ class CloudSync(
                 mergeWatchlist(base.collection("watchlist").get().await().documents)
                 mergeXtream(base.collection("meta").document("xtream").get().await())
                 mergeKora(base.collection("meta").document("kora").get().await())
+                mergeMatchPrefs(base.collection("meta").document("matches").get().await())
                 applyMarks(base.collection("meta").document("seriesMarks").get().await())
                 marks?.seriesKeys()?.takeIf { it.isNotEmpty() }?.let(::pushMarks)
                 history.mergeHidden(hiddenOf(base.collection("meta").document("continueHidden").get().await()))
@@ -681,6 +683,10 @@ class CloudSync(
             listeners += base.collection("meta").document("kora").addSnapshotListener { snap, e ->
                 if (e != null || snap == null || snap.metadata.hasPendingWrites()) return@addSnapshotListener
                 applyKora(snap)
+            }
+            listeners += base.collection("meta").document("matches").addSnapshotListener { snap, e ->
+                if (e != null || snap == null || snap.metadata.hasPendingWrites()) return@addSnapshotListener
+                applyMatchPrefs(snap)
             }
             listeners += base.collection("meta").document("seriesMarks").addSnapshotListener { snap, e ->
                 if (e != null || snap == null || snap.metadata.hasPendingWrites()) return@addSnapshotListener
@@ -753,6 +759,29 @@ class CloudSync(
         val vipNewer = settings.koraVipUser.value.isNotBlank() && settings.koraVipUpdatedAt > (doc.getLong("vipAt") ?: 0)
         val vipMissing = settings.koraVipUser.value.isNotBlank() && doc.getString("vipUser").isNullOrBlank()
         if (urlNewer || urlMissing || vipNewer || vipMissing) pushKora()
+    }
+
+    private fun applyMatchPrefs(doc: DocumentSnapshot) {
+        if (!doc.exists()) return
+        val at = doc.getLong("at") ?: return
+        fun set(k: String) = doc.getString(k).orEmpty().split(',').filter { it.isNotBlank() }.toSet()
+        settings.setMatchPrefsFromCloud(set("leagues"), set("teams"), at)
+    }
+
+    private fun mergeMatchPrefs(doc: DocumentSnapshot) {
+        applyMatchPrefs(doc)
+        val newer = settings.matchPrefsUpdatedAt > (doc.getLong("at") ?: 0)
+        if (newer) pushMatchPrefs()
+    }
+
+    private fun pushMatchPrefs() {
+        val ref = userDoc()?.collection("meta")?.document("matches") ?: return
+        val data = mapOf(
+            "leagues" to settings.matchLeagues.value.joinToString(","),
+            "teams" to settings.matchTeams.value.joinToString(","),
+            "at" to settings.matchPrefsUpdatedAt,
+        )
+        scope.launch { runCatching { ref.set(data).await() }.onFailure { Log.w(TAG, "match prefs sync failed", it) } }
     }
 
     private fun pushKora() {

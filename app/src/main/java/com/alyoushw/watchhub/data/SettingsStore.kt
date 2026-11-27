@@ -336,7 +336,7 @@ class SettingsStore(context: Context) {
         if (prefs.getString("$KEY_XTREAM_ACCOUNTS@$to", null) == null) e.putString(KEY_XTREAM_ACCOUNTS, "[]")
         e.remove(KEY_XTREAM_HOST).remove(KEY_XTREAM_USER).remove(KEY_XTREAM_PASS)
         // The Kora VIP login is a person's own: it must not follow the device to another account.
-        for (k in listOf("kora_vip_user", "kora_vip_pass")) {
+        for (k in listOf("kora_vip_user", "kora_vip_pass", "match_leagues", "match_teams")) {
             if (discard) e.remove("$k@$from") else e.putString("$k@$from", prefs.getString(k, null))
             e.putString(k, prefs.getString("$k@$to", null))
             e.remove("$k@$to")
@@ -344,9 +344,14 @@ class SettingsStore(context: Context) {
         if (discard) e.remove("kora_vip_at@$from") else e.putLong("kora_vip_at@$from", prefs.getLong("kora_vip_at", 0))
         e.putLong("kora_vip_at", prefs.getLong("kora_vip_at@$to", 0))
         e.remove("kora_vip_at@$to")
+        if (discard) e.remove("match_at@$from") else e.putLong("match_at@$from", prefs.getLong("match_at", 0))
+        e.putLong("match_at", prefs.getLong("match_at@$to", 0))
+        e.remove("match_at@$to")
         e.commit()
         _koraVipUser.value = prefs.getString("kora_vip_user", "").orEmpty()
         _koraVipPass.value = prefs.getString("kora_vip_pass", "").orEmpty()
+        _matchLeagues.value = splitSet(prefs.getString("match_leagues", ""))
+        _matchTeams.value = splitSet(prefs.getString("match_teams", ""))
         reloadProfile()
     }
 
@@ -452,6 +457,30 @@ class SettingsStore(context: Context) {
     }
 
 
+
+    /**
+     * «مبارياتي»: the leagues and clubs whose matches show in the «مباريات» tab. Kept as comma-joined text; clubs as
+     * "<league slug>:<team id>". The account sync carries them to every device.
+     */
+    private val _matchLeagues = MutableStateFlow(splitSet(prefs.getString("match_leagues", "")))
+    val matchLeagues: StateFlow<Set<String>> = _matchLeagues.asStateFlow()
+    private val _matchTeams = MutableStateFlow(splitSet(prefs.getString("match_teams", "")))
+    val matchTeams: StateFlow<Set<String>> = _matchTeams.asStateFlow()
+    val matchPrefsUpdatedAt: Long get() = prefs.getLong("match_at", 0)
+    var onMatchPrefsChanged: (() -> Unit)? = null
+    private fun splitSet(raw: String?): Set<String> = raw.orEmpty().split(',').filter { it.isNotBlank() }.toSet()
+    fun setMatchPrefs(leagues: Set<String>, teams: Set<String>) {
+        prefs.edit().putString("match_leagues", leagues.joinToString(",")).putString("match_teams", teams.joinToString(","))
+            .putLong("match_at", System.currentTimeMillis()).apply()
+        _matchLeagues.value = leagues; _matchTeams.value = teams
+        onMatchPrefsChanged?.invoke()
+    }
+    fun setMatchPrefsFromCloud(leagues: Set<String>, teams: Set<String>, at: Long) {
+        if (at <= matchPrefsUpdatedAt) return
+        prefs.edit().putString("match_leagues", leagues.joinToString(",")).putString("match_teams", teams.joinToString(","))
+            .putLong("match_at", at).apply()
+        _matchLeagues.value = leagues; _matchTeams.value = teams
+    }
 
     private val _sourceCatalogue = MutableStateFlow(prefs.getString("source_catalogue", "").orEmpty())
     val sourceCatalogue: StateFlow<String> = _sourceCatalogue.asStateFlow()

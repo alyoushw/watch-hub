@@ -85,7 +85,7 @@ private val Regions = listOf(
 private enum class SettingsPage(val title: String) {
     ACCOUNT("حسابك"), IPTV("حسابات IPTV"), TV_ROW("متابعة المشاهدة على التلفزيون"), APPEARANCE("المظهر"),
     YOUTUBE("اشتراكاتي"), ABOUT("التحديثات وعن التطبيق"), CLAUDE("البحث الذكي بـ Claude"),
-    KORA("رابط كوره"), APPS("تطبيقاتي الإضافية"), ADMIN("لوحة المدير"),
+    KORA("رابط كوره"), APPS("تطبيقاتي الإضافية"), MATCHES("مبارياتي"), ADMIN("لوحة المدير"),
 }
 
 /**
@@ -99,6 +99,10 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}, onOpenHistory: () -> Unit = {}
     var page by rememberSaveable { mutableStateOf<SettingsPage?>(null) }
     // A tap on the «بلاغ جديد» notification opens the owner's page on its reports tab.
     var adminReportsFirst by remember { mutableStateOf(false) }
+    val openMatchSettings by container.openMatchSettings.collectAsStateWithLifecycle()
+    LaunchedEffect(openMatchSettings) {
+        if (openMatchSettings) { container.openMatchSettings.value = false; page = SettingsPage.MATCHES }
+    }
     val openAdmin by container.openAdmin.collectAsStateWithLifecycle()
     LaunchedEffect(openAdmin) {
         if (openAdmin) {
@@ -135,6 +139,7 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}, onOpenHistory: () -> Unit = {}
             when (page) {
                 null -> SettingsHome(onOpen = { page = it }, onOpenHistory = onOpenHistory)
                 SettingsPage.ACCOUNT -> AccountSection()
+                SettingsPage.MATCHES -> MatchesSettingsSection()
                 SettingsPage.ADMIN -> AdminSection(startOnReports = adminReportsFirst, onOpenTitle = onOpenTitle)
                 SettingsPage.IPTV -> {
                     XtreamSection(onOpenXtream)
@@ -193,6 +198,7 @@ private fun SettingsHome(onOpen: (SettingsPage) -> Unit, onOpenHistory: () -> Un
     SettingsGroup {
         SettingsRow("✨", "البحث الذكي بـ Claude", if (claudeKey.isNotBlank() && useClaude) "مفعّل" else "مطفي") { onOpen(SettingsPage.CLAUDE) }
         SettingsRow("⚽", "رابط كوره", android.net.Uri.parse(kora.ifBlank { KORA_HOME }).host.orEmpty()) { onOpen(SettingsPage.KORA) }
+        SettingsRow("🏟️", "مبارياتي", "الدوريات والأندية المفضلة") { onOpen(SettingsPage.MATCHES) }
         SettingsRow("🧩", "تطبيقاتي الإضافية", if (apps.isEmpty()) "ما فيه" else "${apps.size} تطبيقات") { onOpen(SettingsPage.APPS) }
     }
     val context = LocalContext.current

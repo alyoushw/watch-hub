@@ -90,6 +90,8 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
     }
     val openAdmin by container.openAdmin.collectAsStateWithLifecycle()
     androidx.compose.runtime.LaunchedEffect(openAdmin) { if (openAdmin) nav.switchTab(Tab.SETTINGS.route) }
+    val openMatchSettings by container.openMatchSettings.collectAsStateWithLifecycle()
+    androidx.compose.runtime.LaunchedEffect(openMatchSettings) { if (openMatchSettings) nav.switchTab(Tab.SETTINGS.route) }
     val backStack by nav.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
 

@@ -85,6 +85,9 @@ fun HeroTabs(
     onRefresh: () -> Unit,
     live: Boolean = false,
     onLive: (() -> Unit)? = null,
+    /** The «مباريات» tab (matches, tables, clubs). */
+    matches: Boolean = false,
+    onMatches: (() -> Unit)? = null,
     /** Attached to the chosen tab, so the remote's «up» from the banner or the rows lands exactly on it. */
     selectedFocus: androidx.compose.ui.focus.FocusRequester? = null,
     /**
@@ -101,11 +104,12 @@ fun HeroTabs(
     ) {
         if (!narrow) Text("Watch Hub", color = Gold, fontWeight = FontWeight.Black, fontSize = 22.sp, maxLines = 1, softWrap = false)
         // "مباشر" (the Xtream Codes live channels) comes first, before series and films.
-        val entries = buildList<Pair<MediaType?, String>> {
+        val entries = buildList<Pair<Any?, String>> {
             if (onLive != null) add(null to "مباشر")
             add(MediaType.TV to "مسلسلات")
             add(MediaType.MOVIE to "أفلام")
             add(MediaType.ANIME to "أنمي")
+            if (onMatches != null) add("matches" to "مباريات")
         }
         // A dark glass capsule, readable over any poster; the chosen tab is filled gold.
         Box(Modifier.weight(1f)) {
@@ -116,7 +120,7 @@ fun HeroTabs(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 entries.forEach { (type, label) ->
-                    val on = if (type == null) live else !live && type == selected
+                    val on = when (type) { null -> live; "matches" -> matches; else -> !live && !matches && type == selected }
                     if (on && restoreFocus != null && selectedFocus != null) {
                         androidx.compose.runtime.LaunchedEffect(restoreFocus.value) {
                             if (restoreFocus.value) {
@@ -141,7 +145,7 @@ fun HeroTabs(
                             .background(if (on) Gold else Color.Transparent)
                             .clickable {
                                 restoreFocus?.value = true
-                                if (type == null) onLive?.invoke() else onSelect(type)
+                                when (type) { null -> onLive?.invoke(); "matches" -> onMatches?.invoke(); else -> onSelect(type as MediaType) }
                             }
                             .padding(horizontal = if (narrow) 13.dp else 16.dp, vertical = 6.dp),
                     )

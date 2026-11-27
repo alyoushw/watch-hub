@@ -60,70 +60,12 @@ private object MatchPrefs {
     fun set(c: Context, league: String, key: String) { c.getSharedPreferences("match_prefs", Context.MODE_PRIVATE).edit().putString(league, key).apply() }
 }
 
-/** «مباريات الآن»: today's matches; tap one to pick which of your sources plays it. */
-@Composable
-fun LiveMatchesRow() {
-    var matches by remember { mutableStateOf<List<LiveMatch>>(emptyList()) }
-    var open by remember { mutableStateOf<LiveMatch?>(null) }
-    var status by remember { mutableStateOf("نجلب المباريات…") }
-    LaunchedEffect(Unit) {
-        while (true) {
-            runCatching { ScoresApi.fetch() }.onSuccess { all ->
-                val soon = System.currentTimeMillis() + 8 * 3600_000L
-                matches = all.filter { it.state == "in" || (it.state == "pre" && it.startMs < soon) }.take(24)
-                status = if (matches.isEmpty()) "ما فيه مباريات جارية أو قريبة الحين." else ""
-            }.onFailure { if (matches.isEmpty()) status = "تعذّر جلب المباريات (تأكد من الإنترنت)." }
-            delay(60_000)
-        }
-    }
-    open?.let { MatchSourcesDialog(it) { open = null } }
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("مباريات الآن", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp))
-        if (matches.isEmpty()) Text(status, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp))
-        LazyRow(contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(matches, key = { it.leagueSlug + it.id }) { m -> MatchCard(m) { open = m } }
-        }
-    }
-}
-
-@Composable
-private fun MatchCard(m: LiveMatch, onClick: () -> Unit) {
-    Column(
-        Modifier.width(250.dp).focusFrame(RoundedCornerShape(16.dp)).clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainer).clickable(onClick = onClick).padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(m.league, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            TeamCol(m.home, m.homeLogo)
-            val score = if (m.state == "pre") "—" else "${m.homeScore} - ${m.awayScore}"
-            Text(score, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-            TeamCol(m.away, m.awayLogo)
-        }
-        val status = when (m.state) {
-            "in" -> "● ${m.clock}"
-            "pre" -> SimpleDateFormat("HH:mm", Locale.ENGLISH).format(Date(m.startMs))
-            else -> "انتهت"
-        }
-        Text(status, fontSize = 13.sp, color = if (m.state == "in") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-private fun TeamCol(name: String, logo: String?) {
-    Column(Modifier.width(80.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Box(Modifier.size(40.dp)) { if (logo != null) AsyncImage(model = logo, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.size(40.dp)) }
-        Text(name, fontSize = 12.sp, maxLines = 2, textAlign = TextAlign.Center)
-    }
-}
-
 private data class SourceGroup(val key: String, val title: String, val sources: List<Source>)
 private data class Source(val account: com.alyoushw.watchhub.data.XtreamAccount, val channel: XtreamItem)
 
 /** Every source of every channel matching the search, gathered from all your accounts, grouped by channel. */
 @Composable
-private fun MatchSourcesDialog(m: LiveMatch, onClose: () -> Unit) {
+internal fun MatchSourcesDialog(m: LiveMatch, onClose: () -> Unit) {
     val container = appContainer()
     val context = LocalContext.current
     val league = remember { ScoresApi.leagues.firstOrNull { it.slug == m.leagueSlug } }

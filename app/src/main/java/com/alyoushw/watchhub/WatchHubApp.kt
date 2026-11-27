@@ -23,6 +23,8 @@ class AppContainer(context: Context) {
     // One pending request from a Watch Next card; consumed after navigation.
     // A tap on the owner's «بلاغ جديد» notification: open the admin page.
     val openAdmin = kotlinx.coroutines.flow.MutableStateFlow(false)
+    // «⚙ مبارياتي» in the matches tab: open that settings page.
+    val openMatchSettings = kotlinx.coroutines.flow.MutableStateFlow(false)
     val watchNextRequest = kotlinx.coroutines.flow.MutableStateFlow<Pair<MediaType, Int>?>(null)
     // Saudi Arabia always: the region choice was removed from Settings.
     val settings = SettingsStore(context).also { if (it.region.value != "SA") it.setRegion("SA") }
