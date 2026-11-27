@@ -65,19 +65,21 @@ private object MatchPrefs {
 fun LiveMatchesRow() {
     var matches by remember { mutableStateOf<List<LiveMatch>>(emptyList()) }
     var open by remember { mutableStateOf<LiveMatch?>(null) }
+    var status by remember { mutableStateOf("نجلب المباريات…") }
     LaunchedEffect(Unit) {
         while (true) {
             runCatching { ScoresApi.fetch() }.onSuccess { all ->
                 val soon = System.currentTimeMillis() + 8 * 3600_000L
                 matches = all.filter { it.state == "in" || (it.state == "pre" && it.startMs < soon) }.take(24)
-            }
+                status = if (matches.isEmpty()) "ما فيه مباريات جارية أو قريبة الحين." else ""
+            }.onFailure { if (matches.isEmpty()) status = "تعذّر جلب المباريات (تأكد من الإنترنت)." }
             delay(60_000)
         }
     }
-    if (matches.isEmpty()) return
     open?.let { MatchSourcesDialog(it) { open = null } }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("مباريات الآن", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp))
+        if (matches.isEmpty()) Text(status, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp))
         LazyRow(contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             items(matches, key = { it.leagueSlug + it.id }) { m -> MatchCard(m) { open = m } }
         }

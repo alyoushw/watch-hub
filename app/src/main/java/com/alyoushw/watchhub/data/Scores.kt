@@ -48,8 +48,10 @@ object ScoresApi {
     private val client = OkHttpClient.Builder().callTimeout(15, TimeUnit.SECONDS).build()
 
     suspend fun fetch(): List<LiveMatch> = coroutineScope {
-        leagues.map { l -> async { runCatching { league(l) }.getOrDefault(emptyList()) } }
-            .map { it.await() }.flatten()
+        val results = leagues.map { l -> async { runCatching { league(l) } } }.map { it.await() }
+        // Every league failing means the feed itself is unreachable: say so instead of showing "no matches".
+        if (results.all { it.isFailure }) throw (results.first().exceptionOrNull() ?: java.io.IOException("scores"))
+        results.mapNotNull { it.getOrNull() }.flatten()
             .sortedWith(compareBy<LiveMatch> { when (it.state) { "in" -> 0; "pre" -> 1; else -> 2 } }.thenBy { it.startMs })
     }
 
