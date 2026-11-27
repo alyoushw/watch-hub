@@ -60,6 +60,12 @@ private object MatchPrefs {
     fun set(c: Context, league: String, key: String) { c.getSharedPreferences("match_prefs", Context.MODE_PRIVATE).edit().putString(league, key).apply() }
 }
 
+/** The broadcaster families: what to look for in the channel names of your accounts (names are written many ways). */
+private val FAMILIES = mapOf(
+    "ثمانية" to listOf("thmanyah", "thamanya", "thamaniya", "thmania", "tmanyah", "ثمانية", "ثمانيه"),
+    "bein" to listOf("bein", "بي ان", "بي إن", "بين سبورت"),
+)
+
 private data class SourceGroup(val key: String, val title: String, val sources: List<Source>)
 /** A channel with its comparison keys worked out once (thousands of channels: never redo it on the screen thread). */
 private class Source(val account: com.alyoushw.watchhub.data.XtreamAccount, val channel: XtreamItem) {
@@ -95,9 +101,10 @@ internal fun MatchSourcesDialog(m: LiveMatch, onClose: () -> Unit) {
         val src = all ?: return@LaunchedEffect
         delay(250) // typing: wait for a pause
         val q = query.trim().lowercase()
-        val qKey = matchKey(q)
+        val tokens = FAMILIES[q] ?: FAMILIES.entries.firstOrNull { it.key.equals(q, true) }?.value ?: listOf(q)
+        val keys = tokens.map { matchKey(it) }.filter { it.isNotEmpty() }
         groups = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-            if (q.isBlank()) emptyList() else src.filter { it.lname.contains(q) || (qKey.isNotEmpty() && it.key.contains(qKey)) }
+            if (q.isBlank()) emptyList() else src.filter { s -> tokens.any { s.lname.contains(it) } || keys.any { s.key.startsWith(it) } }
                 .groupBy { it.key }
                 .map { (k, v) -> SourceGroup(k, v.minByOrNull { channelQualityOrder(it.channel.name) }!!.channel.name, v.sortedBy { channelQualityOrder(it.channel.name) }) }
                 .sortedBy { it.key }.take(60)
@@ -113,9 +120,10 @@ internal fun MatchSourcesDialog(m: LiveMatch, onClose: () -> Unit) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (m.broadcasts.isNotEmpty()) Text("الناقلة حسب المصدر: ${m.broadcasts.joinToString("، ")}", fontSize = 12.sp)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    keywords.forEach { k -> FilterChip(modifier = Modifier.focusFrame(), selected = query.equals(k, true), onClick = { query = k }, label = { Text(k) }) }
+                    // The channels that carry this competition here (Thmanyah: the Saudi league; beIN: the European leagues), then your own search.
+                    keywords.forEach { k -> FilterChip(modifier = Modifier.focusFrame(), selected = query.equals(k, true), onClick = { query = k }, label = { Text(if (k == "bein") "beIN" else k) }) }
                 }
-                OutlinedTextField(value = query, onValueChange = { query = it }, label = { Text("ابحث عن القناة (beIN, SSC...)") },
+                OutlinedTextField(value = query, onValueChange = { query = it }, label = { Text("بحث آخر عن قناة (اختياري)") },
                     modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(), singleLine = true)
                 when {
                     accounts.isEmpty() -> Text("أضف حساب IPTV من الإعدادات أول.")

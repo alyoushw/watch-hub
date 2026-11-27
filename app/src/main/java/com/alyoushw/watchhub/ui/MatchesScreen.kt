@@ -54,6 +54,7 @@ import com.alyoushw.watchhub.data.TeamInfo
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.time.Instant
 import java.time.LocalDate
@@ -117,6 +118,11 @@ fun MatchesScreen(onOpenMatchSettings: () -> Unit) {
     var openMatch by remember { mutableStateOf<LiveMatch?>(null) }
     var detailMatch by remember { mutableStateOf<LiveMatch?>(null) }
     var club by remember { mutableStateOf<ClubRef?>(null) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    // A club tapped anywhere opens its page; a club met in a cup is shown under its own league (table, squad).
+    val openClub: (String, String, String, String?) -> Unit = { slug, id, name, logo ->
+        scope.launch { club = ClubRef(runCatching { ScoresApi.homeSlug(id, slug) }.getOrDefault(slug), id, name, logo) }
+    }
 
     // One board per competition per month (the feed refuses date ranges but gives a month at once), only for the
     // competitions that matter to you; each club's own page adds its coming match. A live match refreshes every minute.
@@ -142,8 +148,8 @@ fun MatchesScreen(onOpenMatchSettings: () -> Unit) {
     }
 
     openMatch?.let { MatchSourcesDialog(it) { openMatch = null } }
-    detailMatch?.let { m -> MatchDetailsDialog(m, onSources = { openMatch = m }) { detailMatch = null } }
-    club?.let { ClubDialog(it, favTeams, all.orEmpty(), onOpenMatch = { m -> openMatch = m }, onOpenDetails = { m -> detailMatch = m }) { club = null } }
+    detailMatch?.let { m -> MatchDetailsDialog(m, onSources = { openMatch = m }, onClub = openClub) { detailMatch = null } }
+    club?.let { ClubDialog(it, favTeams, all.orEmpty(), onOpenMatch = { m -> openMatch = m }, onOpenDetails = { m -> detailMatch = m }, onOpenClub = openClub) { club = null } }
 
     fun mine(m: LiveMatch) = m.leagueSlug in favLeagues || m.homeId in favIds || m.awayId in favIds
     val hasFavs = favLeagues.isNotEmpty() || favTeams.isNotEmpty()
@@ -212,7 +218,7 @@ fun MatchesScreen(onOpenMatchSettings: () -> Unit) {
                                         TeamLogo(ScoresApi.leagueLogos[slug], rows.first().league, 26.dp)
                                         Text(rows.first().league, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                                     }
-                                    rows.forEach { m -> MatchRow(m, favIds) { detailMatch = m } }
+                                    rows.forEach { m -> MatchRow(m, favIds, onDetails = { detailMatch = m }, onSources = { openMatch = m }, onClub = openClub) }
                                 }
                             }
                         }
@@ -226,9 +232,9 @@ fun MatchesScreen(onOpenMatchSettings: () -> Unit) {
 }
 
 @Composable
-private fun MatchRow(m: LiveMatch, favIds: Set<String>, onClick: () -> Unit) {
+private fun MatchRow(m: LiveMatch, favIds: Set<String>, onDetails: () -> Unit, onSources: () -> Unit, onClub: (String, String, String, String?) -> Unit) {
     Row(
-        Modifier.fillMaxWidth().focusFrame(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 12.dp),
+        Modifier.fillMaxWidth().focusFrame(RoundedCornerShape(12.dp)).clickable(onClick = onDetails).padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Column(Modifier.width(54.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -239,10 +245,13 @@ private fun MatchRow(m: LiveMatch, favIds: Set<String>, onClick: () -> Unit) {
             }
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            TeamLine(m.homeLogo, m.home, if (m.state == "pre") "" else m.homeScore, m.homeId in favIds)
-            TeamLine(m.awayLogo, m.away, if (m.state == "pre") "" else m.awayScore, m.awayId in favIds)
+            TeamLine(m.homeLogo, m.home, if (m.state == "pre") "" else m.homeScore, m.homeId in favIds) { onClub(m.leagueSlug, m.homeId, m.home, m.homeLogo) }
+            TeamLine(m.awayLogo, m.away, if (m.state == "pre") "" else m.awayScore, m.awayId in favIds) { onClub(m.leagueSlug, m.awayId, m.away, m.awayLogo) }
         }
-        Text("المصادر ›", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+        Text(
+            "▶ المصادر", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1C1206),
+            modifier = Modifier.focusFrame(CircleShape).clip(CircleShape).background(MaterialTheme.colorScheme.primary).clickable(onClick = onSources).padding(horizontal = 12.dp, vertical = 7.dp),
+        )
     }
     GoalsLine(m)
 }
@@ -261,8 +270,8 @@ private fun GoalsLine(m: LiveMatch) {
 }
 
 @Composable
-private fun TeamLine(logo: String?, name: String, score: String, mine: Boolean) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+private fun TeamLine(logo: String?, name: String, score: String, mine: Boolean, onClub: () -> Unit) {
+    Row(Modifier.clickable(onClick = onClub), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         TeamLogo(logo, name, 28.dp)
         Text(name, fontSize = 15.sp, fontWeight = if (mine) FontWeight.Bold else FontWeight.Normal, color = if (mine) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         if (score.isNotEmpty()) Text(score, fontSize = 17.sp, fontWeight = FontWeight.Bold)
@@ -327,18 +336,18 @@ private fun StandingsPane(favLeagues: Set<String>, favTeams: Set<String>, favIds
                 }
             }
         }
-        if (scorers.isNotEmpty()) LeadersCard("الهدّافون", scorers, rows.orEmpty())
-        if (assists.isNotEmpty()) LeadersCard("صنّاع الأهداف", assists, rows.orEmpty())
+        if (scorers.isNotEmpty()) LeadersCard("الهدّافون", scorers, rows.orEmpty(), slug, onClub)
+        if (assists.isNotEmpty()) LeadersCard("صنّاع الأهداف", assists, rows.orEmpty(), slug, onClub)
     }
 }
 
 @Composable
-private fun LeadersCard(title: String, list: List<com.alyoushw.watchhub.data.Leader>, rows: List<StandingRow>) {
+private fun LeadersCard(title: String, list: List<com.alyoushw.watchhub.data.Leader>, rows: List<StandingRow>, slug: String, onClub: (ClubRef) -> Unit) {
     Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceContainer)) {
         Text(title, Modifier.padding(14.dp), fontWeight = FontWeight.Bold, fontSize = 17.sp)
         list.forEachIndexed { i, l ->
             val team = rows.firstOrNull { it.teamId == l.teamId }
-            Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth().focusFrame(RoundedCornerShape(10.dp)).clickable(enabled = team != null) { team?.let { onClub(ClubRef(slug, it.teamId, it.team, it.logo)) } }.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("${i + 1}", Modifier.width(22.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 TeamLogo(team?.logo, team?.team.orEmpty(), 24.dp)
                 Column(Modifier.weight(1f)) {
@@ -387,7 +396,7 @@ private fun MyClubsPane(favTeams: Set<String>, matches: List<LiveMatch>, onClub:
 
 /** A club's page: its crest big and faint over its colour, numbers, next match, last results and its place in the table. */
 @Composable
-private fun ClubDialog(ref: ClubRef, favTeams: Set<String>, matches: List<LiveMatch>, onOpenMatch: (LiveMatch) -> Unit, onOpenDetails: (LiveMatch) -> Unit, onClose: () -> Unit) {
+private fun ClubDialog(ref: ClubRef, favTeams: Set<String>, matches: List<LiveMatch>, onOpenMatch: (LiveMatch) -> Unit, onOpenDetails: (LiveMatch) -> Unit, onOpenClub: (String, String, String, String?) -> Unit, onClose: () -> Unit) {
     var color by remember { mutableStateOf(Color(0xFF3A3028)) }
     var games by remember { mutableStateOf<List<LiveMatch>>(emptyList()) }
     var table by remember { mutableStateOf<List<StandingRow>>(emptyList()) }
@@ -450,9 +459,9 @@ private fun ClubDialog(ref: ClubRef, favTeams: Set<String>, matches: List<LiveMa
                             Text("المباراة القادمة", fontWeight = FontWeight.Bold, fontSize = 17.sp)
                             Text(m.league + " · " + (if (m.state == "in") "جارية الآن" else matchWhen(m.startMs)), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceEvenly) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) { TeamLogo(m.homeLogo, m.home, 52.dp); Text(m.home, fontSize = 14.sp) }
+                                Column(Modifier.clickable { onOpenClub(m.leagueSlug, m.homeId, m.home, m.homeLogo) }, horizontalAlignment = Alignment.CenterHorizontally) { TeamLogo(m.homeLogo, m.home, 52.dp); Text(m.home, fontSize = 14.sp) }
                                 Text(if (m.state == "pre") "VS" else "${m.homeScore} - ${m.awayScore}", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) { TeamLogo(m.awayLogo, m.away, 52.dp); Text(m.away, fontSize = 14.sp) }
+                                Column(Modifier.clickable { onOpenClub(m.leagueSlug, m.awayId, m.away, m.awayLogo) }, horizontalAlignment = Alignment.CenterHorizontally) { TeamLogo(m.awayLogo, m.away, 52.dp); Text(m.away, fontSize = 14.sp) }
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Button(modifier = Modifier.weight(1f).focusFrame(), onClick = { onOpenMatch(m) }) { Text("المصادر") }
@@ -473,7 +482,7 @@ private fun ClubDialog(ref: ClubRef, favTeams: Set<String>, matches: List<LiveMa
                                 Row(Modifier.fillMaxWidth().focusFrame(RoundedCornerShape(10.dp)).clickable { onOpenDetails(m) }.padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     Box(Modifier.size(28.dp).clip(RoundedCornerShape(8.dp)).background(c), contentAlignment = Alignment.Center) { Text(tag, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
                                     TeamLogo(if (mineHome) m.awayLogo else m.homeLogo, "", 24.dp)
-                                    Text(if (mineHome) m.away else m.home, Modifier.weight(1f), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(if (mineHome) m.away else m.home, Modifier.weight(1f).clickable { if (mineHome) onOpenClub(m.leagueSlug, m.awayId, m.away, m.awayLogo) else onOpenClub(m.leagueSlug, m.homeId, m.home, m.homeLogo) }, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text("${m.homeScore} - ${m.awayScore}", fontWeight = FontWeight.Bold)
                                     Text(dateText(m.startMs), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
@@ -488,7 +497,7 @@ private fun ClubDialog(ref: ClubRef, favTeams: Set<String>, matches: List<LiveMa
                         Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceContainer)) {
                             Text("موقعه في الدوري", Modifier.padding(14.dp), fontWeight = FontWeight.Bold, fontSize = 17.sp)
                             near.forEach { r ->
-                                Row(Modifier.fillMaxWidth().background(if (r.teamId == ref.id) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else Color.Transparent).padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Row(Modifier.fillMaxWidth().background(if (r.teamId == ref.id) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else Color.Transparent).clickable { onOpenClub(ref.slug, r.teamId, r.team, r.logo) }.padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     Text("${r.pos}", Modifier.width(22.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     TeamLogo(r.logo, r.team, 24.dp)
                                     Text(r.team, Modifier.weight(1f), fontWeight = if (r.teamId == ref.id) FontWeight.Bold else FontWeight.Normal)

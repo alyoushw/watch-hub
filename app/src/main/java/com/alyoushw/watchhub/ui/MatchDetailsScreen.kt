@@ -42,6 +42,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.alyoushw.watchhub.data.LiveMatch
 import com.alyoushw.watchhub.data.MatchDetails
 import com.alyoushw.watchhub.data.ScoresApi
+import com.alyoushw.watchhub.data.StandingRow
 import kotlinx.coroutines.delay
 
 /**
@@ -49,10 +50,25 @@ import kotlinx.coroutines.delay
  * and the form of both teams with their head-to-head. Everything but the score comes from the feed's match summary.
  */
 @Composable
-internal fun MatchDetailsDialog(m: LiveMatch, onSources: () -> Unit, onClose: () -> Unit) {
+internal fun MatchDetailsDialog(m: LiveMatch, onSources: () -> Unit, onClub: (String, String, String, String?) -> Unit, onClose: () -> Unit) {
     var d by remember { mutableStateOf<MatchDetails?>(null) }
     var loaded by remember { mutableStateOf(false) }
     var tab by remember { mutableIntStateOf(0) }
+    var homeRow by remember { mutableStateOf<StandingRow?>(null) }
+    var awayRow by remember { mutableStateOf<StandingRow?>(null) }
+    var homeLast by remember { mutableStateOf<LiveMatch?>(null) }
+    var awayLast by remember { mutableStateOf<LiveMatch?>(null) }
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    // Both teams' place in their league tables and their last finished match (a cup match: their own league's).
+    LaunchedEffect(m.id) {
+        for ((id, isHome) in listOf(m.homeId to true, m.awayId to false)) {
+            val slug = runCatching { ScoresApi.homeSlug(id, m.leagueSlug) }.getOrDefault(m.leagueSlug)
+            val row = runCatching { ScoresApi.standings(slug) }.getOrDefault(emptyList()).firstOrNull { it.teamId == id }
+            val last = runCatching { ScoresApi.teamMatches(slug, id) }.getOrDefault(emptyList()).filter { it.state == "post" && it.id != m.id }.maxByOrNull { it.startMs }
+            if (isHome) { homeRow = row; homeLast = last } else { awayRow = row; awayLast = last }
+        }
+    }
+    if (m.state == "pre") LaunchedEffect(Unit) { while (true) { now = System.currentTimeMillis(); delay(1000) } }
     LaunchedEffect(m.id) {
         while (true) {
             d = runCatching { ScoresApi.details(m.leagueSlug, m.id, m.homeId, m.state == "post") }.getOrNull() ?: d
@@ -72,16 +88,20 @@ internal fun MatchDetailsDialog(m: LiveMatch, onSources: () -> Unit, onClose: ()
                             Text(m.league, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceEvenly) {
-                            Column(Modifier.width(110.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) { TeamLogo(m.homeLogo, m.home, 64.dp); Text(m.home, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center) }
+                            Column(Modifier.width(110.dp).clickable { onClub(m.leagueSlug, m.homeId, m.home, m.homeLogo) }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) { TeamLogo(m.homeLogo, m.home, 64.dp); Text(m.home, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center) }
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 when (m.state) {
                                     "in" -> Text("● ${m.clock}", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
-                                    "pre" -> Text(matchWhen(m.startMs), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                                    "pre" -> {
+                                        Text(matchWhen(m.startMs), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                                        val left = (m.startMs - now).coerceAtLeast(0) / 1000
+                                        Text(if (left >= 86400) "بعد ${left / 86400} يوم و ${(left % 86400) / 3600} ساعة" else "%02d:%02d:%02d".format(left / 3600, (left % 3600) / 60, left % 60), color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                    }
                                     else -> Text("انتهت", color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 Text(if (m.state == "pre") "VS" else "${m.homeScore} - ${m.awayScore}", fontSize = 38.sp, fontWeight = FontWeight.Bold)
                             }
-                            Column(Modifier.width(110.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) { TeamLogo(m.awayLogo, m.away, 64.dp); Text(m.away, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center) }
+                            Column(Modifier.width(110.dp).clickable { onClub(m.leagueSlug, m.awayId, m.away, m.awayLogo) }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) { TeamLogo(m.awayLogo, m.away, 64.dp); Text(m.away, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center) }
                         }
                         d?.let { x ->
                             val info = listOfNotNull(x.venue, x.attendance?.let { "الحضور $it" }).joinToString(" · ")
@@ -94,7 +114,7 @@ internal fun MatchDetailsDialog(m: LiveMatch, onSources: () -> Unit, onClose: ()
                 }
                 item {
                     Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf("الإحصائيات", "الأحداث", "التشكيلة", "الفريقان").forEachIndexed { i, t ->
+                        listOf("التفاصيل", "الفريقان", "الإحصائيات", "الأحداث", "التشكيلة").forEachIndexed { i, t ->
                             Text(
                                 t, fontSize = 14.sp, fontWeight = if (tab == i) FontWeight.Bold else FontWeight.Medium,
                                 color = if (tab == i) Color(0xFF1C1206) else MaterialTheme.colorScheme.onSurface,
@@ -106,13 +126,14 @@ internal fun MatchDetailsDialog(m: LiveMatch, onSources: () -> Unit, onClose: ()
                     }
                 }
                 val x = d
-                if (x == null) {
+                if (tab == 0) item { InfoPane(m, x) }
+                else if (tab == 1) item { TeamsPane(m, x, homeRow, awayRow, homeLast, awayLast, onClub) }
+                else if (x == null) {
                     item { Text(if (loaded) "ما قدرنا نجيب تفاصيل المباراة من المصدر." else "نجلب التفاصيل…", Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 } else when (tab) {
-                    0 -> item { StatsPane(m, x) }
-                    1 -> item { EventsPane(m, x) }
-                    2 -> item { LineupsPane(x) }
-                    else -> item { TeamsPane(m, x) }
+                    2 -> item { StatsPane(m, x) }
+                    3 -> item { EventsPane(m, x) }
+                    else -> item { LineupsPane(x) }
                 }
             }
         }
@@ -197,10 +218,103 @@ private fun PlayerLine(number: String, name: String, pos: String) {
 }
 
 @Composable
-private fun TeamsPane(m: LiveMatch, d: MatchDetails) {
+private fun InfoPane(m: LiveMatch, d: MatchDetails?) {
+    // The feed does not say which channel carries a match: the competition's usual broadcaster is shown (the number is yours to pick in the sources).
+    val channel = when {
+        m.leagueSlug.startsWith("ksa.") -> "ثمانية"
+        m.leagueSlug.startsWith("afc.") -> "ثمانية أو beIN SPORTS"
+        else -> "beIN SPORTS"
+    }
+    val date = java.time.format.DateTimeFormatter.ofPattern("EEEE d MMMM yyyy", java.util.Locale("ar")).format(java.time.Instant.ofEpochMilli(m.startMs).atZone(java.time.ZoneId.systemDefault()))
+    Card2 {
+        listOf(
+            "البطولة" to m.league, "الفريق المضيف" to m.home, "الفريق الضيف" to m.away, "التاريخ" to date,
+            "الساعة" to clock(m.startMs), "الملعب" to (d?.venue ?: "—"), "القناة الناقلة (حسب الدوري)" to channel,
+        ).forEach { (k, v) ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(k, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(v, fontWeight = FontWeight.Bold, fontSize = 14.sp, textAlign = TextAlign.End, modifier = Modifier.weight(1f).padding(start = 12.dp))
+            }
+        }
+    }
+}
+
+/** Win / draw / loss chances (a rough statistical estimate from the tables and the last five matches, not an official forecast). */
+private fun predict(h: StandingRow?, a: StandingRow?, hForm: List<String>, aForm: List<String>): Triple<Int, Int, Int>? {
+    if (h == null || a == null || h.played == 0 || a.played == 0) return null
+    fun strength(r: StandingRow, form: List<String>): Double {
+        val ppg = r.points.toDouble() / r.played
+        val gd = r.diff.toDouble() / r.played
+        val f = if (form.isEmpty()) ppg else form.sumOf { g -> when (g.substringBefore(' ')) { "W" -> 3; "D" -> 1; else -> 0 }.toInt() }.toDouble() / form.size
+        return 0.5 * ppg + 0.3 * f + 0.4 * gd
+    }
+    val diff = strength(h, hForm) + 0.25 - strength(a, aForm)
+    val draw = (0.30 - 0.10 * kotlin.math.min(1.0, kotlin.math.abs(diff))).coerceIn(0.15, 0.32)
+    val home = (1 - draw) / (1 + kotlin.math.exp(-1.6 * diff))
+    val away = 1 - draw - home
+    val ph = Math.round(home * 100).toInt(); val pd = Math.round(draw * 100).toInt()
+    return Triple(ph, pd, 100 - ph - pd)
+}
+
+@Composable
+private fun TeamsPane(m: LiveMatch, d: MatchDetails?, hr: StandingRow?, ar: StandingRow?, hLast: LiveMatch?, aLast: LiveMatch?, onClub: (String, String, String, String?) -> Unit) {
     fun pill(res: String): Pair<String, Color> = when (res) { "W" -> "ف" to Color(0xFF2F9E6B); "L" -> "خ" to Color(0xFFD04A4F); else -> "ت" to Color(0xFF7B7368) }
+    val hForm = d?.form?.get(m.homeId).orEmpty(); val aForm = d?.form?.get(m.awayId).orEmpty()
+    predict(hr, ar, hForm, aForm)?.let { (ph, pd, pa) ->
+        Card2 {
+            Text("احتمالات المباراة (تقدير)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Row(Modifier.fillMaxWidth().height(12.dp).clip(RoundedCornerShape(6.dp))) {
+                Box(Modifier.weight(ph.coerceAtLeast(1).toFloat()).fillMaxSize().background(MaterialTheme.colorScheme.primary))
+                Box(Modifier.weight(pd.coerceAtLeast(1).toFloat()).fillMaxSize().background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)))
+                Box(Modifier.weight(pa.coerceAtLeast(1).toFloat()).fillMaxSize().background(Color(0xFF4A8CD0)))
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("${m.home} $ph%", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                Text("تعادل $pd%", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${m.away} $pa%", fontWeight = FontWeight.Bold, color = Color(0xFF4A8CD0))
+            }
+            Text("تقدير إحصائي من ترتيب الفريقين وآخر ٥ مباريات، مب توقع رسمي.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+    if (hr != null || ar != null) Card2 {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(m.home, Modifier.clickable { onClub(m.leagueSlug, m.homeId, m.home, m.homeLogo) }, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            Text("إحصائيات الفريقين", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(m.away, Modifier.clickable { onClub(m.leagueSlug, m.awayId, m.away, m.awayLogo) }, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+        }
+        fun pct(r: StandingRow?) = r?.let { if (it.played > 0) "${it.won * 100 / it.played}%" else "—" } ?: "—"
+        listOf(
+            "الترتيب" to (hr?.pos?.toString() ?: "—") to (ar?.pos?.toString() ?: "—"),
+            "لعب" to (hr?.played?.toString() ?: "—") to (ar?.played?.toString() ?: "—"),
+            "فاز" to (hr?.won?.toString() ?: "—") to (ar?.won?.toString() ?: "—"),
+            "نسبة الفوز" to pct(hr) to pct(ar),
+            "تعادل" to (hr?.drawn?.toString() ?: "—") to (ar?.drawn?.toString() ?: "—"),
+            "خسر" to (hr?.lost?.toString() ?: "—") to (ar?.lost?.toString() ?: "—"),
+            "الأهداف له" to (hr?.goalsFor?.toString() ?: "—") to (ar?.goalsFor?.toString() ?: "—"),
+            "الأهداف عليه" to (hr?.goalsAgainst?.toString() ?: "—") to (ar?.goalsAgainst?.toString() ?: "—"),
+            "الفارق" to (hr?.diff?.toString() ?: "—") to (ar?.diff?.toString() ?: "—"),
+            "النقاط" to (hr?.points?.toString() ?: "—") to (ar?.points?.toString() ?: "—"),
+        ).forEach { (kv, av) ->
+            val (k, hv) = kv
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(hv, fontWeight = FontWeight.Bold, modifier = Modifier.width(60.dp))
+                Text(k, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(av, fontWeight = FontWeight.Bold, textAlign = TextAlign.End, modifier = Modifier.width(60.dp))
+            }
+        }
+        fun lastText(g: LiveMatch?, id: String): String = g?.let {
+            val mineHome = it.homeId == id
+            val opp = if (mineHome) it.away else it.home
+            val a = it.homeScore.toIntOrNull() ?: 0; val b = it.awayScore.toIntOrNull() ?: 0
+            val res = if (a == b) "تعادل" else if ((a > b) == mineHome) "فاز" else "خسر"
+            "$res على $opp ${it.homeScore}-${it.awayScore} (${java.time.format.DateTimeFormatter.ofPattern("d MMMM", java.util.Locale("ar")).format(java.time.Instant.ofEpochMilli(it.startMs).atZone(java.time.ZoneId.systemDefault()))})"
+        } ?: "—"
+        Text("آخر مباراة", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+        Text("${m.home}: ${lastText(hLast, m.homeId)}", fontSize = 13.sp)
+        Text("${m.away}: ${lastText(aLast, m.awayId)}", fontSize = 13.sp)
+    }
     listOf(m.homeId to m.home, m.awayId to m.away).forEach { (id, name) ->
-        val games = d.form[id].orEmpty()
+        val games = d?.form?.get(id).orEmpty()
         if (games.isNotEmpty()) Card2 {
             Text("آخر مباريات $name", fontWeight = FontWeight.Bold, fontSize = 16.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -209,10 +323,10 @@ private fun TeamsPane(m: LiveMatch, d: MatchDetails) {
             games.forEach { g -> Text(g.substringAfter(' '), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }
-    if (d.h2h.isNotEmpty()) Card2 {
+    if (d != null && d.h2h.isNotEmpty()) Card2 {
         Text("المواجهات المباشرة", fontWeight = FontWeight.Bold, fontSize = 16.sp)
         d.h2hSummary?.let { Text(it, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary) }
         d.h2h.forEach { Text(it, fontSize = 13.sp) }
     }
-    if (d.form.isEmpty() && d.h2h.isEmpty()) Text("ما فيه بيانات لهذين الفريقين من المصدر.", Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (hr == null && ar == null && (d == null || (d.form.isEmpty() && d.h2h.isEmpty()))) Text("نجلب بيانات الفريقين…", Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
 }

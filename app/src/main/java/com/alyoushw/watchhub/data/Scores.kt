@@ -67,26 +67,27 @@ data class TeamInfo(val id: String, val name: String, val logo: String?, val col
 data class StandingRow(
     val pos: Int, val teamId: String, val team: String, val logo: String?,
     val played: Int, val won: Int, val drawn: Int, val lost: Int, val diff: Int, val points: Int,
+    val goalsFor: Int = 0, val goalsAgainst: Int = 0,
 )
 
 /** Matches, tables and teams from ESPN's public football feed (unofficial, no key). */
 object ScoresApi {
     val leagues = listOf(
-        LeagueInfo("ksa.1", "الدوري السعودي", listOf("ssc", "ثمانية")),
-        LeagueInfo("uefa.champions", "دوري أبطال أوروبا", listOf("bein", "ثمانية")),
+        LeagueInfo("ksa.1", "الدوري السعودي", listOf("ثمانية")),
+        LeagueInfo("uefa.champions", "دوري أبطال أوروبا", listOf("bein")),
         LeagueInfo("eng.1", "الدوري الإنجليزي", listOf("bein")),
         LeagueInfo("esp.1", "الدوري الإسباني", listOf("bein")),
         LeagueInfo("ita.1", "الدوري الإيطالي", listOf("bein")),
         LeagueInfo("ger.1", "الدوري الألماني", listOf("bein")),
         LeagueInfo("fra.1", "الدوري الفرنسي", listOf("bein")),
         LeagueInfo("uefa.europa", "الدوري الأوروبي", listOf("bein")),
-        LeagueInfo("afc.champions", "دوري أبطال آسيا", listOf("ssc", "bein")),
+        LeagueInfo("afc.champions", "دوري أبطال آسيا", listOf("ثمانية", "bein")),
     )
 
     /** The cups played next to the leagues (shown only for the clubs you chose). */
     val cups = listOf(
-        LeagueInfo("ksa.kings.cup", "كأس خادم الحرمين الشريفين", listOf("ssc", "ثمانية")),
-        LeagueInfo("afc.cup", "دوري أبطال آسيا 2", listOf("ssc", "bein")),
+        LeagueInfo("ksa.kings.cup", "كأس خادم الحرمين الشريفين", listOf("ثمانية")),
+        LeagueInfo("afc.cup", "دوري أبطال آسيا 2", listOf("ثمانية", "bein")),
         LeagueInfo("fifa.intercontinental_cup", "كأس الإنتركونتيننتال", listOf("bein")),
         LeagueInfo("uefa.europa.conf", "دوري المؤتمر الأوروبي", listOf("bein")),
         LeagueInfo("eng.fa", "كأس الاتحاد الإنجليزي", listOf("bein")),
@@ -246,6 +247,13 @@ object ScoresApi {
         return out
     }
 
+    /** The domestic league of a club (a cup's page lists the club under the cup, but its table and squad are in its league). */
+    suspend fun homeSlug(teamId: String, hint: String): String {
+        if (isDomestic(hint)) return hint
+        for (l in leagues.filter { isDomestic(it.slug) }) if (runCatching { teams(l.slug) }.getOrDefault(emptyList()).any { it.id == teamId }) return l.slug
+        return hint
+    }
+
     /** The league table. */
     suspend fun standings(slug: String): List<StandingRow> {
         val entries = get("https://site.api.espn.com/apis/v2/sports/soccer/$slug/standings")
@@ -263,6 +271,7 @@ object ScoresApi {
                     played = (stats["gamesPlayed"] ?: 0.0).toInt(), won = (stats["wins"] ?: 0.0).toInt(),
                     drawn = (stats["ties"] ?: 0.0).toInt(), lost = (stats["losses"] ?: 0.0).toInt(),
                     diff = (stats["pointDifferential"] ?: 0.0).toInt(), points = (stats["points"] ?: 0.0).toInt(),
+                    goalsFor = (stats["pointsFor"] ?: 0.0).toInt(), goalsAgainst = (stats["pointsAgainst"] ?: 0.0).toInt(),
                 ))
             }
         }.sortedBy { it.pos }

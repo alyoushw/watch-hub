@@ -157,6 +157,8 @@ object ChannelIndex {
 fun matchKey(name: String): String {
     var k = channelKey(name)
     k = k.replace(Regex("^بيان"), "bein").replace(Regex("^بين"), "bein")
+    // Thmanyah is written many ways in provider lists: Thmanyah, Thamanya, Thamaniya, ثمانية.
+    k = k.replace(Regex("^th?a?m[ae]?n(?:iy|i|y)a?h?"), "thmanyah").replace("ثمانيه", "thmanyah")
     return k.replace("sports", "").replace("sport", "").replace("سبورتس", "").replace("سبورت", "")
 }
 
@@ -166,14 +168,14 @@ fun channelQualityOrder(name: String): Int {
     return when {
         "4k" in t || "8k" in t -> 0
         "fhd" in t -> 1
-        "hd" in t -> 2
+        "hd" in t || "hdr" in t -> 2
         "sd" in t || "low" in t -> 4
         else -> 3
     }
 }
 
 /** Quality words in channel names ("MBC 1 4K", "MBC1 FHD", "beIN 1 RAW"). */
-private val QualityWords = listOf("4k", "uhd", "8k", "fhd", "hd", "sd", "raw", "hevc", "h265", "50fps", "60fps", "low")
+private val QualityWords = listOf("4k", "uhd", "8k", "fhd", "hd", "hdr", "sd", "raw", "hevc", "h265", "50fps", "60fps", "low")
 
 /** The quality tags of a channel name, e.g. {"4k"} or {"raw","fhd"}. */
 fun qualityTags(name: String): Set<String> {
