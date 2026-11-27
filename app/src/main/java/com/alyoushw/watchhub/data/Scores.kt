@@ -107,7 +107,8 @@ object ScoresApi {
                 if (home == null || away == null) continue
                 val ht = home.optJSONObject("team")
                 val at = away.optJSONObject("team")
-                val st = e.optJSONObject("status")
+                // A team's schedule keeps the status and the scores in other places than the scoreboard does.
+                val st = e.optJSONObject("status") ?: c.optJSONObject("status")
                 val names = mutableListOf<String>()
                 c.optJSONArray("broadcasts")?.let { b -> for (j in 0 until b.length()) b.getJSONObject(j).optJSONArray("names")?.let { n -> for (k in 0 until n.length()) names += n.getString(k) } }
                 add(LiveMatch(
@@ -115,8 +116,8 @@ object ScoresApi {
                     homeId = ht?.optString("id").orEmpty(), awayId = at?.optString("id").orEmpty(),
                     home = ArabicNames.of(ht?.optString("shortDisplayName").orEmpty().ifBlank { ht?.optString("displayName").orEmpty() }),
                     away = ArabicNames.of(at?.optString("shortDisplayName").orEmpty().ifBlank { at?.optString("displayName").orEmpty() }),
-                    homeLogo = ht?.optString("logo")?.ifBlank { null }, awayLogo = at?.optString("logo")?.ifBlank { null },
-                    homeScore = home.optString("score", "0"), awayScore = away.optString("score", "0"),
+                    homeLogo = logoOf(ht), awayLogo = logoOf(at),
+                    homeScore = scoreOf(home), awayScore = scoreOf(away),
                     state = st?.optJSONObject("type")?.optString("state").orEmpty().ifBlank { "pre" },
                     clock = st?.optString("displayClock").orEmpty(),
                     startMs = runCatching { Instant.parse(e.optString("date").let { if (it.length == 17) it.dropLast(1) + ":00Z" else it }).toEpochMilli() }.getOrDefault(0L),
@@ -125,6 +126,19 @@ object ScoresApi {
             }
         }
     }
+
+    private fun logoOf(t: JSONObject?): String? =
+        t?.optString("logo")?.ifBlank { null } ?: t?.optJSONArray("logos")?.optJSONObject(0)?.optString("href")?.ifBlank { null }
+
+    /** The score is text on the scoreboard and an object ({"value", "displayValue"}) in a team's schedule. */
+    private fun scoreOf(o: JSONObject): String = when (val v = o.opt("score")) {
+        null -> "0"
+        is JSONObject -> v.optString("displayValue", v.optString("value", "0"))
+        else -> v.toString()
+    }
+
+    /** The domestic leagues: their clubs are the ones to choose from (a club also plays in the continental cups). */
+    fun isDomestic(slug: String) = !slug.startsWith("uefa.") && !slug.startsWith("afc.")
 
     private val teamCache = ConcurrentHashMap<String, List<TeamInfo>>()
 

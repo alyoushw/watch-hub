@@ -61,7 +61,11 @@ private object MatchPrefs {
 }
 
 private data class SourceGroup(val key: String, val title: String, val sources: List<Source>)
-private data class Source(val account: com.alyoushw.watchhub.data.XtreamAccount, val channel: XtreamItem)
+/** A channel with its comparison keys worked out once (thousands of channels: never redo it on the screen thread). */
+private class Source(val account: com.alyoushw.watchhub.data.XtreamAccount, val channel: XtreamItem) {
+    val lname: String = channel.name.lowercase()
+    val key: String = matchKey(channel.name)
+}
 
 /** Every source of every channel matching the search, gathered from all your accounts, grouped by channel. */
 @Composable
@@ -76,22 +80,28 @@ internal fun MatchSourcesDialog(m: LiveMatch, onClose: () -> Unit) {
     val allAccounts by container.settings.xtreamAccounts.collectAsStateWithLifecycle()
     val accounts = remember(allAccounts) { allAccounts.filter { it.isComplete } }
 
+    // Gathering and keying tens of thousands of channels happens off the main thread, so the screen never freezes.
     LaunchedEffect(Unit) {
-        val out = mutableListOf<Source>()
-        for (acc in accounts) {
-            runCatching { ChannelIndex.channels(container.xtream, acc) }.getOrNull()?.forEach { out += Source(acc, it) }
+        all = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            val out = ArrayList<Source>()
+            for (acc in accounts) runCatching { ChannelIndex.channels(container.xtream, acc) }.getOrNull()?.forEach { out += Source(acc, it) }
+            out
         }
-        all = out
         MatchPrefs.get(context, m.leagueSlug)?.let { openKey = it }
     }
 
-    val groups = remember(all, query) {
+    var groups by remember { mutableStateOf<List<SourceGroup>>(emptyList()) }
+    LaunchedEffect(all, query) {
+        val src = all ?: return@LaunchedEffect
+        delay(250) // typing: wait for a pause
         val q = query.trim().lowercase()
-        val src = all ?: return@remember emptyList<SourceGroup>()
-        if (q.isBlank()) emptyList() else src.filter { it.channel.name.lowercase().contains(q) || matchKey(it.channel.name).contains(matchKey(q)) }
-            .groupBy { matchKey(it.channel.name) }
-            .map { (k, v) -> SourceGroup(k, v.minByOrNull { channelQualityOrder(it.channel.name) }!!.channel.name, v.sortedBy { channelQualityOrder(it.channel.name) }) }
-            .sortedBy { it.key }
+        val qKey = matchKey(q)
+        groups = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            if (q.isBlank()) emptyList() else src.filter { it.lname.contains(q) || (qKey.isNotEmpty() && it.key.contains(qKey)) }
+                .groupBy { it.key }
+                .map { (k, v) -> SourceGroup(k, v.minByOrNull { channelQualityOrder(it.channel.name) }!!.channel.name, v.sortedBy { channelQualityOrder(it.channel.name) }) }
+                .sortedBy { it.key }.take(60)
+        }
     }
     val preferred = MatchPrefs.get(context, m.leagueSlug)
     val ordered = remember(groups, preferred) { groups.sortedByDescending { it.key == preferred } }

@@ -77,6 +77,24 @@ internal fun TeamLogo(url: String?, name: String, size: Dp) {
 private fun localDay(ms: Long): LocalDate = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalDate()
 private fun clock(ms: Long): String = SimpleDateFormat("HH:mm", Locale.ENGLISH).format(Date(ms))
 
+/** "اليوم ٢٠:٠٠", "غداً ٢٠:٠٠", or the Gregorian date in words ("الأحد ٣٠ نوفمبر · ٢٠:٠٠"). */
+private fun whenText(ms: Long): String {
+    val zone = ZoneId.systemDefault()
+    val d = Instant.ofEpochMilli(ms).atZone(zone)
+    val today = LocalDate.now(zone)
+    val time = clock(ms)
+    return when (d.toLocalDate()) {
+        today -> "اليوم $time"
+        today.plusDays(1) -> "غداً $time"
+        today.minusDays(1) -> "أمس $time"
+        else -> java.time.format.DateTimeFormatter.ofPattern("EEEE d MMMM", Locale("ar")).format(d) + " · $time"
+    }
+}
+
+private fun dateText(ms: Long): String = java.time.format.DateTimeFormatter.ofPattern("d MMMM", Locale("ar")).format(Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()))
+
+private fun upcoming(m: LiveMatch) = m.state != "post" && m.startMs > System.currentTimeMillis() - 4 * 3600_000L
+
 /** What opens a club page. */
 internal data class ClubRef(val slug: String, val id: String, val name: String, val logo: String?)
 
@@ -97,9 +115,17 @@ fun MatchesScreen(onOpenMatchSettings: () -> Unit) {
     var openMatch by remember { mutableStateOf<LiveMatch?>(null) }
     var club by remember { mutableStateOf<ClubRef?>(null) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(favTeams) {
         while (true) {
-            runCatching { ScoresApi.fetch() }.onSuccess { all = it; failed = false }.onFailure { if (all == null) failed = true }
+            runCatching { ScoresApi.fetch() }.onSuccess { board ->
+                // Each chosen club's own schedule too, so its matches show even when the league board misses them.
+                val own = kotlinx.coroutines.coroutineScope {
+                    favTeams.map { k -> kotlinx.coroutines.async { runCatching { ScoresApi.teamMatches(k.substringBefore(':'), k.substringAfter(':')) }.getOrDefault(emptyList()) } }
+                        .map { it.await() }.flatten()
+                }
+                all = (board + own).distinctBy { it.id }.sortedBy { it.startMs }
+                failed = false
+            }.onFailure { if (all == null) failed = true }
             delay(60_000)
         }
     }
@@ -285,7 +311,7 @@ private fun MyClubsPane(favTeams: Set<String>, matches: List<LiveMatch>, onClub:
     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (favTeams.isEmpty()) Text("ما اخترت أي نادي بعد. من «⚙ مبارياتي» اختر أنديتك.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         teams.forEach { t ->
-            val next = matches.filter { (it.homeId == t.id || it.awayId == t.id) && it.state != "post" }.minByOrNull { it.startMs }
+            val next = matches.filter { (it.homeId == t.id || it.awayId == t.id) && upcoming(it) }.minByOrNull { it.startMs }
             Row(
                 Modifier.fillMaxWidth().focusFrame(RoundedCornerShape(16.dp)).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceContainer)
                     .clickable { onClub(ClubRef(t.leagueSlug, t.id, t.name, t.logo)) }.padding(14.dp),
@@ -295,7 +321,7 @@ private fun MyClubsPane(favTeams: Set<String>, matches: List<LiveMatch>, onClub:
                 Column(Modifier.weight(1f)) {
                     Text(t.name, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                     Text(
-                        next?.let { m -> val opp = if (m.homeId == t.id) m.away else m.home; "التالية: $opp · " + (if (m.state == "in") "جارية الآن" else SimpleDateFormat("d/M HH:mm", Locale.ENGLISH).format(Date(m.startMs))) } ?: "ما فيه مباراة قريبة",
+                        next?.let { m -> val opp = if (m.homeId == t.id) m.away else m.home; "التالية: $opp · " + (if (m.state == "in") "جارية الآن" else whenText(m.startMs)) } ?: "ما فيه مباراة قريبة",
                         fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -320,7 +346,7 @@ private fun ClubDialog(ref: ClubRef, favTeams: Set<String>, matches: List<LiveMa
     }
     val row = table.firstOrNull { it.teamId == ref.id }
     val all = (games + matches.filter { it.homeId == ref.id || it.awayId == ref.id }).distinctBy { it.leagueSlug + it.id }
-    val next = all.filter { it.state != "post" }.minByOrNull { it.startMs }
+    val next = all.filter { upcoming(it) }.minByOrNull { it.startMs }
     val last = all.filter { it.state == "post" }.sortedByDescending { it.startMs }.take(5)
 
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -366,7 +392,7 @@ private fun ClubDialog(ref: ClubRef, favTeams: Set<String>, matches: List<LiveMa
                     item {
                         Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text("المباراة القادمة", fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                            Text(m.league + " · " + (if (m.state == "in") "جارية الآن" else SimpleDateFormat("EEEE d/M HH:mm", Locale("ar")).format(Date(m.startMs))), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(m.league + " · " + (if (m.state == "in") "جارية الآن" else whenText(m.startMs)), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceEvenly) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) { TeamLogo(m.homeLogo, m.home, 52.dp); Text(m.home, fontSize = 14.sp) }
                                 Text(if (m.state == "pre") "VS" else "${m.homeScore} - ${m.awayScore}", fontSize = 22.sp, fontWeight = FontWeight.Bold)
@@ -390,7 +416,7 @@ private fun ClubDialog(ref: ClubRef, favTeams: Set<String>, matches: List<LiveMa
                                     TeamLogo(if (mineHome) m.awayLogo else m.homeLogo, "", 24.dp)
                                     Text(if (mineHome) m.away else m.home, Modifier.weight(1f), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text("${m.homeScore} - ${m.awayScore}", fontWeight = FontWeight.Bold)
-                                    Text(SimpleDateFormat("d/M", Locale.ENGLISH).format(Date(m.startMs)), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(dateText(m.startMs), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         }
