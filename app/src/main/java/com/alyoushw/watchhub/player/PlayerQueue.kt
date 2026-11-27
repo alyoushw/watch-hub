@@ -137,6 +137,9 @@ object ChannelIndex {
     private val cache = mutableMapOf<String, Map<String, List<XtreamItem>>>()
     private val lock = Mutex()
 
+    /** Every live channel of the account (the index flattened). */
+    suspend fun channels(api: XtreamApi, account: XtreamAccount): List<XtreamItem> = of(api, account).values.flatten()
+
     suspend fun of(api: XtreamApi, account: XtreamAccount): Map<String, List<XtreamItem>> {
         val k = "${account.host}|${account.username}"
         lock.withLock { cache[k]?.let { return it } }
@@ -144,6 +147,28 @@ object ChannelIndex {
         val map = withContext(Dispatchers.Default) { list.groupBy { channelKey(it.name) } }
         lock.withLock { cache[k] = map }
         return map
+    }
+}
+
+/**
+ * A looser key for finding the same channel under different spellings ("beIN SPORTS 1", "beIN 1", "بي ان سبورت 1" → "bein1").
+ * Used to gather every source of one channel from all the accounts.
+ */
+fun matchKey(name: String): String {
+    var k = channelKey(name)
+    k = k.replace(Regex("^بيان"), "bein").replace(Regex("^بين"), "bein")
+    return k.replace("sports", "").replace("sport", "").replace("سبورتس", "").replace("سبورت", "")
+}
+
+/** Lower is better: 4K, then FHD, HD, anything unlabelled, and SD last. */
+fun channelQualityOrder(name: String): Int {
+    val t = qualityTags(name)
+    return when {
+        "4k" in t || "8k" in t -> 0
+        "fhd" in t -> 1
+        "hd" in t -> 2
+        "sd" in t || "low" in t -> 4
+        else -> 3
     }
 }
 

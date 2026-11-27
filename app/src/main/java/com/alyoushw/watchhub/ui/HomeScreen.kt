@@ -554,6 +554,7 @@ fun HomeScreen(
                     item(key = "continue") { ContinueWatchingRow(onOpenXtreamSeries, continueKinds, onOpenTitle = onOpen, onOpenLive = { live = true },
                     onOpenAnime = { onOpenAnime(it.animeLookup()) },
                     animeMovies = when (vm.type) { MediaType.TV -> false; MediaType.MOVIE -> true; else -> null }) }
+                    item(key = "matches") { LiveMatchesRow() }
                     item(key = "foryou") { ForYouRow(vm.type, onOpen) }
                     if (vm.type == MediaType.ANIME) {
                         item(key = "animeify-latest") {

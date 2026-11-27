@@ -776,18 +776,18 @@ class PlayerActivity : ComponentActivity() {
         // While filtered, the sources are the list itself: offer the same ones again.
         val base = beforeFilter?.let { (q, p) -> q[p] } ?: current ?: return emptyList()
         val name = base.channel?.name ?: base.entry.title
-        val key = channelKey(name)
-        val tags = qualityTags(name)
+        val key = matchKey(name)
         val accounts = container.settings.xtreamAccounts.value.filter { it.isComplete }
+        // Every source of this channel in every account (several per account too, any quality), best picture first.
         return coroutineScope {
             accounts.map { acc ->
                 async {
-                    val map = try {
-                        ChannelIndex.of(container.xtream, acc)
+                    val channels = try {
+                        ChannelIndex.channels(container.xtream, acc)
                     } catch (x: XtreamException) {
-                        emptyMap()
+                        emptyList()
                     }
-                    map[key].orEmpty().filter { qualityTags(it.name) == tags }.map { ch ->
+                    channels.filter { matchKey(it.name) == key }.map { ch ->
                         ChannelSource(
                             ch.name,
                             acc.label,
@@ -795,7 +795,7 @@ class PlayerActivity : ComponentActivity() {
                         )
                     }
                 }
-            }.awaitAll().flatten().filter { it.item.entry.key != base.entry.key }
+            }.awaitAll().flatten().filter { it.item.entry.key != base.entry.key }.sortedBy { channelQualityOrder(it.label) }
         }
     }
 
