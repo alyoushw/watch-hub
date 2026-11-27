@@ -51,6 +51,8 @@ import com.alyoushw.watchhub.data.LiveMatch
 import com.alyoushw.watchhub.data.ScoresApi
 import com.alyoushw.watchhub.data.StandingRow
 import com.alyoushw.watchhub.data.TeamInfo
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.time.Instant
@@ -119,8 +121,8 @@ fun MatchesScreen(onOpenMatchSettings: () -> Unit) {
         while (true) {
             runCatching { ScoresApi.fetch() }.onSuccess { board ->
                 // Each chosen club's own schedule too, so its matches show even when the league board misses them.
-                val own = kotlinx.coroutines.coroutineScope {
-                    favTeams.map { k -> kotlinx.coroutines.async { runCatching { ScoresApi.teamMatches(k.substringBefore(':'), k.substringAfter(':')) }.getOrDefault(emptyList()) } }
+                val own = coroutineScope {
+                    favTeams.map { k -> async { runCatching { ScoresApi.teamMatches(k.substringBefore(':'), k.substringAfter(':')) }.getOrDefault(emptyList()) } }
                         .map { it.await() }.flatten()
                 }
                 all = (board + own).distinctBy { it.id }.sortedBy { it.startMs }
