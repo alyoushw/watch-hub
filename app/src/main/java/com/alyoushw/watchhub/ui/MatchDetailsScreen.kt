@@ -76,7 +76,7 @@ internal fun MatchDetailsDialog(m: LiveMatch, onSources: () -> Unit, onClose: ()
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 when (m.state) {
                                     "in" -> Text("● ${m.clock}", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
-                                    "pre" -> Text(whenText(m.startMs), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                                    "pre" -> Text(matchWhen(m.startMs), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                                     else -> Text("انتهت", color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 Text(if (m.state == "pre") "VS" else "${m.homeScore} - ${m.awayScore}", fontSize = 38.sp, fontWeight = FontWeight.Bold)

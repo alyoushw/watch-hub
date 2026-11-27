@@ -80,7 +80,7 @@ private fun localDay(ms: Long): LocalDate = Instant.ofEpochMilli(ms).atZone(Zone
 internal fun clock(ms: Long): String = SimpleDateFormat("HH:mm", Locale.ENGLISH).format(Date(ms))
 
 /** "اليوم ٢٠:٠٠", "غداً ٢٠:٠٠", or the Gregorian date in words ("الأحد ٣٠ نوفمبر · ٢٠:٠٠"). */
-internal fun whenText(ms: Long): String {
+internal fun matchWhen(ms: Long): String {
     val zone = ZoneId.systemDefault()
     val d = Instant.ofEpochMilli(ms).atZone(zone)
     val today = LocalDate.now(zone)
@@ -375,7 +375,7 @@ private fun MyClubsPane(favTeams: Set<String>, matches: List<LiveMatch>, onClub:
                 Column(Modifier.weight(1f)) {
                     Text(t.name, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                     Text(
-                        next?.let { m -> val opp = if (m.homeId == t.id) m.away else m.home; "التالية: $opp · " + (if (m.state == "in") "جارية الآن" else whenText(m.startMs)) } ?: "ما فيه مباراة قريبة",
+                        next?.let { m -> val opp = if (m.homeId == t.id) m.away else m.home; "التالية: $opp · " + (if (m.state == "in") "جارية الآن" else matchWhen(m.startMs)) } ?: "ما فيه مباراة قريبة",
                         fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -448,7 +448,7 @@ private fun ClubDialog(ref: ClubRef, favTeams: Set<String>, matches: List<LiveMa
                     item {
                         Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text("المباراة القادمة", fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                            Text(m.league + " · " + (if (m.state == "in") "جارية الآن" else whenText(m.startMs)), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(m.league + " · " + (if (m.state == "in") "جارية الآن" else matchWhen(m.startMs)), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceEvenly) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) { TeamLogo(m.homeLogo, m.home, 52.dp); Text(m.home, fontSize = 14.sp) }
                                 Text(if (m.state == "pre") "VS" else "${m.homeScore} - ${m.awayScore}", fontSize = 22.sp, fontWeight = FontWeight.Bold)
