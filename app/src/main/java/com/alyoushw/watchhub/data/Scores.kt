@@ -39,6 +39,26 @@ data class LiveMatch(
 /** One goal of a match, from the feed's match details ("scoringPlay"). */
 data class GoalEvent(val teamId: String, val player: String, val minute: String, val penalty: Boolean, val own: Boolean)
 
+/** One row of the match statistics: [label] (Arabic), both sides' values as shown, and the share of the first side. */
+data class MatchStat(val label: String, val home: String, val away: String, val homeShare: Float)
+
+/** One event of the match timeline (goal, card, substitution). */
+data class TimelineEvent(val minute: String, val kind: String, val teamId: String, val player: String, val other: String?)
+
+data class LineupPlayer(val number: String, val name: String, val position: String, val starter: Boolean)
+data class Lineup(val teamId: String, val team: String, val formation: String, val players: List<LineupPlayer>)
+
+/** Everything the match page shows besides the score. */
+data class MatchDetails(
+    val venue: String?, val attendance: String?,
+    val stats: List<MatchStat>, val events: List<TimelineEvent>, val lineups: List<Lineup>,
+    /** team id → its last matches as "W/D/L opponent score". */
+    val form: Map<String, List<String>>, val h2hSummary: String?, val h2h: List<String>,
+)
+
+data class Leader(val player: String, val teamId: String, val value: Int)
+data class Player(val id: String, val name: String, val number: String, val position: String, val age: String, val country: String)
+
 /** League → name shown, and the channel names usually carrying it here (only a starting point). */
 data class LeagueInfo(val slug: String, val name: String, val keywords: List<String>)
 
@@ -254,6 +274,148 @@ object ScoresApi {
         val past = runCatching { get("$BASE/$slug/teams/$teamId/schedule")?.optJSONArray("events") }.getOrNull()
         val next = runCatching { get("$BASE/$slug/teams/$teamId")?.optJSONObject("team")?.optJSONArray("nextEvent") }.getOrNull()
         return (parseEvents(past, l) + parseEvents(next, l)).distinctBy { it.id }.sortedBy { it.startMs }
+    }
+
+    private val STAT_LABELS = listOf(
+        "possessionPct" to "الاستحواذ %", "totalShots" to "التسديدات", "shotsOnTarget" to "على المرمى", "blockedShots" to "تسديدات محجوبة",
+        "wonCorners" to "الركنيات", "foulsCommitted" to "الأخطاء", "offsides" to "التسلل", "yellowCards" to "البطاقات الصفراء",
+        "redCards" to "البطاقات الحمراء", "saves" to "التصديات", "accuratePasses" to "التمريرات الدقيقة", "totalPasses" to "التمريرات",
+        "totalTackles" to "الالتحامات", "effectiveTackles" to "التحامات ناجحة", "totalClearance" to "إبعادات",
+    )
+    private val EVENT_KINDS = mapOf(
+        "Goal" to "هدف", "Own Goal" to "هدف عكسي", "Penalty - Scored" to "ركلة جزاء (هدف)", "Penalty - Missed" to "ركلة جزاء ضائعة", "Penalty - Saved" to "ركلة جزاء مصدّة",
+        "Yellow Card" to "بطاقة صفراء", "Red Card" to "بطاقة حمراء", "Substitution" to "تبديل", "Goal - Header" to "هدف برأسية", "Goal - Free-kick" to "هدف من ركلة حرة",
+    )
+    private val detailCache = ConcurrentHashMap<String, Pair<Long, MatchDetails>>()
+
+    /** The match page's data: statistics, timeline, line-ups, form and head-to-head (ESPN's "summary"). */
+    suspend fun details(slug: String, eventId: String, homeId: String, finished: Boolean): MatchDetails? {
+        val key = "$slug|$eventId"
+        detailCache[key]?.let { (at, d) -> if (System.currentTimeMillis() - at < (if (finished) 30 * 60_000L else 45_000L)) return d }
+        val j = get("$BASE/$slug/summary?event=$eventId") ?: return null
+        val stats = ArrayList<MatchStat>()
+        val teams = j.optJSONObject("boxscore")?.optJSONArray("teams")
+        if (teams != null && teams.length() >= 2) {
+            fun byTeam(id: String): Map<String, String> {
+                val out = HashMap<String, String>()
+                for (i in 0 until teams.length()) {
+                    val t = teams.getJSONObject(i)
+                    if (t.optJSONObject("team")?.optString("id") != id) continue
+                    t.optJSONArray("statistics")?.let { a -> for (k in 0 until a.length()) a.getJSONObject(k).let { out[it.optString("name")] = it.optString("displayValue") } }
+                }
+                return out
+            }
+            val ids = (0 until teams.length()).map { teams.getJSONObject(it).optJSONObject("team")?.optString("id").orEmpty() }
+            val hid = ids.firstOrNull { it == homeId } ?: ids[0]
+            val aid = ids.firstOrNull { it != hid } ?: ids[1]
+            val h = byTeam(hid); val a = byTeam(aid)
+            for ((k, label) in STAT_LABELS) {
+                val hv = h[k]; val av = a[k]
+                if (hv == null && av == null) continue
+                val hn = hv?.toFloatOrNull() ?: 0f; val an = av?.toFloatOrNull() ?: 0f
+                val share = if (hn + an <= 0f) 0.5f else hn / (hn + an)
+                val suffix = if (k == "possessionPct") "%" else ""
+                stats += MatchStat(label, (hv ?: "0") + suffix, (av ?: "0") + suffix, share)
+            }
+        }
+        val events = ArrayList<TimelineEvent>()
+        j.optJSONArray("keyEvents")?.let { a ->
+            for (i in 0 until a.length()) {
+                val e = a.getJSONObject(i)
+                val kind = EVENT_KINDS[e.optJSONObject("type")?.optString("text").orEmpty()] ?: continue
+                val ps = e.optJSONArray("participants")
+                fun nm(n: Int) = ps?.optJSONObject(n)?.optJSONObject("athlete")?.optString("displayName")?.ifBlank { null }
+                events += TimelineEvent(e.optJSONObject("clock")?.optString("displayValue").orEmpty(), kind, e.optJSONObject("team")?.optString("id").orEmpty(), nm(0).orEmpty(), nm(1))
+            }
+        }
+        val lineups = ArrayList<Lineup>()
+        j.optJSONArray("rosters")?.let { a ->
+            for (i in 0 until a.length()) {
+                val r = a.getJSONObject(i)
+                val players = ArrayList<LineupPlayer>()
+                r.optJSONArray("roster")?.let { ps -> for (k in 0 until ps.length()) {
+                    val p = ps.getJSONObject(k)
+                    players += LineupPlayer(p.optString("jersey"), p.optJSONObject("athlete")?.optString("shortName")?.ifBlank { null } ?: p.optJSONObject("athlete")?.optString("displayName").orEmpty(),
+                        p.optJSONObject("position")?.optString("abbreviation").orEmpty(), p.optBoolean("starter"))
+                } }
+                val t = r.optJSONObject("team")
+                lineups += Lineup(t?.optString("id").orEmpty(), ArabicNames.of(t?.optString("shortDisplayName").orEmpty().ifBlank { t?.optString("displayName").orEmpty() }, t?.optString("id")), r.optString("formation"), players)
+            }
+        }
+        val form = HashMap<String, List<String>>()
+        j.optJSONArray("lastFiveGames")?.let { a ->
+            for (i in 0 until a.length()) {
+                val t = a.getJSONObject(i)
+                val id = t.optJSONObject("team")?.optString("id").orEmpty()
+                val ev = t.optJSONArray("events") ?: continue
+                form[id] = (0 until ev.length()).map { k ->
+                    val g = ev.getJSONObject(k)
+                    val opp = g.optJSONObject("opponent")
+                    g.optString("gameResult") + " " + ArabicNames.of(opp?.optString("shortDisplayName").orEmpty().ifBlank { opp?.optString("displayName").orEmpty() }, opp?.optString("id")) + " " + g.optString("score")
+                }
+            }
+        }
+        var h2hSummary: String? = null
+        val h2h = ArrayList<String>()
+        j.optJSONArray("seasonseries")?.optJSONObject(0)?.let { ss ->
+            h2hSummary = ss.optString("summary").ifBlank { null }
+            ss.optJSONArray("events")?.let { ev ->
+                for (i in 0 until ev.length()) {
+                    val g = ev.getJSONObject(i)
+                    val cs = g.optJSONArray("competitors") ?: continue
+                    val line = (0 until cs.length()).map { k -> cs.getJSONObject(k) }.sortedBy { if (it.optString("homeAway") == "home") 0 else 1 }
+                        .joinToString(" - ") { c -> ArabicNames.of(c.optJSONObject("team")?.optString("shortDisplayName").orEmpty().ifBlank { c.optJSONObject("team")?.optString("displayName").orEmpty() }, c.optJSONObject("team")?.optString("id")) + " " + c.optString("score") }
+                    h2h += g.optString("date").take(10) + " · " + line
+                }
+            }
+        }
+        val gi = j.optJSONObject("gameInfo")
+        val d = MatchDetails(gi?.optJSONObject("venue")?.optString("fullName")?.ifBlank { null }, gi?.optInt("attendance", 0)?.takeIf { it > 0 }?.toString(), stats, events, lineups, form, h2hSummary, h2h)
+        detailCache[key] = System.currentTimeMillis() to d
+        return d
+    }
+
+    private fun seasonYear(): Int = LocalDate.now().let { if (it.monthValue >= 7) it.year else it.year - 1 }
+    private val leaderCache = ConcurrentHashMap<String, Pair<Long, List<Leader>>>()
+    private val nameCache = ConcurrentHashMap<String, String>()
+
+    /** The league's top scorers ("goalsLeaders") or top assist makers ("assistsLeaders"): player, club and number. */
+    suspend fun leaders(slug: String, category: String, limit: Int = 10): List<Leader> = coroutineScope {
+        val ck = "$slug|$category"
+        leaderCache[ck]?.let { (at, l) -> if (System.currentTimeMillis() - at < 60 * 60_000L) return@coroutineScope l }
+        val year = seasonYear()
+        val base = "https://sports.core.api.espn.com/v2/sports/soccer/leagues/$slug/seasons/$year"
+        val cat = get("$base/types/1/leaders")?.optJSONArray("categories")?.let { a -> (0 until a.length()).map { a.getJSONObject(it) }.firstOrNull { it.optString("name") == category } }
+        val arr = cat?.optJSONArray("leaders") ?: return@coroutineScope emptyList()
+        val idOf = Regex("/(?:athletes|teams)/(\\d+)")
+        val picked = (0 until minOf(limit, arr.length())).map { arr.getJSONObject(it) }
+        val out = picked.map { l ->
+            async {
+                val aid = idOf.find(l.optJSONObject("athlete")?.optString("\$ref").orEmpty())?.groupValues?.get(1).orEmpty()
+                val tid = idOf.find(l.optJSONObject("team")?.optString("\$ref").orEmpty())?.groupValues?.get(1).orEmpty()
+                val name = nameCache[aid] ?: runCatching { get("$base/athletes/$aid")?.let { it.optString("displayName").ifBlank { it.optString("fullName") } } }.getOrNull().orEmpty().also { if (it.isNotBlank()) nameCache[aid] = it }
+                Leader(name, tid, l.optDouble("value", 0.0).toInt())
+            }
+        }.map { it.await() }.filter { it.player.isNotBlank() }
+        if (out.isNotEmpty()) leaderCache[ck] = System.currentTimeMillis() to out
+        out
+    }
+
+    private val rosterCache = ConcurrentHashMap<String, List<Player>>()
+
+    /** A club's players (ESPN's roster), for the squad by position. */
+    suspend fun roster(slug: String, teamId: String): List<Player> {
+        rosterCache["$slug|$teamId"]?.let { return it }
+        val arr = get("$BASE/$slug/teams/$teamId/roster")?.optJSONArray("athletes") ?: return emptyList()
+        val out = buildList {
+            for (i in 0 until arr.length()) {
+                val a = arr.optJSONObject(i) ?: continue
+                add(Player(a.optString("id"), a.optString("displayName").ifBlank { a.optString("fullName") }, a.optString("jersey"),
+                    a.optJSONObject("position")?.optString("displayName").orEmpty(), a.optString("age"), a.optString("citizenship")))
+            }
+        }
+        if (out.isNotEmpty()) rosterCache["$slug|$teamId"] = out
+        return out
     }
 }
 

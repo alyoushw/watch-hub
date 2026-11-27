@@ -77,10 +77,10 @@ internal fun TeamLogo(url: String?, name: String, size: Dp) {
 }
 
 private fun localDay(ms: Long): LocalDate = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalDate()
-private fun clock(ms: Long): String = SimpleDateFormat("HH:mm", Locale.ENGLISH).format(Date(ms))
+internal fun clock(ms: Long): String = SimpleDateFormat("HH:mm", Locale.ENGLISH).format(Date(ms))
 
 /** "اليوم ٢٠:٠٠", "غداً ٢٠:٠٠", or the Gregorian date in words ("الأحد ٣٠ نوفمبر · ٢٠:٠٠"). */
-private fun whenText(ms: Long): String {
+internal fun whenText(ms: Long): String {
     val zone = ZoneId.systemDefault()
     val d = Instant.ofEpochMilli(ms).atZone(zone)
     val today = LocalDate.now(zone)
@@ -115,6 +115,7 @@ fun MatchesScreen(onOpenMatchSettings: () -> Unit) {
     var sub by remember { mutableIntStateOf(0) }
     var dayOffset by remember { mutableIntStateOf(0) }
     var openMatch by remember { mutableStateOf<LiveMatch?>(null) }
+    var detailMatch by remember { mutableStateOf<LiveMatch?>(null) }
     var club by remember { mutableStateOf<ClubRef?>(null) }
 
     // One board per competition per month (the feed refuses date ranges but gives a month at once), only for the
@@ -141,7 +142,8 @@ fun MatchesScreen(onOpenMatchSettings: () -> Unit) {
     }
 
     openMatch?.let { MatchSourcesDialog(it) { openMatch = null } }
-    club?.let { ClubDialog(it, favTeams, all.orEmpty(), onOpenMatch = { m -> openMatch = m }) { club = null } }
+    detailMatch?.let { m -> MatchDetailsDialog(m, onSources = { openMatch = m }) { detailMatch = null } }
+    club?.let { ClubDialog(it, favTeams, all.orEmpty(), onOpenMatch = { m -> openMatch = m }, onOpenDetails = { m -> detailMatch = m }) { club = null } }
 
     fun mine(m: LiveMatch) = m.leagueSlug in favLeagues || m.homeId in favIds || m.awayId in favIds
     val hasFavs = favLeagues.isNotEmpty() || favTeams.isNotEmpty()
@@ -210,7 +212,7 @@ fun MatchesScreen(onOpenMatchSettings: () -> Unit) {
                                         TeamLogo(ScoresApi.leagueLogos[slug], rows.first().league, 26.dp)
                                         Text(rows.first().league, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                                     }
-                                    rows.forEach { m -> MatchRow(m, favIds) { openMatch = m } }
+                                    rows.forEach { m -> MatchRow(m, favIds) { detailMatch = m } }
                                 }
                             }
                         }
@@ -275,6 +277,13 @@ private fun StandingsPane(favLeagues: Set<String>, favTeams: Set<String>, favIds
     var slug by remember(slugs) { mutableStateOf(slugs.first()) }
     var rows by remember { mutableStateOf<List<StandingRow>?>(null) }
     LaunchedEffect(slug) { rows = null; rows = runCatching { ScoresApi.standings(slug) }.getOrDefault(emptyList()) }
+    var scorers by remember { mutableStateOf<List<com.alyoushw.watchhub.data.Leader>>(emptyList()) }
+    var assists by remember { mutableStateOf<List<com.alyoushw.watchhub.data.Leader>>(emptyList()) }
+    LaunchedEffect(slug) {
+        scorers = emptyList(); assists = emptyList()
+        scorers = runCatching { ScoresApi.leaders(slug, "goalsLeaders", 10) }.getOrDefault(emptyList())
+        assists = runCatching { ScoresApi.leaders(slug, "assistsLeaders", 8) }.getOrDefault(emptyList())
+    }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(slugs) { s ->
@@ -318,6 +327,27 @@ private fun StandingsPane(favLeagues: Set<String>, favTeams: Set<String>, favIds
                 }
             }
         }
+        if (scorers.isNotEmpty()) LeadersCard("الهدّافون", scorers, rows.orEmpty())
+        if (assists.isNotEmpty()) LeadersCard("صنّاع الأهداف", assists, rows.orEmpty())
+    }
+}
+
+@Composable
+private fun LeadersCard(title: String, list: List<com.alyoushw.watchhub.data.Leader>, rows: List<StandingRow>) {
+    Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceContainer)) {
+        Text(title, Modifier.padding(14.dp), fontWeight = FontWeight.Bold, fontSize = 17.sp)
+        list.forEachIndexed { i, l ->
+            val team = rows.firstOrNull { it.teamId == l.teamId }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("${i + 1}", Modifier.width(22.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TeamLogo(team?.logo, team?.team.orEmpty(), 24.dp)
+                Column(Modifier.weight(1f)) {
+                    Text(l.player, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(team?.team ?: com.alyoushw.watchhub.data.KulliqNames.teams[l.teamId].orEmpty(), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text("${l.value}", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            }
+        }
     }
 }
 
@@ -357,16 +387,18 @@ private fun MyClubsPane(favTeams: Set<String>, matches: List<LiveMatch>, onClub:
 
 /** A club's page: its crest big and faint over its colour, numbers, next match, last results and its place in the table. */
 @Composable
-private fun ClubDialog(ref: ClubRef, favTeams: Set<String>, matches: List<LiveMatch>, onOpenMatch: (LiveMatch) -> Unit, onClose: () -> Unit) {
+private fun ClubDialog(ref: ClubRef, favTeams: Set<String>, matches: List<LiveMatch>, onOpenMatch: (LiveMatch) -> Unit, onOpenDetails: (LiveMatch) -> Unit, onClose: () -> Unit) {
     var color by remember { mutableStateOf(Color(0xFF3A3028)) }
     var games by remember { mutableStateOf<List<LiveMatch>>(emptyList()) }
     var table by remember { mutableStateOf<List<StandingRow>>(emptyList()) }
+    var squad by remember { mutableStateOf<List<com.alyoushw.watchhub.data.Player>>(emptyList()) }
     val container = appContainer()
     val isFav = "${ref.slug}:${ref.id}" in favTeams
     LaunchedEffect(ref) {
         runCatching { ScoresApi.teams(ref.slug) }.getOrNull()?.firstOrNull { it.id == ref.id }?.colorHex?.let { c -> runCatching { color = Color(android.graphics.Color.parseColor(c)) } }
         games = runCatching { ScoresApi.teamMatches(ref.slug, ref.id) }.getOrDefault(emptyList())
         table = runCatching { ScoresApi.standings(ref.slug) }.getOrDefault(emptyList())
+        squad = runCatching { ScoresApi.roster(ref.slug, ref.id) }.getOrDefault(emptyList())
     }
     val row = table.firstOrNull { it.teamId == ref.id }
     val all = (games + matches.filter { it.homeId == ref.id || it.awayId == ref.id }).distinctBy { it.leagueSlug + it.id }
@@ -422,7 +454,10 @@ private fun ClubDialog(ref: ClubRef, favTeams: Set<String>, matches: List<LiveMa
                                 Text(if (m.state == "pre") "VS" else "${m.homeScore} - ${m.awayScore}", fontSize = 22.sp, fontWeight = FontWeight.Bold)
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) { TeamLogo(m.awayLogo, m.away, 52.dp); Text(m.away, fontSize = 14.sp) }
                             }
-                            Button(modifier = Modifier.fillMaxWidth().focusFrame(), onClick = { onOpenMatch(m) }) { Text("المصادر") }
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Button(modifier = Modifier.weight(1f).focusFrame(), onClick = { onOpenMatch(m) }) { Text("المصادر") }
+                                androidx.compose.material3.OutlinedButton(modifier = Modifier.weight(1f).focusFrame(), onClick = { onOpenDetails(m) }) { Text("تفاصيل المباراة") }
+                            }
                         }
                     }
                 }
@@ -435,7 +470,7 @@ private fun ClubDialog(ref: ClubRef, favTeams: Set<String>, matches: List<LiveMa
                                 val a = m.homeScore.toIntOrNull() ?: 0; val b = m.awayScore.toIntOrNull() ?: 0
                                 val my = if (mineHome) a else b; val their = if (mineHome) b else a
                                 val (tag, c) = when { my > their -> "ف" to Color(0xFF2F9E6B); my < their -> "خ" to Color(0xFFD04A4F); else -> "ت" to Color(0xFF7B7368) }
-                                Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Row(Modifier.fillMaxWidth().focusFrame(RoundedCornerShape(10.dp)).clickable { onOpenDetails(m) }.padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     Box(Modifier.size(28.dp).clip(RoundedCornerShape(8.dp)).background(c), contentAlignment = Alignment.Center) { Text(tag, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
                                     TeamLogo(if (mineHome) m.awayLogo else m.homeLogo, "", 24.dp)
                                     Text(if (mineHome) m.away else m.home, Modifier.weight(1f), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -458,6 +493,24 @@ private fun ClubDialog(ref: ClubRef, favTeams: Set<String>, matches: List<LiveMa
                                     TeamLogo(r.logo, r.team, 24.dp)
                                     Text(r.team, Modifier.weight(1f), fontWeight = if (r.teamId == ref.id) FontWeight.Bold else FontWeight.Normal)
                                     Text("${r.points}", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+                if (squad.isNotEmpty()) {
+                    val groups = listOf("Goalkeeper" to "حراس المرمى", "Defender" to "المدافعون", "Midfielder" to "لاعبو الوسط", "Forward" to "المهاجمون")
+                    groups.forEach { (en, ar) ->
+                        val list = squad.filter { it.position == en }.sortedBy { it.number.toIntOrNull() ?: 99 }
+                        if (list.isNotEmpty()) item {
+                            Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceContainer)) {
+                                Text("$ar (${list.size})", Modifier.padding(14.dp), fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
+                                list.forEach { p ->
+                                    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Text(p.number, Modifier.width(28.dp), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                                        Text(p.name, Modifier.weight(1f), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(listOf(p.country, p.age.takeIf { it.isNotBlank() }?.let { "$it سنة" }).filterNotNull().filter { it.isNotBlank() }.joinToString(" · "), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
                                 }
                             }
                         }
