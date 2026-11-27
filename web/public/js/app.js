@@ -6,7 +6,7 @@ import * as fouru from "./fouru.js?v=20261118d";
 import * as features from "./features.js?v=20261122c";
 import * as sourceApi from "./sources.js?v=20261118d";
 import { restoreDownloads, addDownload } from "./downloads.js?v=20261118d";
-import { play, fmt } from "./player.js?v=20261122c";
+import { play, fmt } from "./player.js?v=20261127a";
 import * as smart from "./smart.js?v=20261118d";
 import { fillTranslated } from "./translate.js?v=20261118d";
 import * as cloud from "./cloud.js?v=20261125a";
@@ -1894,7 +1894,7 @@ async function settingsPage() {
     <section class="card-box">
       <h3>الآيفون والآيباد</h3>
       <label style="display:flex;gap:10px;align-items:center;cursor:pointer">
-        <input type="checkbox" id="vlc" ${settings.vlcOnIos === true ? "checked" : ""} style="width:20px;height:20px;accent-color:var(--gold)">
+        <input type="checkbox" id="vlc" ${settings.vlcOnIos !== false ? "checked" : ""} style="width:20px;height:20px;accent-color:var(--gold)">
         <span>افتح القنوات والأفلام والحلقات في تطبيق VLC على طول</span>
       </label>
       <p class="muted" style="margin:0;line-height:1.8;font-size:13px">Safari ما يشغّل صيغ كثيرة (مثل MKV)، وVLC يشغّل كل شي.

@@ -296,14 +296,14 @@ export async function play(urls, entry, list = null, index = 0) {
   if (downloaded) { urls = [downloaded]; list = null; }
   queue = list && list.length ? list : [{ urls, entry }];
   qIndex = list && list.length ? Math.max(0, Math.min(index, list.length - 1)) : 0;
-  if (!downloaded && isIOS() && settings.vlcOnIos === true) {
+  if (!downloaded && isIOS() && settings.vlcOnIos !== false) {
     try {
       if (entry.animeRef || entry.sourceRef || entry.fourURef) urls = await resolveEntry(entry);
       else if (entry.accountId) urls = await resolvePlayback(entry, urls);
       if (request !== opening) return;
     } catch (e) { if (request !== opening) return; openOverlay(entry, entry.kind === "live"); ui.spin.hidden = true; errorEl.hidden = false; errorEl.textContent = e.message; return; }
   }
-  if (!downloaded && isIOS() && settings.vlcOnIos === true) {
+  if (!downloaded && isIOS() && settings.vlcOnIos !== false) {
     history.save(entry, true);
     return openInVlc(urls, entry);
   }

@@ -103,6 +103,14 @@ async function proxy(req: Request, self: URL, session?: MediaSession): Promise<R
     const named = VIDEO_TYPES[ext];
     if (named) out.set("content-type", named);
   }
+  // Video never goes through this server (the free plan's 5 GB a month lasts a couple of hours of viewing):
+  // streams play in VLC or the Android app straight from their provider. Only small things pass (catalogues, JSON).
+  const length = Number(upstream.headers.get("content-length") ?? 0);
+  if (/^(video|audio)\//i.test(type) || /mpegurl|mp2t/i.test(type) || /octet-stream/i.test(type) && !/\.(php|json|xml|txt)$/i.test(new URL(finalUrl).pathname) ||
+    /\.(m3u8?|ts|mp4|mkv|avi|mov|webm|m4s|aac|mp3)$/i.test(new URL(finalUrl).pathname) || length > 25 * 1024 * 1024) {
+    await upstream.body?.cancel().catch(() => {});
+    return fail(403, "الفيديو ما يمر على السيرفر. افتحه في VLC أو من تطبيق أندرويد.");
+  }
   if (req.method === "HEAD") return new Response(null, { status: upstream.status, headers: out });
   if (/mpegurl/i.test(type) || /\.m3u8?(\?|$)/i.test(new URL(finalUrl).pathname) || session && /\.txt$/i.test(new URL(finalUrl).pathname)) {
     if (!upstream.ok) return new Response(upstream.body, { status: upstream.status, headers: out });
@@ -553,7 +561,7 @@ Deno.serve({ port }, (req) => {
   if (url.pathname.startsWith("/sources/")) return handleSources(req, url, proxy);
   if (url.pathname.startsWith("/fouru/")) return fourU(req, url);
   if (url.pathname === "/proxy") return proxy(req, url);
-  if (url.pathname.startsWith("/remux/")) return handleRemux(req, url);
+  if (url.pathname.startsWith("/remux/")) return fail(410, "تحويل الفيديو على السيرفر متوقف. افتحه في VLC.");
   if (req.method === "OPTIONS" && url.pathname.startsWith("/auth/")) return new Response(null, { status: 204, headers: CORS });
   if (url.pathname === "/config.json") return config();
   if (url.pathname === "/.well-known/assetlinks.json") return assetLinks();
