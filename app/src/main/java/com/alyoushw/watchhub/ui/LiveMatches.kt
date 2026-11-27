@@ -37,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.alyoushw.watchhub.data.LiveMatch
 import com.alyoushw.watchhub.data.ScoresApi
@@ -128,7 +129,8 @@ private fun MatchSourcesDialog(m: LiveMatch, onClose: () -> Unit) {
     var query by remember { mutableStateOf(keywords.firstOrNull().orEmpty()) }
     var all by remember { mutableStateOf<List<Source>?>(null) }
     var openKey by remember { mutableStateOf<String?>(null) }
-    val accounts = container.settings.xtreamAccounts.value.filter { it.isComplete }
+    val allAccounts by container.settings.xtreamAccounts.collectAsStateWithLifecycle()
+    val accounts = remember(allAccounts) { allAccounts.filter { it.isComplete } }
 
     LaunchedEffect(Unit) {
         val out = mutableListOf<Source>()
