@@ -1,7 +1,7 @@
 import * as tmdb from "./tmdb.js?v=20261118d";
 import * as src from "./sources.js?v=20261118d";
 import { settings, watchlist, history, isFinished } from "./store.js?v=20261118d";
-import { play } from "./player.js?v=20261122c";
+import { play } from "./player.js?v=20261127a";
 import { addDownload } from "./downloads.js?v=20261118d";
 import { fillTranslated } from "./translate.js?v=20261118d";
 

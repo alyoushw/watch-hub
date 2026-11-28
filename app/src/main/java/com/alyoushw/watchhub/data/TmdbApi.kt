@@ -97,6 +97,15 @@ data class SeasonDto(
 )
 
 @Serializable
+data class AiredEpisodeDto(
+    @SerialName("episode_number") val episodeNumber: Int = 0,
+    val name: String? = null,
+    @SerialName("air_date") val airDate: String? = null,
+)
+@Serializable
+data class SeasonEpisodesDto(val episodes: List<AiredEpisodeDto> = emptyList())
+
+@Serializable
 data class EpisodeGroupSummary(
     val id: String = "", val name: String = "", val type: Int = 0,
     @SerialName("episode_count") val episodeCount: Int = 0,
@@ -413,6 +422,12 @@ class TmdbApi(private val settings: SettingsStore) {
             ),
             Details.serializer(),
         )
+
+    /** Each episode of one season with its air date (empty if the season cannot be read). */
+    suspend fun seasonEpisodes(id: Int, seasonNumber: Int): List<AiredEpisodeDto> =
+        runCatching {
+            get("tv/$id/season/$seasonNumber", mapOf("language" to "ar"), SeasonEpisodesDto.serializer()).episodes
+        }.getOrDefault(emptyList())
 
     /** A complete digital/parts order can split a broadcast season into multiple released parts. */
     suspend fun episodeParts(id: Int, seasons: List<SeasonInfo>): EpisodeParts? {

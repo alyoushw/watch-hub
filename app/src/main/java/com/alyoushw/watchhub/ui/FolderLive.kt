@@ -64,9 +64,13 @@ import kotlinx.coroutines.withContext
 // category and channel name together; the number and resolution come from the name. English/French
 // feeds are filtered out.
 
+@kotlinx.serialization.Serializable
 private data class Quality(val label: String, val hits: List<LiveHit>)
+@kotlinx.serialization.Serializable
 private data class ChannelNode(val key: String, val title: String, val number: Int?, val qualities: List<Quality>)
+@kotlinx.serialization.Serializable
 private data class Brand(val label: String, val channels: List<ChannelNode>)
+@kotlinx.serialization.Serializable
 private data class Section(val label: String, val brands: List<Brand>)
 
 // A favourite can be a whole brand, a channel, or one quality — starred from wherever you are.
@@ -206,10 +210,98 @@ private suspend fun <T> twice(block: suspend () -> List<T>): List<T>? {
 
 private class FolderCache(val key: String, val at: Long, val sections: List<Section>, val all: Map<String, ChannelNode>)
 private var folderCache: FolderCache? = null
+// The built tree is served at once and only rebuilt in the background once older than this.
+private const val FOLDER_FRESH_MS = 10 * 60_000L
+private val folderWarming = java.util.concurrent.atomic.AtomicBoolean(false)
+private val folderJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+
+@kotlinx.serialization.Serializable
+private class FolderDisk(val key: String, val at: Long, val sections: List<Section>)
+
+private fun accountsKey(accounts: List<XtreamAccount>) = accounts.filter { it.isComplete }.joinToString { it.id }
+
+/** The lookup map is derived from the tree, so only the tree itself is stored on disk. */
+private fun rebuildAll(sections: List<Section>): Map<String, ChannelNode> {
+    val all = LinkedHashMap<String, ChannelNode>()
+    for (s in sections) for (b in s.brands) for (c in b.channels) all[c.key] = c
+    return all
+}
+
+/** Load the saved tree from disk into memory (whatever its age) when memory has none for these
+ *  accounts, so «المباشر» opens instantly after the app was fully closed. */
+private fun loadFolderDisk(file: java.io.File?, key: String): FolderCache? {
+    if (file == null || key.isBlank() || !file.exists()) return null
+    val hit = folderCache
+    if (hit != null && hit.key == key) return hit
+    return runCatching {
+        val disk = folderJson.decodeFromString(FolderDisk.serializer(), file.readText())
+        if (disk.key != key || disk.sections.isEmpty()) return null
+        FolderCache(disk.key, disk.at, disk.sections, rebuildAll(disk.sections)).also { folderCache = it }
+    }.getOrNull()
+}
+
+private fun writeFolderDisk(file: java.io.File?, cache: FolderCache) {
+    if (file == null) return
+    runCatching {
+        val tmp = java.io.File(file.parentFile, file.name + ".tmp")
+        tmp.writeText(folderJson.encodeToString(FolderDisk.serializer(), FolderDisk(cache.key, cache.at, cache.sections)))
+        if (!tmp.renameTo(file)) tmp.delete()
+    }
+}
+
+/** Fetch the live channels for every account and build the folder tree; caches a complete result
+ *  both in memory and on disk so a later cold start opens instantly. */
+private suspend fun loadFolderTree(api: XtreamApi, accounts: List<XtreamAccount>, cacheFile: java.io.File?): Pair<List<Section>, Map<String, ChannelNode>>? {
+    val usable = accounts.filter { it.isComplete }
+    if (usable.isEmpty()) return null
+    // Accounts side by side; within one account the two calls go one after the other, since many
+    // IPTV servers refuse a second connection at the same moment.
+    val loaded = coroutineScope {
+        usable.map { acc ->
+            async {
+                val cats = twice { api.categories(XtreamKind.LIVE, acc) }.orEmpty().associate { it.id to it.name }
+                val chans = twice { api.all(XtreamKind.LIVE, acc) }.orEmpty()
+                Triple(acc, cats, chans)
+            }
+        }.awaitAll()
+    }
+    val whole = loaded.all { (_, cats, chans) -> cats.isNotEmpty() && chans.isNotEmpty() }
+    val built = withContext(Dispatchers.Default) { buildFolderTree(loaded) }
+    if (built.first.isNotEmpty()) {
+        // Keep any non-empty tree in memory AND on disk so the next cold start opens instantly. A
+        // partial result (an account was down) is stamped stale so it refreshes next time instead
+        // of being served for the whole freshness window.
+        val at = if (whole) System.currentTimeMillis() else 0L
+        val cache = FolderCache(accountsKey(usable), at, built.first, built.second)
+        folderCache = cache
+        withContext(Dispatchers.IO) { writeFolderDisk(cacheFile, cache) }
+    }
+    return built
+}
+
+/**
+ * Build (or quietly refresh) the folder tree in the background so «المباشر» opens instantly later,
+ * even though the owner rarely opens it. Loads the tree saved on disk first (so it survives a full
+ * app close), then refreshes once it is stale; any failure leaves the previous tree in place.
+ */
+fun warmFolderCache(api: XtreamApi, accounts: List<XtreamAccount>, scope: kotlinx.coroutines.CoroutineScope, cacheFile: java.io.File?) {
+    val key = accountsKey(accounts)
+    if (key.isBlank()) return
+    if (!folderWarming.compareAndSet(false, true)) return
+    scope.launch {
+        try {
+            val disk = withContext(Dispatchers.IO) { loadFolderDisk(cacheFile, key) }
+            val fresh = disk != null && System.currentTimeMillis() - disk.at < FOLDER_FRESH_MS
+            if (!fresh) loadFolderTree(api, accounts, cacheFile)
+        } catch (_: Exception) { /* keep the old tree */ }
+        finally { folderWarming.set(false) }
+    }
+}
 
 private class FolderLiveViewModel(
     private val api: XtreamApi,
     private val accounts: List<XtreamAccount>,
+    private val cacheFile: java.io.File?,
 ) : ViewModel() {
     var loading by mutableStateOf(true)
         private set
@@ -221,11 +313,22 @@ private class FolderLiveViewModel(
         private set
 
     init {
-        val key = accounts.filter { it.isComplete }.joinToString { it.id }
-        val hit = folderCache
-        if (hit != null && hit.key == key && System.currentTimeMillis() - hit.at < 10 * 60_000L) {
-            sections = hit.sections; allChannels = hit.all; loading = false
-        } else load()
+        val key = accountsKey(accounts)
+        val mem = folderCache?.takeIf { it.key == key }
+        if (mem != null) {
+            // Already in memory: show at once; refresh quietly if stale.
+            sections = mem.sections; allChannels = mem.all; loading = false
+            if (System.currentTimeMillis() - mem.at >= FOLDER_FRESH_MS) refresh()
+        } else {
+            // Read the copy saved on disk off the main thread (it can be a few MB), else download.
+            viewModelScope.launch {
+                val disk = withContext(Dispatchers.IO) { loadFolderDisk(cacheFile, key) }
+                if (disk != null) {
+                    sections = disk.sections; allChannels = disk.all; loading = false
+                    if (System.currentTimeMillis() - disk.at >= FOLDER_FRESH_MS) refresh()
+                } else load()
+            }
+        }
     }
 
     fun load() {
@@ -233,24 +336,10 @@ private class FolderLiveViewModel(
             loading = true
             error = null
             try {
-                val usable = accounts.filter { it.isComplete }
-                if (usable.isEmpty()) { sections = emptyList(); loading = false; return@launch }
-                // Accounts side by side; within one account the two calls go one after the other,
-                // since many IPTV servers refuse a second connection at the same moment.
-                val loaded = coroutineScope {
-                    usable.map { acc ->
-                        async {
-                            val cats = twice { api.categories(XtreamKind.LIVE, acc) }.orEmpty().associate { it.id to it.name }
-                            val chans = twice { api.all(XtreamKind.LIVE, acc) }.orEmpty()
-                            Triple(acc, cats, chans)
-                        }
-                    }.awaitAll()
-                }
-                val whole = loaded.all { (_, cats, chans) -> cats.isNotEmpty() && chans.isNotEmpty() }
-                val built = withContext(Dispatchers.Default) { build(loaded) }
-                sections = built.first
-                allChannels = built.second
-                if (whole) folderCache = FolderCache(usable.joinToString { it.id }, System.currentTimeMillis(), built.first, built.second)
+                if (accountsKey(accounts).isBlank()) { sections = emptyList(); loading = false; return@launch }
+                val built = loadFolderTree(api, accounts, cacheFile)
+                sections = built?.first.orEmpty()
+                allChannels = built?.second.orEmpty()
                 if (sections.isEmpty()) error = "ما وصلت قنوات من الحسابات، تأكد من الاشتراك والإنترنت"
             } catch (e: Exception) {
                 error = e.message ?: "تعذّر تحميل القنوات"
@@ -259,7 +348,19 @@ private class FolderLiveViewModel(
         }
     }
 
-    private fun build(loaded: List<Triple<XtreamAccount, Map<String, String>, List<XtreamItem>>>): Pair<List<Section>, Map<String, ChannelNode>> {
+    /** Rebuild in the background without a spinner, keeping the shown tree if it fails. */
+    private fun refresh() {
+        viewModelScope.launch {
+            try {
+                loadFolderTree(api, accounts, cacheFile)?.takeIf { it.first.isNotEmpty() }?.let {
+                    sections = it.first; allChannels = it.second
+                }
+            } catch (_: Exception) { /* keep what is shown */ }
+        }
+    }
+}
+
+private fun buildFolderTree(loaded: List<Triple<XtreamAccount, Map<String, String>, List<XtreamItem>>>): Pair<List<Section>, Map<String, ChannelNode>> {
         class QAcc(val label: String, val hits: MutableList<LiveHit> = mutableListOf())
         class CAcc(val title: String, val num: Int?, val qualities: LinkedHashMap<String, QAcc> = linkedMapOf())
         class BAcc(val label: String, val channels: LinkedHashMap<String, CAcc> = linkedMapOf())
@@ -307,7 +408,6 @@ private class FolderLiveViewModel(
             }
         return sections to all
     }
-}
 
 /** A colour per server so every quality shows which server it is at a glance. */
 private val SERVER_COLORS = listOf(
@@ -334,7 +434,7 @@ fun FolderLiveScreen() {
     val accounts = remember(savedAccounts) { savedAccounts.filter { it.isComplete } + FourU.account }
     val colorOf = remember(accounts) { accounts.mapIndexed { i, a -> a.id to SERVER_COLORS[i % SERVER_COLORS.size] }.toMap() }
     val vm: FolderLiveViewModel = viewModel(key = "folderlive:${accounts.joinToString { it.id }}") {
-        FolderLiveViewModel(container.xtream, accounts)
+        FolderLiveViewModel(container.xtream, accounts, container.liveFolderCache)
     }
 
     var stack by remember { mutableStateOf<List<Level>>(listOf(Level.Root)) }

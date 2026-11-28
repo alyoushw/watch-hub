@@ -103,6 +103,14 @@ async function proxy(req: Request, self: URL, session?: MediaSession): Promise<R
     const named = VIDEO_TYPES[ext];
     if (named) out.set("content-type", named);
   }
+  // Video never goes through this server (the free plan's 5 GB a month lasts a couple of hours of viewing):
+  // streams play in VLC or the Android app straight from their provider. Only small things pass (catalogues, JSON).
+  const length = Number(upstream.headers.get("content-length") ?? 0);
+  if (/^(video|audio)\//i.test(type) || /mpegurl|mp2t/i.test(type) || /octet-stream/i.test(type) && !/\.(php|json|xml|txt)$/i.test(new URL(finalUrl).pathname) ||
+    /\.(m3u8?|ts|mp4|mkv|avi|mov|webm|m4s|aac|mp3)$/i.test(new URL(finalUrl).pathname) || length > 25 * 1024 * 1024) {
+    await upstream.body?.cancel().catch(() => {});
+    return fail(403, "الفيديو ما يمر على السيرفر. افتحه في VLC أو من تطبيق أندرويد.");
+  }
   if (req.method === "HEAD") return new Response(null, { status: upstream.status, headers: out });
   if (/mpegurl/i.test(type) || /\.m3u8?(\?|$)/i.test(new URL(finalUrl).pathname) || session && /\.txt$/i.test(new URL(finalUrl).pathname)) {
     if (!upstream.ok) return new Response(upstream.body, { status: upstream.status, headers: out });
@@ -117,6 +125,164 @@ async function proxy(req: Request, self: URL, session?: MediaSession): Promise<R
     return new Response(rewritePlaylist(text, finalUrl, self, session), { status: upstream.status, headers: out });
   }
   return new Response(upstream.body, { status: upstream.status, headers: out });
+}
+
+// ---------- API-Football behind the server (the key lives only in the FOOTBALL_API_KEY environment variable) ----------
+// The app asks this server, never API-Football itself, so the key is not in the app or the repository. Answers are kept
+// (a shared cache), identical requests in flight are joined, and a daily budget stops it before the plan's limit.
+const FOOTBALL_KEY = Deno.env.get("FOOTBALL_API_KEY") ?? "";
+const FOOTBALL_DAILY = Number(Deno.env.get("FOOTBALL_DAILY_LIMIT") ?? "90");
+const FOOTBALL_PATHS: Record<string, number> = {   // allowed path → minutes kept
+  "fixtures": 5, "fixtures/lineups": 3, "fixtures/events": 1, "fixtures/statistics": 1, "fixtures/players": 2, "fixtures/headtohead": 1440,
+  "standings": 30, "injuries": 30, "predictions": 360, "players/topscorers": 60, "players/topassists": 60, "players/squads": 360,
+  "teams": 720, "coachs": 720, "leagues": 720,
+};
+const FOOTBALL_PARAMS = new Set(["id", "date", "league", "season", "team", "live", "fixture", "h2h", "last", "next", "timezone", "from", "to", "status"]);
+let footballDay = "";
+let footballUsed = 0;
+const footballCache = new Map<string, { at: number; ttl: number; status: number; body: string }>();
+const footballFlight = new Map<string, Promise<{ status: number; body: string }>>();
+
+function footballBudgetLeft(): number {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== footballDay) { footballDay = today; footballUsed = 0; }
+  return Math.max(0, FOOTBALL_DAILY - footballUsed);
+}
+
+
+// ---- TV channels per match (Yallakora's public match centre), shared cache, refreshed at most every 15 minutes ----
+type TvRow = { id: string; home: string; away: string; kickoff: number; channels: string[] };
+const tvCache = new Map<string, { at: number; rows: TvRow[] }>();
+function cairoToUtc(day: string, hm: string): number {
+  const [y, mo, d] = day.split("-").map(Number); const [h, mi] = hm.split(":").map(Number);
+  const guess = Date.UTC(y, mo - 1, d, h, mi);
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Africa/Cairo", hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).formatToParts(new Date(guess));
+  const g = (t: string) => Number(parts.find((x) => x.type === t)!.value);
+  return guess - (Date.UTC(g("year"), g("month") - 1, g("day"), g("hour"), g("minute")) - guess);
+}
+
+// ---- Kooora's daily "match schedule + channels + commentators" article (also covers Thmanyah matches) ----
+type KoRow = { home: string; away: string; kickoff: number; items: { channel: string; commentator: string }[] };
+let koCache: { at: number; byDate: Record<string, KoRow[]> } | null = null;
+const AR_MONTHS: Record<string, number> = { "يناير": 1, "فبراير": 2, "مارس": 3, "أبريل": 4, "إبريل": 4, "ابريل": 4, "مايو": 5, "يونيو": 6, "يوليو": 7, "أغسطس": 8, "اغسطس": 8, "سبتمبر": 9, "أكتوبر": 10, "اكتوبر": 10, "نوفمبر": 11, "ديسمبر": 12 };
+const KO_HEADERS = { "user-agent": "WatchHub/1.0 (personal app; cached 15 min)", "accept-language": "ar" };
+function koText(html: string): string[] {
+  return html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, "").replace(/<[^>]+>/g, "\n")
+    .replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").split("\n").map((x) => x.replace(/\s+/g, " ").trim()).filter(Boolean);
+}
+function parseKooora(lines: string[], date: string): KoRow[] {
+  const rows: KoRow[] = [];
+  const timeRe = /^(\d{1,2}):(\d{2}) السعودية/;
+  const [y, mo, d] = date.split("-").map(Number);
+  const stop = (l: string) => /الجولة|^المباراة$|^الموعد$|^القنوات الناقلة$|^التعليق$|^المعلق$|^المعلقون$|إعلان|قد يعجبك|كووورة|KOOORA/.test(l);
+  for (let i = 0; i < lines.length - 1; i++) {
+    const m = timeRe.exec(lines[i + 1] || "");
+    if (!m || !lines[i].includes(" - ") || stop(lines[i])) continue;
+    const [home, away] = lines[i].split(" - ").map((x) => x.trim());
+    const items: { channel: string; commentator: string }[] = [];
+    let j = i + 2;
+    while (j + 1 < lines.length && !timeRe.test(lines[j + 1] || "") && !stop(lines[j]) && !(lines[j].includes(" - ") && timeRe.test(lines[j + 1] || ""))) {
+      if (items.length >= 4 || stop(lines[j + 1]) || (lines[j + 1].includes(" - ") && timeRe.test(lines[j + 2] || ""))) break;
+      items.push({ channel: lines[j], commentator: lines[j + 1] }); j += 2;
+    }
+    // kick-off is printed in Saudi time (UTC+3)
+    rows.push({ home, away, kickoff: Date.UTC(y, mo - 1, d, Number(m[1]) - 3, Number(m[2])), items });
+  }
+  return rows;
+}
+async function koooraAll(): Promise<Record<string, KoRow[]>> {
+  if (koCache && Date.now() - koCache.at < 15 * 60_000) return koCache.byDate;
+  try {
+    const home = await (await fetch("https://www.kooora.com/", { headers: KO_HEADERS })).text();
+    const links = new Set<string>();
+    for (const m of home.matchAll(/<a class="fco-card" href="([^"]+)"[\s\S]{0,3000}?fco-card__headline-text">([^<]+)</g)) {
+      if (m[2].includes("جدول مباريات اليوم")) links.add(m[1]);
+    }
+    const byDate: Record<string, KoRow[]> = {};
+    for (const l of links) {
+      const html = await (await fetch(new URL(l, "https://www.kooora.com").toString(), { headers: KO_HEADERS })).text();
+      const lines = koText(html);
+      const head = lines.find((x) => x.startsWith("جدول مباريات اليوم") && /\d{4}/.test(x)) || "";
+      const dm = head.match(/(\d{1,2}) (\S+) (\d{4})/);
+      if (!dm || !AR_MONTHS[dm[2]]) continue;
+      const date = `${dm[3]}-${String(AR_MONTHS[dm[2]]).padStart(2, "0")}-${dm[1].padStart(2, "0")}`;
+      byDate[date] = parseKooora(lines, date);
+    }
+    if (!Object.keys(byDate).length) throw new Error("no kooora article");
+    koCache = { at: Date.now(), byDate };
+    return byDate;
+  } catch (_e) {
+    return koCache?.byDate ?? {};
+  }
+}
+
+async function tvDay(url: URL): Promise<Response> {
+  const day = url.searchParams.get("date") || "";
+  const hdr = { "content-type": "application/json; charset=utf-8", "access-control-allow-origin": "*" };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || Math.abs(Date.parse(day) - Date.now()) > 8 * 86400_000) return new Response(JSON.stringify({ error: "bad date" }), { status: 400, headers: hdr });
+  const hit = tvCache.get(day);
+  const kooora = [...(await koooraAll())[day] ?? [], ...(await koooraAll())[new Date(Date.parse(day) + 86400_000).toISOString().slice(0, 10)] ?? []];
+  if (hit && Date.now() - hit.at < 15 * 60_000) return new Response(JSON.stringify({ source: "yallakora.com + kooora.com", updated: hit.at, rows: hit.rows, kooora }), { headers: hdr });
+  try {
+    const [y, m, d] = day.split("-");
+    const r = await fetch(`https://www.yallakora.com/matches-center?date=${m}/${d}/${y}`, { headers: { "user-agent": "WatchHub/1.0 (personal app; cached 15 min)", "accept-language": "ar" } });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const html = await r.text();
+    const rows: TvRow[] = [];
+    for (const it of html.split("<div liveScoreMatchId=").slice(1)) {
+      const id = (it.match(/^"(\d+)"/) || [])[1];
+      const names = [...it.matchAll(/<p>([^<]+)<\/p>/g)].map((x) => x[1].replace(/\s+/g, " ").trim()).filter(Boolean);
+      const time = (it.match(/class="time"[^>]*>\s*(\d{1,2}:\d{2})/) || [])[1];
+      const channels = [...it.matchAll(/class="channel icon-channel">([^<]*)</g)].map((x) => x[1].trim()).filter(Boolean);
+      if (id && names.length >= 2 && time) rows.push({ id, home: names[0], away: names[1], kickoff: cairoToUtc(day, time), channels });
+    }
+    if (!rows.length) throw new Error("no matches parsed");
+    tvCache.set(day, { at: Date.now(), rows });
+    return new Response(JSON.stringify({ source: "yallakora.com + kooora.com", updated: Date.now(), rows, kooora }), { headers: hdr });
+  } catch (e) {
+    if (hit) return new Response(JSON.stringify({ source: "yallakora.com + kooora.com", updated: hit.at, stale: true, rows: hit.rows, kooora }), { headers: hdr });
+    if (kooora.length) return new Response(JSON.stringify({ source: "kooora.com", updated: Date.now(), rows: [], kooora }), { headers: hdr });
+    return new Response(JSON.stringify({ error: String(e) }), { status: 502, headers: hdr });
+  }
+}
+
+async function footballProxy(url: URL): Promise<Response> {
+  const json = (status: number, obj: unknown, extra: Record<string, string> = {}) =>
+    new Response(JSON.stringify(obj), { status, headers: { ...CORS, "content-type": "application/json; charset=utf-8", ...extra } });
+  const path = url.pathname.replace(/^\/football\//, "").replace(/\/+$/, "");
+  if (path === "status") return json(200, { configured: !!FOOTBALL_KEY, dailyLimit: FOOTBALL_DAILY, left: footballBudgetLeft(), cached: footballCache.size });
+  if (!FOOTBALL_KEY) return json(503, { error: "FOOTBALL_API_KEY is not set on the server" });
+  const minutes = FOOTBALL_PATHS[path];
+  if (minutes === undefined) return json(404, { error: "path not allowed" });
+  const q = new URLSearchParams();
+  [...url.searchParams.entries()].filter(([k]) => FOOTBALL_PARAMS.has(k)).sort(([a], [b]) => a.localeCompare(b)).forEach(([k, v]) => q.set(k, v.slice(0, 40)));
+  const key = `${path}?${q}`;
+  const live = q.get("live") !== null;
+  const ttl = (live ? 1 : minutes) * 60_000;
+  const hit = footballCache.get(key);
+  const age = hit ? Date.now() - hit.at : Infinity;
+  const left = () => ({ "x-football-budget-left": String(footballBudgetLeft()), "cache-control": "public, max-age=30" });
+  if (hit && age < ttl) return new Response(hit.body, { status: hit.status, headers: { ...CORS, "content-type": "application/json; charset=utf-8", ...left() } });
+  if (footballBudgetLeft() <= 0) {
+    // Over the day's budget: an old answer is better than none.
+    if (hit) return new Response(hit.body, { status: hit.status, headers: { ...CORS, "content-type": "application/json; charset=utf-8", "x-football-stale": "1", ...left() } });
+    return json(429, { error: "daily API-Football budget reached" }, left());
+  }
+  let pending = footballFlight.get(key);
+  if (!pending) {
+    footballUsed++;
+    pending = fetch(`https://v3.football.api-sports.io/${path}?${q}`, { headers: { "x-apisports-key": FOOTBALL_KEY }, signal: AbortSignal.timeout(20000) })
+      .then(async (r) => ({ status: r.status, body: await r.text() }))
+      .catch(() => ({ status: 502, body: JSON.stringify({ error: "could not reach API-Football" }) }))
+      .finally(() => footballFlight.delete(key));
+    footballFlight.set(key, pending);
+  }
+  const res = await pending;
+  // Only good answers are kept (an error body, or one with API-Football's own "errors", is not cached).
+  let ok = res.status === 200;
+  try { const j = JSON.parse(res.body); if (j.errors && (Array.isArray(j.errors) ? j.errors.length : Object.keys(j.errors).length)) ok = false; } catch { ok = false; }
+  if (ok) footballCache.set(key, { at: Date.now(), ttl, status: res.status, body: res.body });
+  return new Response(res.body, { status: res.status, headers: { ...CORS, "content-type": "application/json; charset=utf-8", ...left() } });
 }
 
 // 4U TV 1.1.0 uses a public Xtream catalogue and public Supabase live-channel reads.
@@ -551,9 +717,11 @@ Deno.serve({ port }, (req) => {
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
   }));
   if (url.pathname.startsWith("/sources/")) return handleSources(req, url, proxy);
+  if (url.pathname.startsWith("/football/")) return footballProxy(url);
+  if (url.pathname === "/tv/day") return tvDay(url);
   if (url.pathname.startsWith("/fouru/")) return fourU(req, url);
   if (url.pathname === "/proxy") return proxy(req, url);
-  if (url.pathname.startsWith("/remux/")) return handleRemux(req, url);
+  if (url.pathname.startsWith("/remux/")) return fail(410, "تحويل الفيديو على السيرفر متوقف. افتحه في VLC.");
   if (req.method === "OPTIONS" && url.pathname.startsWith("/auth/")) return new Response(null, { status: 204, headers: CORS });
   if (url.pathname === "/config.json") return config();
   if (url.pathname === "/.well-known/assetlinks.json") return assetLinks();

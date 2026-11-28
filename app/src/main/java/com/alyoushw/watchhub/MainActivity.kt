@@ -22,7 +22,8 @@ class MainActivity : ComponentActivity() {
                 androidx.compose.runtime.CompositionLocalProvider(
                     androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides androidx.compose.runtime.remember(margin) { com.alyoushw.watchhub.ui.CalmBringIntoView(margin) },
                 ) {
-                    WatchHubRoot()
+                    // TV: the keyboard opens only after OK on a text box, not when the remote lands on it.
+                    com.alyoushw.watchhub.ui.TvKeyboardGate { WatchHubRoot() }
                 }
             }
         }
@@ -35,6 +36,11 @@ class MainActivity : ComponentActivity() {
 
     /** A TV's "scan to sign in" link (https://<site>/pair?s=<id>): ask this phone to approve it. */
     private fun handleLink(intent: Intent?) {
+        // The owner tapped the «بلاغ جديد» notification.
+        if (intent?.action == com.alyoushw.watchhub.data.AdminReportsWorker.ACTION_OPEN) {
+            (application as WatchHubApp).container.openAdmin.value = true
+            return
+        }
         // A programme reminder was tapped: open its channel.
         if (intent?.action == com.alyoushw.watchhub.data.Reminders.ACTION_PLAY_LIVE) {
             val container = (application as WatchHubApp).container

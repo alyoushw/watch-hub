@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.border
@@ -43,6 +44,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -84,7 +86,7 @@ private val Regions = listOf(
 private enum class SettingsPage(val title: String) {
     ACCOUNT("حسابك"), IPTV("حسابات IPTV"), TV_ROW("متابعة المشاهدة على التلفزيون"), APPEARANCE("المظهر"),
     YOUTUBE("اشتراكاتي"), ABOUT("التحديثات وعن التطبيق"), CLAUDE("البحث الذكي بـ Claude"),
-    KORA("رابط كوره"), APPS("تطبيقاتي الإضافية"),
+    KORA("رابط كوره"), APPS("تطبيقاتي الإضافية"), MATCHES("مبارياتي"), ADMIN("لوحة المدير"),
 }
 
 /**
@@ -93,9 +95,22 @@ private enum class SettingsPage(val title: String) {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onOpenXtream: () -> Unit = {}, onOpenHistory: () -> Unit = {}) {
+fun SettingsScreen(onOpenXtream: () -> Unit = {}, onOpenHistory: () -> Unit = {}, onOpenTitle: (com.alyoushw.watchhub.data.MediaType, Int) -> Unit = { _, _ -> }) {
     val container = appContainer()
     var page by rememberSaveable { mutableStateOf<SettingsPage?>(null) }
+    // A tap on the «بلاغ جديد» notification opens the owner's page on its reports tab.
+    var adminReportsFirst by remember { mutableStateOf(false) }
+    val openMatchSettings by container.openMatchSettings.collectAsStateWithLifecycle()
+    LaunchedEffect(openMatchSettings) {
+        if (openMatchSettings) { container.openMatchSettings.value = false; page = SettingsPage.MATCHES }
+    }
+    val openAdmin by container.openAdmin.collectAsStateWithLifecycle()
+    LaunchedEffect(openAdmin) {
+        if (openAdmin) {
+            container.openAdmin.value = false
+            if (container.cloud.isAdmin) { adminReportsFirst = true; page = SettingsPage.ADMIN }
+        }
+    }
     androidx.activity.compose.BackHandler(enabled = page != null) { page = null }
 
     Scaffold(
@@ -125,6 +140,8 @@ fun SettingsScreen(onOpenXtream: () -> Unit = {}, onOpenHistory: () -> Unit = {}
             when (page) {
                 null -> SettingsHome(onOpen = { page = it }, onOpenHistory = onOpenHistory)
                 SettingsPage.ACCOUNT -> AccountSection()
+                SettingsPage.MATCHES -> MatchesSettingsSection()
+                SettingsPage.ADMIN -> AdminSection(startOnReports = adminReportsFirst, onOpenTitle = onOpenTitle)
                 SettingsPage.IPTV -> {
                     XtreamSection(onOpenXtream)
                     ChannelFoldersSection()
@@ -182,10 +199,19 @@ private fun SettingsHome(onOpen: (SettingsPage) -> Unit, onOpenHistory: () -> Un
     SettingsGroup {
         SettingsRow("✨", "البحث الذكي بـ Claude", if (claudeKey.isNotBlank() && useClaude) "مفعّل" else "مطفي") { onOpen(SettingsPage.CLAUDE) }
         SettingsRow("⚽", "رابط كوره", android.net.Uri.parse(kora.ifBlank { KORA_HOME }).host.orEmpty()) { onOpen(SettingsPage.KORA) }
+        SettingsRow("🏟️", "مبارياتي", "الدوريات والأندية المفضلة") { onOpen(SettingsPage.MATCHES) }
         SettingsRow("🧩", "تطبيقاتي الإضافية", if (apps.isEmpty()) "ما فيه" else "${apps.size} تطبيقات") { onOpen(SettingsPage.APPS) }
     }
     val context = LocalContext.current
+    val cloudState by container.cloud.state.collectAsStateWithLifecycle()
+    if (cloudState is com.alyoushw.watchhub.data.CloudSync.State.SignedIn && container.cloud.isAdmin) {
+        val open by container.cloud.openReports.collectAsStateWithLifecycle()
+        SettingsGroup { SettingsRow("🛡️", "لوحة المدير", if (open > 0) "📨 $open بلاغ جديد" else "المسجلين وسجل مشاهدتهم") { onOpen(SettingsPage.ADMIN) } }
+    }
+    var reporting by remember { mutableStateOf(false) }
+    if (reporting) ReportDialog { reporting = false }
     SettingsGroup {
+        SettingsRow("📨", "أرسل مشكلة أو ملاحظة", "للمدير، ويوصله معها تفاصيل آخر مشكلة تشغيل") { reporting = true }
         SettingsRow("📤", "مشاركة التطبيق", "أرسل رابط التحميل لأصحابك") { shareApp(context) }
     }
 }
@@ -403,18 +429,29 @@ private fun AppPickerDialog(exclude: Set<String>, onDismiss: () -> Unit, onPick:
     )
 }
 
-/** «كوره»'s address: shown, and a field to change it only after asking. */
+/** «كوره»'s address: three fixed choices — original, VIP, or a link you add yourself. */
 @Composable
 private fun KoraLinkSection() {
     val settings = appContainer().settings
     val saved by settings.koraUrl.collectAsStateWithLifecycle()
+    // Which of the two built-in links is active now (blank counts as the original).
+    val active = saved.ifBlank { KORA_HOME }
+    val onOriginal = active == KORA_HOME
+    val onVip = active == KORA_VIP
+    val onCustom = !onOriginal && !onVip
     var editing by remember { mutableStateOf(false) }
-    var text by remember(saved, editing) { mutableStateOf(saved.ifBlank { KORA_HOME }) }
+    var text by remember(editing) { mutableStateOf(if (onCustom) active else "") }
+    val vipUser by settings.koraVipUser.collectAsStateWithLifecycle()
+    var vipEditing by remember { mutableStateOf(false) }
+    var vUser by remember(vipEditing) { mutableStateOf(vipUser) }
+    var vPass by remember(vipEditing) { mutableStateOf("") }
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(saved.ifBlank { KORA_HOME }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (!editing) {
-            OutlinedButton(modifier = Modifier.focusFrame(), onClick = { editing = true }) { Text("تغيير رابط كوره") }
-        } else {
+        Text(active, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        KoraChoiceRow("الرابط الأصلي", KORA_HOME, selected = onOriginal) { settings.setKoraUrl(""); editing = false }
+        KoraChoiceRow("رابط VIP", KORA_VIP, selected = onVip) { settings.setKoraUrl(KORA_VIP); editing = false }
+        KoraChoiceRow("رابط أضيفه", if (onCustom) active else "اكتب رابطاً خاصاً بك", selected = onCustom) { editing = true }
+        if (editing) {
             OutlinedTextField(
                 value = text,
                 onValueChange = { text = it },
@@ -423,12 +460,66 @@ private fun KoraLinkSection() {
                 modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(),
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(modifier = Modifier.focusFrame(), onClick = { settings.setKoraUrl(text); editing = false }) { Text("حفظ") }
+                Button(modifier = Modifier.focusFrame(), onClick = { if (text.isNotBlank()) settings.setKoraUrl(text.trim()); editing = false }) { Text("حفظ") }
                 TextButton(modifier = Modifier.focusFrame(), onClick = { editing = false }) { Text("إلغاء") }
-                if (saved.isNotBlank()) {
-                    TextButton(modifier = Modifier.focusFrame(), onClick = { settings.setKoraUrl(""); editing = false }) { Text("الرابط الأصلي") }
+            }
+        }
+
+        Spacer(Modifier.height(4.dp))
+        Text("دخول VIP التلقائي", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+        Text(
+            if (vipUser.isBlank())
+                "أدخل بيانات اشتراك ماجد سبورت مرة وحدة هنا — تتزامن لكل أجهزتك ويسجّل الدخول تلقائياً، بدون كتابة بالريموت."
+            else "محفوظ باسم: $vipUser — يسجّل تلقائياً على كل أجهزتك.",
+            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (!vipEditing) {
+            OutlinedButton(modifier = Modifier.focusFrame(), onClick = { vipEditing = true }) {
+                Text(if (vipUser.isBlank()) "أضف بيانات VIP" else "تعديل بيانات VIP")
+            }
+        } else {
+            OutlinedTextField(
+                value = vUser, onValueChange = { vUser = it },
+                label = { Text("اسم المستخدم") }, singleLine = true,
+                modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(),
+            )
+            OutlinedTextField(
+                value = vPass, onValueChange = { vPass = it },
+                label = { Text("كلمة المرور" + if (vipUser.isNotBlank()) " (اتركها فاضية للإبقاء على الحالية)" else "") },
+                singleLine = true,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(modifier = Modifier.focusFrame(), onClick = {
+                    if (vUser.isNotBlank()) settings.setKoraVip(vUser, vPass.ifBlank { settings.koraVipPass.value })
+                    vipEditing = false
+                }) { Text("حفظ") }
+                TextButton(modifier = Modifier.focusFrame(), onClick = { vipEditing = false }) { Text("إلغاء") }
+                if (vipUser.isNotBlank()) {
+                    TextButton(modifier = Modifier.focusFrame(), onClick = { settings.setKoraVip("", ""); vipEditing = false }) { Text("حذف") }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun KoraChoiceRow(title: String, subtitle: String, selected: Boolean, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+            .background((if (selected) scheme.primary.copy(alpha = 0.16f) else scheme.surfaceVariant.copy(alpha = 0.5f)))
+            .focusFrame(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(if (selected) "◉" else "◯", color = if (selected) scheme.primary else scheme.onSurfaceVariant)
+        Column(Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+            Text(subtitle, style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant, maxLines = 1)
         }
     }
 }
@@ -595,15 +686,17 @@ private fun XtreamSection(onOpen: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text(acc.label, fontWeight = FontWeight.Bold)
+                    Text(acc.label, fontWeight = FontWeight.Bold, color = if (acc.off) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
                     Text(
-                        acc.host.substringAfter("://") + if (acc.id == active.id && accounts.size > 1) "  ·  المعروض الحين" else "",
+                        acc.host.substringAfter("://") + (if (acc.off) "  ·  مقفل" else if (acc.id == active.id && accounts.size > 1) "  ·  المعروض الحين" else ""),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                     )
                 }
                 TextButton(modifier = Modifier.focusFrame(), onClick = { editing = acc }) { Text("تعديل") }
+                // Switch an account off (it stays in the list, nothing uses it) or on again.
+                Switch(checked = !acc.off, onCheckedChange = { container.settings.saveXtreamAccount(acc.copy(off = !it)) })
             }
         }
         if (editing == null) {
@@ -698,7 +791,7 @@ private fun XtreamAccountForm(initial: XtreamAccount, onDone: () -> Unit) {
                 // Never disabled: a disabled button is skipped by the TV remote.
                 enabled = !testing,
                 onClick = {
-                    if (!draft.isComplete) {
+                    if (!draft.hasLogin) {
                         result = "كمّل البيانات: " + listOfNotNull(
                             "الهوست".takeIf { host.isBlank() },
                             "اسم المستخدم".takeIf { username.isBlank() },
@@ -814,7 +907,9 @@ private fun AccountSection() {
     val tv = isTv()
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
-    var showCode by remember { mutableStateOf(false) }
+    // Which code dialog is open: "qr" (a signed-in phone scans it) or "code" (google.com/device).
+    var loginDialog by remember { mutableStateOf<String?>(null) }
+    var showEmail by remember { mutableStateOf(false) }
     var editUrl by remember(webUrl) { mutableStateOf(webUrl) }
     var showUrl by remember { mutableStateOf(false) }
 
@@ -853,12 +948,13 @@ private fun AccountSection() {
             com.alyoushw.watchhub.data.CloudSync.State.SignedOut -> {
                 GuestNote(onCleared = { message = "✓ انمسحت بيانات الزائر من هذا الجهاز" })
                 Text(
-                    "سجّل دخولك بحساب Google، وكل أجهزتك (الجوال والتلفاز والموقع) تصير على نفس القائمة ونفس «تابع المشاهدة». " +
+                    "سجّل دخولك (بـ Google أو بالباركود أو بالإيميل وكلمة المرور)، وكل أجهزتك (الجوال والتلفاز والموقع) تصير على نفس القائمة ونفس «تابع المشاهدة». " +
                         "توقف حلقة في الجوال، وتكملها في التلفاز من نفس الثانية.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Every device offers the same ways in: Google, a QR code a signed-in phone approves, or email + password.
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!tv) {
                         Button(
                             modifier = Modifier.focusFrame(),
@@ -878,12 +974,14 @@ private fun AccountSection() {
                             },
                         ) { Text(if (busy) "جاري الدخول…" else "سجّل دخول بـ Google") }
                     }
-                    if (cloud.config?.deviceLogin == true || tv) {
-                        if (tv) {
-                            Button(modifier = Modifier.focusFrame(), onClick = { showCode = true }) { Text("سجّل دخول برمز") }
-                        } else {
-                            OutlinedButton(modifier = Modifier.focusFrame(), onClick = { showCode = true }) { Text("دخول برمز") }
-                        }
+                    if (cloud.config?.qrLogin == true) {
+                        if (tv) Button(modifier = Modifier.focusFrame(), onClick = { loginDialog = "qr" }) { Text("سجّل دخول بالباركود") }
+                        else OutlinedButton(modifier = Modifier.focusFrame(), onClick = { loginDialog = "qr" }) { Text("بالباركود") }
+                    }
+                    OutlinedButton(modifier = Modifier.focusFrame(), onClick = { showEmail = !showEmail }) { Text("بالإيميل وكلمة المرور") }
+                    if (showEmail) EmailLoginForm(onDone = { showEmail = false })
+                    if (cloud.config?.deviceLogin == true) {
+                        OutlinedButton(modifier = Modifier.focusFrame(), onClick = { loginDialog = "code" }) { Text("دخول برمز (google.com/device)") }
                     }
                 }
             }
@@ -931,16 +1029,78 @@ private fun AccountSection() {
         }
     }
 
-    var googleCode by remember { mutableStateOf(false) }
     val done: (Boolean) -> Unit = { ok ->
-        showCode = false
-        googleCode = false
+        loginDialog = null
         if (ok) android.widget.Toast.makeText(context, "✓ دخلت، ونزامن الحين", android.widget.Toast.LENGTH_SHORT).show()
     }
-    when {
-        // TV with "scan to sign in" set up: a QR code a signed-in phone approves.
-        showCode && !googleCode && cloud.config?.qrLogin == true && tv -> PairingDialog(onDone = done, onUseGoogleCode = { googleCode = true })
-        showCode -> DeviceLoginDialog(onDone = done)
+    when (loginDialog) {
+        // A QR code a signed-in phone (the app or the web) scans and approves.
+        "qr" -> PairingDialog(onDone = done, onUseGoogleCode = { loginDialog = "code" })
+        "code" -> DeviceLoginDialog(onDone = done)
+    }
+}
+
+/** Email + password: sign in, create an account, or get a link to set a password (also for an account that only used Google). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun EmailLoginForm(onDone: () -> Unit) {
+    val cloud = appContainer().cloud
+    val scope = rememberCoroutineScope()
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    fun run(okText: String? = null, block: suspend () -> Unit) {
+        busy = true
+        message = null
+        scope.launch {
+            try {
+                block()
+                if (okText != null) message = okText else onDone()
+            } catch (e: com.alyoushw.watchhub.data.CloudException) {
+                message = e.message
+            }
+            busy = false
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            value = email,
+            onValueChange = { email = it },
+            label = { Text("الإيميل") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().tvTextField(),
+            keyboardOptions = tvKeyboard(androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Email)),
+        )
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            label = { Text("كلمة المرور") },
+            singleLine = true,
+            visualTransformation = if (showPassword) androidx.compose.ui.text.input.VisualTransformation.None
+            else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+            // The eye shows the password so it can be checked while typing (no eye icon in the icon set we use).
+            trailingIcon = {
+                IconButton(modifier = Modifier.focusFrame(CircleShape), onClick = { showPassword = !showPassword }) {
+                    Text("👁", fontSize = 20.sp, modifier = Modifier.alpha(if (showPassword) 1f else 0.45f))
+                }
+            },
+            modifier = Modifier.fillMaxWidth().tvTextField(),
+            keyboardOptions = tvKeyboard(androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Password)),
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Button(modifier = Modifier.focusFrame(), enabled = !busy, onClick = { run { cloud.signInWithEmail(email, password) } }) {
+                Text(if (busy) "جاري…" else "دخول")
+            }
+            OutlinedButton(modifier = Modifier.focusFrame(), enabled = !busy, onClick = { run { cloud.signUpWithEmail(email, password) } }) { Text("حساب جديد") }
+            TextButton(
+                modifier = Modifier.focusFrame(),
+                enabled = !busy,
+                onClick = { run("✓ أرسلنا رابط كلمة المرور لإيميلك، افتحه وحدّد كلمة مرور") { cloud.sendPasswordReset(email) } },
+            ) { Text("نسيت كلمة المرور") }
+        }
+        message?.let { Text(it, color = if (it.startsWith("✓")) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error) }
     }
 }
 
@@ -1091,7 +1251,7 @@ private fun PairingDialog(onDone: (Boolean) -> Unit, onUseGoogleCode: () -> Unit
 
     AlertDialog(
         onDismissRequest = { onDone(false) },
-        title = { Text("سجّل دخول بجوالك") },
+        title = { Text("الدخول بالباركود") },
         text = {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 val p = pairing
@@ -1099,7 +1259,7 @@ private fun PairingDialog(onDone: (Boolean) -> Unit, onUseGoogleCode: () -> Unit
                     error != null -> Text(error.orEmpty(), color = MaterialTheme.colorScheme.error)
                     p == null -> CircularProgressIndicator()
                     else -> {
-                        Text("صوّر الرمز بكاميرا جوالك:", style = MaterialTheme.typography.bodyMedium)
+                        Text("صوّر الرمز بكاميرا جوال داخل حسابك:", style = MaterialTheme.typography.bodyMedium)
                         Box(Modifier.clip(RoundedCornerShape(12.dp)).background(androidx.compose.ui.graphics.Color.White).padding(10.dp)) {
                             QrCode(p.url, Modifier.size(210.dp))
                         }

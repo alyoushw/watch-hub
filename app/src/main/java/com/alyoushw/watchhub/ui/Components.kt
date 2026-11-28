@@ -54,6 +54,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -68,6 +69,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.ui.focus.focusProperties
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import coil.compose.AsyncImage
 import com.alyoushw.watchhub.data.StreamingService
@@ -309,6 +311,9 @@ fun TitleRow(
     onSeeAll: (() -> Unit)? = null,
     onOpen: (SearchResult) -> Unit,
 ) {
+    // TV: «عرض الكل» sits at the end of the row instead of the heading, so it can only be reached sideways
+    // and never steals «up» / «down» from the cards (it made the remote jump to it from some columns only).
+    val seeAllInRow = isTv()
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
             Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
@@ -322,7 +327,7 @@ fun TitleRow(
                     Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            if (onSeeAll != null) {
+            if (onSeeAll != null && !seeAllInRow) {
                 TextButton(modifier = Modifier.focusFrame(), onClick = onSeeAll) { Text("عرض الكل") }
             }
         }
@@ -335,6 +340,13 @@ fun TitleRow(
                     BackdropCard(item) { onOpen(item) }
                 } else {
                     PosterCard(item, rank = if (ranked) index + 1 else null) { onOpen(item) }
+                }
+            }
+            if (onSeeAll != null && seeAllInRow) {
+                item(key = "see-all") {
+                    Box(Modifier.height(if (wide) 120.dp else 200.dp).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+                        OutlinedButton(modifier = Modifier.focusFrame(), onClick = onSeeAll) { Text("عرض الكل") }
+                    }
                 }
             }
         }
@@ -612,26 +624,66 @@ fun Modifier.tvTextField(): Modifier = composed {
     if (!isTv()) return@composed Modifier
     val focus = androidx.compose.ui.platform.LocalFocusManager.current
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     Modifier.onPreviewKeyEvent { e ->
         if (e.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) return@onPreviewKeyEvent false
         when (e.key) {
             androidx.compose.ui.input.key.Key.DirectionDown -> {
+                TvKeyboardState.armed.value = false
                 keyboard?.hide()
                 focus.moveFocus(androidx.compose.ui.focus.FocusDirection.Down)
                 true
             }
             androidx.compose.ui.input.key.Key.DirectionUp -> {
+                TvKeyboardState.armed.value = false
                 keyboard?.hide()
                 focus.moveFocus(androidx.compose.ui.focus.FocusDirection.Up)
                 true
             }
             androidx.compose.ui.input.key.Key.DirectionCenter, androidx.compose.ui.input.key.Key.Enter, androidx.compose.ui.input.key.Key.NumPadEnter -> {
-                keyboard?.show()
+                // OK: let the keyboard connect (see [TvKeyboardGate]) and then show it. The session starts a
+                // moment after the gate opens, so ask again a couple of times.
+                TvKeyboardState.armed.value = true
+                scope.launch {
+                    kotlinx.coroutines.delay(80)
+                    keyboard?.show()
+                    kotlinx.coroutines.delay(250)
+                    keyboard?.show()
+                }
                 true
             }
             else -> false
         }
     }
+}
+
+/** True once OK was pressed on the text box that has the focus (see [TvKeyboardGate]). */
+internal object TvKeyboardState {
+    val armed = kotlinx.coroutines.flow.MutableStateFlow(false)
+}
+
+/**
+ * TV: the on-screen keyboard must not appear just because the remote landed on a text box. The
+ * `showKeyboardOnFocus` option of [tvKeyboard] is read only by the new state-based text fields, not by the
+ * `value =` ones this app uses, so it did nothing. Instead the text-input session itself is held back
+ * until OK is pressed on the box ([tvTextField]); without a session there is no keyboard to show. The gate
+ * closes again when the box loses the focus. Phones and anything that is not a TV are untouched.
+ */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+@Composable
+fun TvKeyboardGate(content: @Composable () -> Unit) {
+    if (!isTv()) { content(); return }
+    androidx.compose.ui.platform.InterceptPlatformTextInput(
+        interceptor = { request, nextHandler ->
+            TvKeyboardState.armed.first { it }
+            try {
+                nextHandler.startInputMethod(request)
+            } finally {
+                TvKeyboardState.armed.value = false
+            }
+        },
+        content = content,
+    )
 }
 
 /** On TV the keyboard waits for OK on the box (see [tvTextField]); elsewhere as usual. */

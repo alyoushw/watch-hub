@@ -77,9 +77,13 @@ fun KoraScreen(
     detectVideos: Boolean = false,
     /** With [detectVideos]: top-level pages must stay on hosts containing this (advert redirects are blocked). */
     siteKeyword: String? = null,
+    /** Optional saved VIP login (username, password): the page's form is filled and submitted once. */
+    autoLogin: Pair<String, String>? = null,
 ) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
+    // Lets a right-press at the page's edge leave the web view for the side tab rail (TV remote).
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val scope = rememberCoroutineScope()
     val probe = remember { StreamProbe() }
     val attemptedStreams = remember { mutableSetOf<KoraNativeStream>() }
@@ -95,6 +99,8 @@ fun KoraScreen(
     var nativeStarted by remember { mutableStateOf(false) }
     var nativePaused by remember { mutableStateOf(false) }
     var nativeJob by remember { mutableStateOf<Job?>(null) }
+    // Fill the VIP login only once per visit, so a failed login never loops.
+    var autoLoginDone by remember(homeUrl) { mutableStateOf(false) }
     val nativeEnabled = kora || Uri.parse(homeUrl).host == Uri.parse(KORA_HOME).host
     val found = remember { androidx.compose.runtime.mutableStateListOf<KoraNativeStream>() }
     /** Watch servers and download pages read from the site's own page (label to address). */
@@ -129,12 +135,25 @@ fun KoraScreen(
             allowContentAccess = false
             useWideViewPort = true
             loadWithOverviewMode = true
+            // Only an http site (e.g. the VIP link) needs mixed content allowed so its styles load;
+            // https sites (the original كوره) keep the stricter default they always worked with.
+            mixedContentMode = if (homeUrl.startsWith("http://"))
+                android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+            else android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
             mediaPlaybackRequiresUserGesture = true
             setSupportMultipleWindows(true)
             javaScriptCanOpenWindowsAutomatically = false
         }
         CookieManager.getInstance().setAcceptThirdPartyCookies(view, true)
         view.setDownloadListener { url, _, _, _, _ -> openBrowser(url) }
+        // A page that takes the arrow keys for itself (VIP) never reports them as unused, so the remote
+        // could not leave it. When Up/Right changed nothing in the page, leave it for the app's bar / tabs.
+        (view as? RemoteWebView)?.onEdge = { code ->
+            focusManager.moveFocus(
+                if (code == android.view.KeyEvent.KEYCODE_DPAD_UP) androidx.compose.ui.focus.FocusDirection.Up
+                else androidx.compose.ui.focus.FocusDirection.Right,
+            )
+        }
     }
     fun activateWindow(window: WebView) {
         if (window !in windows || web == window) return
@@ -449,10 +468,30 @@ fun KoraScreen(
                             val code = event.keyCode
                             if (code == android.view.KeyEvent.KEYCODE_DPAD_UP || code == android.view.KeyEvent.KEYCODE_DPAD_DOWN) {
                                 val dir = if (code == android.view.KeyEvent.KEYCODE_DPAD_UP) -1 else 1
-                                if (view.canScrollVertically(dir) || dir > 0) {
+                                val remote = view as? RemoteWebView
+                                if (remote != null) {
+                                    if (remote.canRemoteScroll(dir)) {
+                                        if (event.action == android.view.KeyEvent.ACTION_DOWN) remote.remoteScroll(dir)
+                                        return
+                                    }
+                                } else if (view.canScrollVertically(dir) || dir > 0) {
                                     if (event.action == android.view.KeyEvent.ACTION_DOWN) view.evaluateJavascript(REMOTE_SCROLL.replace("DIR", "$dir"), null)
                                     return
                                 }
+                            }
+                            // OK on a dialog button the remote moved onto (a plain element the page never made
+                            // clickable by keyboard): press it for the user.
+                            if ((code == android.view.KeyEvent.KEYCODE_DPAD_CENTER || code == android.view.KeyEvent.KEYCODE_ENTER ||
+                                    code == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER)) {
+                                if (event.action == android.view.KeyEvent.ACTION_DOWN) view.evaluateJavascript(REMOTE_CLICK, null)
+                                return
+                            }
+                            // Nothing left to move to on the right of the page: hand the remote to the
+                            // app's side tab rail, so the user no longer has to press back to reach it.
+                            if (code == android.view.KeyEvent.KEYCODE_DPAD_RIGHT && event.action == android.view.KeyEvent.ACTION_DOWN) {
+                                (view as? RemoteWebView)?.lastEscape = android.os.SystemClock.uptimeMillis()
+                                focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Right)
+                                return
                             }
                             super.onUnhandledKeyEvent(view, event)
                         }
@@ -468,6 +507,14 @@ fun KoraScreen(
                         override fun onPageFinished(view: WebView, url: String?) {
                             // A match page: press its «مشاهدة البث المباشر» for the user; the stream then opens in the app's player.
                             if (kora && view == web) view.evaluateJavascript(KORA_AUTO_WATCH, null)
+                            if (!autoLoginDone && autoLogin != null && view == web) {
+                                val host = Uri.parse(url ?: "").host.orEmpty()
+                                val home = Uri.parse(homeUrl).host.orEmpty()
+                                if (host.isNotEmpty() && home.isNotEmpty() && (host == home || host.endsWith(".$home"))) {
+                                    autoLoginDone = true
+                                    view.evaluateJavascript(autoLoginJs(autoLogin.first, autoLogin.second), null)
+                                }
+                            }
                             view.evaluateJavascript(FOLLOW_FOCUS, null)
                             if (detectVideos && view == web) scan(view, keepList = Uri.parse(url ?: "").host?.contains(siteKeyword ?: "\u0000", true) != true)
                             if (view == web) {
@@ -494,10 +541,10 @@ fun KoraScreen(
                             return true
                         }
                         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-                            // Kora tab: advert networks get an empty answer, so their videos never show.
-                            if (kora && KoraNativeStream.isAd(request)) {
-                                return WebResourceResponse("text/plain", "utf-8", 204, "No Content", emptyMap(), java.io.ByteArrayInputStream(ByteArray(0)))
-                            }
+                            // The match site now only unlocks a working stream after its short ad runs
+                            // (blocking it left a dead/black feed), so the Kora tab lets the ad load —
+                            // like a normal browser — and the stream then plays. JS-opened popup
+                            // windows stay blocked by the web settings.
                             (KoraNativeStream.from(request) ?: if (kora) KoraNativeStream.liveFromAnyPlayer(request) else null)
                                 ?.let { stream -> view.post { openNative(view, stream) } }
                             if (detectVideos) KoraNativeStream.anySite(request)?.let { stream ->
@@ -556,6 +603,41 @@ fun KoraScreen(
 }
 
 internal const val KORA_HOME = "https://majed-kooora.com/"
+/** Built-in VIP address, always offered beside the original in every build. */
+internal const val KORA_VIP = "http://majed-vip.site"
+
+/** Fill the login form (first text field = username, the password field) and submit it once. The
+ *  value is set through the native setter so React-style controlled inputs accept it. */
+private fun autoLoginJs(user: String, pass: String): String {
+    val u = org.json.JSONObject.quote(user)
+    val p = org.json.JSONObject.quote(pass)
+    return """
+        (function(){
+          try{
+            var pass=document.querySelector('input[type=password]');
+            if(!pass) return;
+            var inputs=document.querySelectorAll('input'), user=null;
+            for(var i=0;i<inputs.length;i++){
+              var t=(inputs[i].type||'text').toLowerCase();
+              if(t==='password') break;
+              if(t==='text'||t==='email'||t==='tel'||t==='') user=inputs[i];
+            }
+            if(!user) return;
+            if(user.value && user.value.length>0) return;
+            function set(el,val){
+              var d=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');
+              if(d&&d.set) d.set.call(el,val); else el.value=val;
+              el.dispatchEvent(new Event('input',{bubbles:true}));
+              el.dispatchEvent(new Event('change',{bubbles:true}));
+            }
+            set(user,$u); set(pass,$p);
+            var form=pass.form;
+            var btn=(form&&form.querySelector('button[type=submit],input[type=submit],button'))||document.querySelector('button[type=submit],input[type=submit]');
+            setTimeout(function(){ if(btn) btn.click(); else if(form) form.submit(); }, 300);
+          }catch(e){}
+        })();
+    """.trimIndent()
+}
 
 internal data class WebLinkItem(val label: String, val url: String, val download: Boolean)
 
@@ -636,25 +718,137 @@ private val KORA_AUTO_WATCH = """
 
 /** TV remote: when Up/Down has no link left to move to on screen, the page scrolls instead of losing focus. */
 private class RemoteWebView(context: android.content.Context) : WebView(context) {
+    /** Where the page's own scroll box (or the page) ended up after the last remote scroll; -1 when nothing moved. */
+    private var scrolledTo = -1.0
+
+    /**
+     * Down always tries to scroll (some sites keep the page fixed and scroll an inner box instead,
+     * which [canScrollVertically] cannot see). Up scrolls while there is something above left to show,
+     * so at the very top it still lets the remote leave the page for the app's bar.
+     */
+    fun canRemoteScroll(dir: Int): Boolean = dir > 0 || canScrollVertically(-1) || scrolledTo > 8.0
+
+    fun remoteScroll(dir: Int) {
+        evaluateJavascript(REMOTE_SCROLL.replace("DIR", "$dir")) { r -> scrolledTo = r?.trim('"')?.toDoubleOrNull() ?: -1.0 }
+    }
+
+    /** Set by the screen: leave the page in this direction (the key code) for the app's bar / tabs. */
+    var onEdge: ((Int) -> Unit)? = null
+
+    /** When the unused-key path already left the page for this key, the check below must not leave twice. */
+    @Volatile var lastEscape = 0L
+
+    /**
+     * Some pages take the arrow keys for themselves and never report one as unused, so the app could not
+     * tell the user had reached the page's edge. For Right (and Up at the top) compare what the page shows
+     * before and just after the key: if nothing moved (focus, position, scroll boxes, dialog), the key
+     * had no use there, so the remote leaves the page.
+     */
+    private fun watchEdge(code: Int) {
+        val t0 = android.os.SystemClock.uptimeMillis()
+        evaluateJavascript(PAGE_SNAPSHOT) { before ->
+            postDelayed({
+                evaluateJavascript(PAGE_SNAPSHOT) { after ->
+                    if (before == after && lastEscape < t0) {
+                        lastEscape = android.os.SystemClock.uptimeMillis()
+                        onEdge?.invoke(code)
+                    }
+                }
+            }, 180)
+        }
+    }
+
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
         val code = event.keyCode
+        if (event.action == android.view.KeyEvent.ACTION_DOWN && event.repeatCount == 0 && onEdge != null &&
+            (code == android.view.KeyEvent.KEYCODE_DPAD_RIGHT ||
+                (code == android.view.KeyEvent.KEYCODE_DPAD_UP && !canScrollVertically(-1) && scrolledTo <= 8.0))) watchEdge(code)
         if (code != android.view.KeyEvent.KEYCODE_DPAD_UP && code != android.view.KeyEvent.KEYCODE_DPAD_DOWN) return super.dispatchKeyEvent(event)
         if (super.dispatchKeyEvent(event)) return true
         val dir = if (code == android.view.KeyEvent.KEYCODE_DPAD_UP) -1 else 1
-        if (!canScrollVertically(dir)) return false
-        if (event.action == android.view.KeyEvent.ACTION_DOWN) {
-            evaluateJavascript(REMOTE_SCROLL.replace("DIR", "$dir"), null)
-        }
+        if (!canRemoteScroll(dir)) return false
+        if (event.action == android.view.KeyEvent.ACTION_DOWN) remoteScroll(dir)
         return true
     }
 }
 
-/** Scrolls the page (or the box that scrolls in it) by about half a screen; DIR is -1 (up) or 1 (down). */
+/**
+ * A fingerprint of what the page shows: the focused element and where it is, the window scroll, the sum of
+ * every scroll box's position and the number of open dialogs. Two equal fingerprints around a key press mean
+ * the page did nothing with that key.
+ */
+private val PAGE_SNAPSHOT = """
+    (function(){
+      var a=document.activeElement,r=a&&a.getBoundingClientRect?a.getBoundingClientRect():null,s=0,all=document.querySelectorAll('*');
+      for(var i=0;i<all.length;i++){s+=all[i].scrollTop||0;}
+      return (a?a.tagName+'#'+(a.id||''):'')+'|'+(r?Math.round(r.left)+','+Math.round(r.top):'')+'|'+Math.round(window.scrollX)+','+Math.round(window.scrollY)+'|'+Math.round(s)+'|'+document.querySelectorAll('dialog[open],[role=dialog]').length;
+    })()
+""".trimIndent()
+
+/** Presses the element the remote moved onto inside a dialog (marked by REMOTE_SCROLL), if there is one. */
+private val REMOTE_CLICK = "(function(){var a=document.activeElement;if(a&&a.getAttribute&&a.getAttribute('data-wh')==='1'){a.click();return 1;}return 0;})();"
+
+/**
+ * Scrolls by about half a screen; DIR is -1 (up) or 1 (down). It picks the first thing that can really
+ * still move that way: the scroll box around the focused element, then the page itself, then the
+ * biggest scroll box on screen (some sites keep the page fixed and scroll an inner box). Returns where
+ * that box is heading (its scrollTop after the move), or -1 when nothing could scroll.
+ */
 private val REMOTE_SCROLL = """
     (function(d){
-      var h=Math.round(innerHeight*0.45)*d,el=document.activeElement,box=null;
-      for(var n=el;n&&n!==document.body;n=n.parentElement){var s=getComputedStyle(n);if(/(auto|scroll)/.test(s.overflowY)&&n.scrollHeight>n.clientHeight){box=n;break;}}
-      (box||document.scrollingElement||document.body).scrollBy({top:h,behavior:'smooth'});
+      var h=Math.round(innerHeight*0.45)*d,root=document.scrollingElement||document.documentElement,t=null;
+      function vis(e){var r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden';}
+      // A dialog open above the page (ad gate, server picker…): Up/Down walks ITS buttons, never the page behind.
+      var ov=null,dl=document.querySelectorAll('dialog[open],[role=dialog],[aria-modal=true]');
+      for(var k=0;k<dl.length;k++){if(vis(dl[k]))ov=dl[k];}
+      if(!ov){
+        var c=document.elementFromPoint(innerWidth/2,innerHeight/2);
+        for(var q=c;q&&q!==document.body&&q!==document.documentElement;q=q.parentElement){
+          var cs0=getComputedStyle(q);
+          if(cs0.position==='fixed'&&(parseInt(cs0.zIndex,10)||0)>=10)ov=q;
+        }
+      }
+      if(ov){
+        var items=[],all=ov.querySelectorAll('*');
+        for(var i=0;i<all.length;i++){
+          var e=all[i];
+          if(!vis(e)||e.disabled)continue;
+          var tg=e.tagName,cs=getComputedStyle(e);
+          var nat=/^(BUTTON|INPUT|SELECT|TEXTAREA)${'$'}/.test(tg)||(tg==='A'&&e.hasAttribute('href'))||(e.hasAttribute('tabindex')&&e.tabIndex>=0)||e.getAttribute('role')==='button';
+          var ptr=cs.cursor==='pointer'&&e.parentElement&&getComputedStyle(e.parentElement).cursor!=='pointer';
+          if(nat||ptr)items.push(e);
+        }
+        if(items.length){
+          var act=document.activeElement,cur=-1;
+          for(var j=0;j<items.length;j++){if(items[j]===act||items[j].contains(act))cur=j;}
+          var nx=cur<0?(d>0?0:items.length-1):cur+d;
+          if(nx<0||nx>=items.length)return cur>0?1000000:0;
+          var el=items[nx];
+          if(!el.hasAttribute('tabindex'))el.setAttribute('tabindex','0');
+          el.setAttribute('data-wh','1');
+          el.style.outline='3px solid #e8a33d';el.style.outlineOffset='2px';
+          el.addEventListener('blur',function(ev){ev.target.style.outline='';},{once:true});
+          el.focus();
+          el.scrollIntoView({block:'nearest'});
+          return nx>0?1000000:0;
+        }
+      }
+      function movable(n){var m=n.scrollHeight-n.clientHeight;return d>0?n.scrollTop<m-1:n.scrollTop>1;}
+      function scroller(n){return /(auto|scroll|overlay)/.test(getComputedStyle(n).overflowY)&&n.scrollHeight>n.clientHeight+8;}
+      for(var n=document.activeElement;n&&n!==document.documentElement;n=n.parentElement){if(n!==root&&scroller(n)&&movable(n)){t=n;break;}}
+      if(!t&&movable(root))t=root;
+      if(!t){
+        var best=0,all=document.querySelectorAll('body *');
+        for(var i=0;i<all.length;i++){
+          var e=all[i];if(!scroller(e)||!movable(e))continue;
+          var r=e.getBoundingClientRect();
+          var v=Math.max(0,Math.min(r.bottom,innerHeight)-Math.max(r.top,0))*Math.max(0,Math.min(r.right,innerWidth)-Math.max(r.left,0));
+          if(v>best){best=v;t=e;}
+        }
+      }
+      if(!t)return -1;
+      t.scrollBy({top:h,behavior:'smooth'});
+      return Math.max(0,t.scrollTop+h);
     })(DIR);
 """.trimIndent()
 

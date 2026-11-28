@@ -163,6 +163,8 @@ fun PlayerScreen(
     onAttachSubtitleFile: (android.net.Uri, String) -> Unit = { _, _ -> },
     onDismissSlow: () -> Unit = {},
     onPlayNow: () -> Unit = {},
+    /** «أرسل مشكلة» from the info panel; gets the playback details shown there. */
+    onReport: (MediaInfo?) -> Unit = {},
     castButton: (@Composable () -> Unit)? = null,
 ) {
     val title = session.title
@@ -808,7 +810,7 @@ fun PlayerScreen(
                     },
                 )
             } else if (menu == Menu.INFO) {
-                InfoPanel(info, onClose = { menu = null })
+                InfoPanel(info, onClose = { menu = null }, onReport = { menu = null; onReport(info) })
             } else if (menu == Menu.QUALITY) {
                 QualityPanel(
                     autoPreload = session.autoPreload,
@@ -1490,7 +1492,7 @@ private fun SectionLabel(text: String) {
 
 /** "معلومات التشغيل": picture, sound and connection details of what is playing. */
 @Composable
-private fun InfoPanel(info: MediaInfo?, onClose: () -> Unit) {
+private fun InfoPanel(info: MediaInfo?, onClose: () -> Unit, onReport: () -> Unit = {}) {
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)).clickable(onClick = onClose)) {
@@ -1506,6 +1508,7 @@ private fun InfoPanel(info: MediaInfo?, onClose: () -> Unit) {
                 .padding(vertical = 18.dp),
         ) {
             Text("معلومات التشغيل", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+            MenuRow("📨 أرسل مشكلة عن هذا التشغيل", false, onClick = onReport)
             if (info == null) {
                 Hint("ننتظر يبدأ التشغيل…")
             } else {

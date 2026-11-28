@@ -1,0 +1,193 @@
+package com.alyoushw.watchhub.ui
+
+import android.content.Context
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
+import com.alyoushw.watchhub.data.LiveMatch
+import com.alyoushw.watchhub.data.ScoresApi
+import com.alyoushw.watchhub.data.WatchEntry
+import com.alyoushw.watchhub.data.XtreamItem
+import com.alyoushw.watchhub.player.ChannelIndex
+import com.alyoushw.watchhub.player.PlayerActivity
+import com.alyoushw.watchhub.player.QueueItem
+import com.alyoushw.watchhub.player.channelQualityOrder
+import com.alyoushw.watchhub.player.matchKey
+import com.alyoushw.watchhub.player.qualityTags
+import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+/** The channel group last used for each league, so it comes first next time (kept on this device). */
+private object MatchPrefs {
+    fun get(c: Context, league: String): String? = c.getSharedPreferences("match_prefs", Context.MODE_PRIVATE).getString(league, null)
+    fun set(c: Context, league: String, key: String) { c.getSharedPreferences("match_prefs", Context.MODE_PRIVATE).edit().putString(league, key).apply() }
+}
+
+/** The broadcaster families: what to look for in the channel names of your accounts (names are written many ways). */
+private val FAMILIES = mapOf(
+    "ثمانية" to listOf("thmanyah", "thamanya", "thamaniya", "thmania", "tmanyah", "ثمانية", "ثمانيه"),
+    "bein" to listOf("bein", "بي ان", "بي إن", "بين سبورت"),
+)
+
+private data class SourceGroup(val key: String, val title: String, val sources: List<Source>)
+/** A channel with its comparison keys worked out once (thousands of channels: never redo it on the screen thread). */
+private class Source(val account: com.alyoushw.watchhub.data.XtreamAccount, val channel: XtreamItem) {
+    val lname: String = channel.name.lowercase()
+    val key: String = matchKey(channel.name)
+}
+
+/** Every source of every channel matching the search, gathered from all your accounts, grouped by channel. */
+@Composable
+internal fun MatchSourcesDialog(m: LiveMatch, onClose: () -> Unit) {
+    val container = appContainer()
+    val context = LocalContext.current
+    val league = remember { ScoresApi.league(m.leagueSlug) }
+    val keywords = remember { league?.keywords.orEmpty() }
+    var query by remember { mutableStateOf(keywords.firstOrNull().orEmpty()) }
+    // The channel(s) that really carry this match (Tifo / Kooora / Yallakora): the search goes by that channel's number, automatically.
+    var carriers by remember { mutableStateOf<List<String>>(emptyList()) }
+    var exact by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(m.id) {
+        val list = runCatching { com.alyoushw.watchhub.data.MatchTv.channels(m) }.getOrDefault(emptyList())
+            .map { it.channel.trim() }.filter { it.isNotEmpty() && !it.startsWith("تطبيق") && !it.contains("app", true) && !it.contains("tv", true) || it.contains("beIN", true) }
+            .distinctBy { matchKey(it) }
+            .let { l -> l.filter { c -> l.none { o -> o !== c && matchKey(o).length > matchKey(c).length && matchKey(o).startsWith(matchKey(c)) } } }
+        carriers = list
+        if (list.isNotEmpty() && exact == null && query == keywords.firstOrNull().orEmpty()) exact = list.first()
+    }
+    var all by remember { mutableStateOf<List<Source>?>(null) }
+    var openKey by remember { mutableStateOf<String?>(null) }
+    val allAccounts by container.settings.xtreamAccounts.collectAsStateWithLifecycle()
+    val accounts = remember(allAccounts) { allAccounts.filter { it.isComplete } }
+
+    // Gathering and keying tens of thousands of channels happens off the main thread, so the screen never freezes.
+    LaunchedEffect(Unit) {
+        all = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            val out = ArrayList<Source>()
+            for (acc in accounts) runCatching { ChannelIndex.channels(container.xtream, acc) }.getOrNull()?.forEach { out += Source(acc, it) }
+            out
+        }
+        MatchPrefs.get(context, m.leagueSlug)?.let { openKey = it }
+    }
+
+    var groups by remember { mutableStateOf<List<SourceGroup>>(emptyList()) }
+    LaunchedEffect(all, query, exact) {
+        val src = all ?: return@LaunchedEffect
+        delay(250) // typing: wait for a pause
+        val ex = exact
+        if (ex != null) {
+            // Search by the broadcasting channel's own number: «beIN SPORTS 5» finds beIN 5 / BN5 / بي ان سبورت 5, never beIN 6.
+            val k = matchKey(ex)
+            groups = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                src.filter { it.key == k || (it.key.startsWith(k) && !it.key[k.length].isDigit()) }.groupBy { it.key }
+                    .map { (kk, v) -> SourceGroup(kk, v.minByOrNull { channelQualityOrder(it.channel.name) }!!.channel.name, v.sortedBy { channelQualityOrder(it.channel.name) }) }
+            }
+            // The carrying channel opens at once, with all its qualities (4K, FHD, HD, SD) listed.
+            if (groups.size == 1) openKey = groups[0].key
+            return@LaunchedEffect
+        }
+        val q = query.trim().lowercase()
+        val tokens = FAMILIES[q] ?: FAMILIES.entries.firstOrNull { it.key.equals(q, true) }?.value ?: listOf(q)
+        val keys = tokens.map { matchKey(it) }.filter { it.isNotEmpty() }
+        groups = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            if (q.isBlank()) emptyList() else src.filter { s -> tokens.any { s.lname.contains(it) } || keys.any { s.key.startsWith(it) } }
+                .groupBy { it.key }
+                .map { (k, v) -> SourceGroup(k, v.minByOrNull { channelQualityOrder(it.channel.name) }!!.channel.name, v.sortedBy { channelQualityOrder(it.channel.name) }) }
+                .sortedBy { it.key }.take(60)
+        }
+    }
+    val preferred = MatchPrefs.get(context, m.leagueSlug)
+    val ordered = remember(groups, preferred) { groups.sortedByDescending { it.key == preferred } }
+
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("${m.home} - ${m.away}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (m.broadcasts.isNotEmpty()) Text("الناقلة حسب المصدر: ${m.broadcasts.joinToString("، ")}", fontSize = 12.sp)
+                if (carriers.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    carriers.forEach { c -> FilterChip(modifier = Modifier.focusFrame(), selected = exact == c, onClick = { exact = c; query = "" }, label = { Text(c) }) }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // The channels that carry this competition here (Thmanyah: the Saudi league; beIN: the European leagues), then your own search.
+                    keywords.forEach { k -> FilterChip(modifier = Modifier.focusFrame(), selected = exact == null && query.equals(k, true), onClick = { exact = null; query = k }, label = { Text(if (k == "bein") "beIN" else k) }) }
+                }
+                OutlinedTextField(value = query, onValueChange = { exact = null; query = it }, label = { Text("بحث آخر عن قناة (اختياري)") },
+                    modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(), singleLine = true)
+                when {
+                    accounts.isEmpty() -> Text("أضف حساب IPTV من الإعدادات أول.")
+                    all == null -> Text("نجمع قنواتك…")
+                    ordered.isEmpty() -> Text(if (exact != null) "ما لقينا ${exact} في حساباتك. جرّب بحثاً آخر أو اختر قناة ثانية." else "ما لقينا قناة بهذا الاسم في حساباتك.")
+                    else -> LazyColumn(Modifier.heightIn(max = 380.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(ordered, key = { it.key }) { g ->
+                            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainer)) {
+                                Text(
+                                    "${g.title}  ·  ${g.sources.size} مصدر",
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.fillMaxWidth().focusFrame(RoundedCornerShape(12.dp)).clickable { openKey = if (openKey == g.key) null else g.key }.padding(12.dp),
+                                )
+                                if (openKey == g.key) g.sources.forEachIndexed { i, s ->
+                                    val order = channelQualityOrder(s.channel.name)
+                                    if (i == 0 || order != channelQualityOrder(g.sources[i - 1].channel.name)) {
+                                        val label = when (order) { 0 -> "4K"; 1 -> "FHD"; 2 -> "HD"; 4 -> "SD"; else -> "جودة عادية" }
+                                        Text("$label  (${g.sources.count { channelQualityOrder(it.channel.name) == order }})", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 16.dp, top = 6.dp))
+                                    }
+                                    val q = qualityTags(s.channel.name).joinToString(" ") { it.uppercase() }
+                                    Text(
+                                        "${s.account.label} · ${s.channel.name}" + if (q.isNotBlank()) "  [$q]" else "",
+                                        fontSize = 13.sp,
+                                        modifier = Modifier.fillMaxWidth().focusFrame(RoundedCornerShape(10.dp)).clickable {
+                                            MatchPrefs.set(context, m.leagueSlug, g.key)
+                                            val items = g.sources.map { QueueItem(container.xtream.playUrls(it.channel, it.account), WatchEntry.live(it.channel, it.account), it.channel.num, it.channel) }
+                                            onClose()
+                                            PlayerActivity.start(context, items, i)
+                                        }.padding(horizontal = 16.dp, vertical = 9.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(modifier = Modifier.focusFrame(), onClick = onClose) { Text("إغلاق") } },
+    )
+}

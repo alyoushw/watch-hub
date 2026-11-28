@@ -13,3 +13,9 @@ services:
       # site's settings under "مفتاح البروكسي" so nobody else can use your proxy.
       - key: PROXY_KEY
         sync: false
+      # API-Football key for the matches data (asked from the app through this server, so it never sits in the app).
+      # Render asks for it once; leave it empty to switch that source off.
+      - key: FOOTBALL_API_KEY
+        sync: false
+      - key: FOOTBALL_DAILY_LIMIT
+        value: "90"

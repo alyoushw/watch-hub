@@ -43,6 +43,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -68,6 +71,12 @@ import com.alyoushw.watchhub.data.countryLabel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+/**
+ * The chosen tab of the home bar (مباشر · مسلسلات · أفلام · أنمي). One shared requester so the side rail's
+ * first item, the banner and the rows can all send the remote to exactly that tab.
+ */
+internal val HomeTabsFocus = androidx.compose.ui.focus.FocusRequester()
+
 /** Tabs drawn over the hero: text with a gold underline on the selected one. */
 @Composable
 fun HeroTabs(
@@ -76,6 +85,16 @@ fun HeroTabs(
     onRefresh: () -> Unit,
     live: Boolean = false,
     onLive: (() -> Unit)? = null,
+    /** The «مباريات» tab (matches, tables, clubs). */
+    matches: Boolean = false,
+    onMatches: (() -> Unit)? = null,
+    /** Attached to the chosen tab, so the remote's «up» from the banner or the rows lands exactly on it. */
+    selectedFocus: androidx.compose.ui.focus.FocusRequester? = null,
+    /**
+     * TV: set when OK is pressed on a tab. Choosing a tab rebuilds the page under it, which dropped the
+     * remote's focus to the side rail; the chosen tab asks for the focus back once it exists again.
+     */
+    restoreFocus: androidx.compose.runtime.MutableState<Boolean>? = null,
 ) {
     val narrow = LocalConfiguration.current.screenWidthDp < 600
     Row(
@@ -85,11 +104,12 @@ fun HeroTabs(
     ) {
         if (!narrow) Text("Watch Hub", color = Gold, fontWeight = FontWeight.Black, fontSize = 22.sp, maxLines = 1, softWrap = false)
         // "مباشر" (the Xtream Codes live channels) comes first, before series and films.
-        val entries = buildList<Pair<MediaType?, String>> {
+        val entries = buildList<Pair<Any?, String>> {
             if (onLive != null) add(null to "مباشر")
             add(MediaType.TV to "مسلسلات")
             add(MediaType.MOVIE to "أفلام")
             add(MediaType.ANIME to "أنمي")
+            if (onMatches != null) add("matches" to "مباريات")
         }
         // A dark glass capsule, readable over any poster; the chosen tab is filled gold.
         Box(Modifier.weight(1f)) {
@@ -100,7 +120,16 @@ fun HeroTabs(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 entries.forEach { (type, label) ->
-                    val on = if (type == null) live else !live && type == selected
+                    val on = when (type) { null -> live; "matches" -> matches; else -> !live && !matches && type == selected }
+                    if (on && restoreFocus != null && selectedFocus != null) {
+                        androidx.compose.runtime.LaunchedEffect(restoreFocus.value) {
+                            if (restoreFocus.value) {
+                                delay(80) // the new page is built; the chosen tab exists again
+                                runCatching { selectedFocus.requestFocus() }
+                                restoreFocus.value = false
+                            }
+                        }
+                    }
                     Text(
                         label,
                         color = if (on) Color(0xFF1C1206) else Color.White.copy(alpha = 0.85f),
@@ -108,10 +137,16 @@ fun HeroTabs(
                         fontSize = if (narrow) 15.sp else 17.sp,
                         maxLines = 1,
                         softWrap = false,
-                        modifier = Modifier.focusFrame(CircleShape)
+                        modifier = Modifier
+                            // Before the focusable (clickable) below, so it points at that element.
+                            .then(if (on && selectedFocus != null) Modifier.focusRequester(selectedFocus) else Modifier)
+                            .focusFrame(CircleShape)
                             .clip(CircleShape)
                             .background(if (on) Gold else Color.Transparent)
-                            .clickable { if (type == null) onLive?.invoke() else onSelect(type) }
+                            .clickable {
+                                restoreFocus?.value = true
+                                when (type) { null -> onLive?.invoke(); "matches" -> onMatches?.invoke(); else -> onSelect(type as MediaType) }
+                            }
                             .padding(horizontal = if (narrow) 13.dp else 16.dp, vertical = 6.dp),
                     )
                 }
@@ -132,13 +167,18 @@ fun HeroTabs(
  * Big rotating banner of trending titles: full-width backdrop, dark gradient, large title,
  * a short story line, "شاهد الحين" and "+" (add to my list).
  */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun HeroCarousel(
     items: List<SearchResult>,
     header: @Composable () -> Unit,
     onOpen: (SearchResult) -> Unit,
+    /** The chosen tab of the bar above: where «up» from the banner / the first row should land. */
+    tabFocus: androidx.compose.ui.focus.FocusRequester? = null,
 ) {
     val container = appContainer()
+    // «شاهد الحين» of the page on screen: where «down» from the tabs should land.
+    val watchFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     val data by container.store.data.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val slides = items.filter { it.backdropPath != null || it.posterPath != null }.take(8)
@@ -153,25 +193,33 @@ fun HeroCarousel(
         else -> (screenHeight * 0.62f).coerceAtMost(560.dp)
     }
 
-    // Advance by itself every 7 seconds; not while the remote is on the banner (moving the page
-    // under the focused button made TVs stutter), nor while the user swipes.
+    // The banner never moves by itself on any version: it changes only when the user swipes or
+    // taps the arrows. (Auto-advance kept reappearing on TV and the owner wants it gone for good.)
     var focused by remember { mutableStateOf(false) }
-    LaunchedEffect(slides.size, focused) {
-        // TVs: never by itself (the page moving under the remote is unsettling); its arrows move it.
-        if (slides.size < 2 || focused || tv) return@LaunchedEffect
-        while (true) {
-            delay(7000)
-            if (!pager.isScrollInProgress) {
-                pager.animateScrollToPage(
-                    (pager.currentPage + 1) % slides.size,
-                    animationSpec = androidx.compose.animation.core.tween(durationMillis = 700),
-                )
-            }
-        }
-    }
 
     Box(Modifier.fillMaxWidth().height(height).onFocusChanged { focused = it.hasFocus }) {
         if (slides.isNotEmpty()) {
+          // The banner's buttons form one focus group, so the remote behaves predictably (the tabs
+          // stay outside it): coming from the tabs (down) it lands on «شاهد الحين»; coming from the
+          // rows below (up) it goes straight to the chosen tab; leaving upwards also ends on that tab.
+          // Without this the TV picked whichever button was geometrically nearest (the arrows, …).
+          Box(
+            Modifier.fillMaxSize()
+                .focusProperties {
+                    enter = { dir ->
+                        when {
+                            dir == androidx.compose.ui.focus.FocusDirection.Down -> watchFocus
+                            dir == androidx.compose.ui.focus.FocusDirection.Up && tabFocus != null -> tabFocus
+                            else -> androidx.compose.ui.focus.FocusRequester.Default
+                        }
+                    }
+                    exit = { dir ->
+                        if (dir == androidx.compose.ui.focus.FocusDirection.Up && tabFocus != null) tabFocus
+                        else androidx.compose.ui.focus.FocusRequester.Default
+                    }
+                }
+                .focusGroup(),
+          ) {
             // The next and previous pictures load ahead, so a slide never waits on a download.
             HorizontalPager(state = pager, beyondViewportPageCount = 1, modifier = Modifier.fillMaxSize()) { page ->
                 val item = slides[page]
@@ -216,6 +264,7 @@ fun HeroCarousel(
                             }
                         },
                         modifier = Modifier.align(Alignment.BottomStart).padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
+                        watchFocus = if (page == pager.currentPage) watchFocus else null,
                     )
                 }
             }
@@ -247,6 +296,7 @@ fun HeroCarousel(
                     )
                 }
             }
+          }
         }
         header()
     }
@@ -260,6 +310,7 @@ private fun HeroText(
     onWatch: () -> Unit,
     onAdd: () -> Unit,
     modifier: Modifier = Modifier,
+    watchFocus: androidx.compose.ui.focus.FocusRequester? = null,
 ) {
     Column(modifier.fillMaxWidth(if (compact) 0.55f else 0.82f), verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp)) {
         Text(
@@ -301,7 +352,9 @@ private fun HeroText(
                 onClick = onWatch,
                 colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Color(0xFF1C1206)),
                 shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.height(48.dp).focusFrame(RoundedCornerShape(12.dp)),
+                modifier = Modifier.height(48.dp)
+                    .then(if (watchFocus != null) Modifier.focusRequester(watchFocus) else Modifier)
+                    .focusFrame(RoundedCornerShape(12.dp)),
             ) {
                 Icon(Icons.Filled.PlayArrow, contentDescription = null)
                 Text("  شاهد الحين", fontWeight = FontWeight.Bold)

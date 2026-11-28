@@ -6,10 +6,11 @@ import * as fouru from "./fouru.js?v=20261118d";
 import * as features from "./features.js?v=20261122c";
 import * as sourceApi from "./sources.js?v=20261118d";
 import { restoreDownloads, addDownload } from "./downloads.js?v=20261118d";
-import { play, fmt } from "./player.js?v=20261122c";
+import { play, fmt } from "./player.js?v=20261127a";
 import * as smart from "./smart.js?v=20261118d";
 import { fillTranslated } from "./translate.js?v=20261118d";
-import * as cloud from "./cloud.js?v=20261118d";
+import * as cloud from "./cloud.js?v=20261125a";
+import { qrSvg } from "./qr.js?v=20261125a";
 import { settings, watchlist, favorites, folders, recent, xtreamReady, history, isFinished, progressOf, accounts, restoreHistory } from "./store.js?v=20261118d";
 
 const view = document.getElementById("view");
@@ -1634,6 +1635,118 @@ function renderAccounts(editingId) {
   });
 }
 
+/** The sign-in choices, the same in «حسابك» and on the approve page: Google, a QR code, a code, or email + password. */
+function signInPanelHtml() {
+  return `<div style="display:grid;gap:12px" data-si-panel>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <button class="btn" data-si="google">سجّل دخول بـ Google</button>
+      ${cloud.qrLoginAvailable() ? `<button class="btn ghost" data-si="qr">بالباركود</button>` : ""}
+      <button class="btn ghost" data-si="email">بالإيميل وكلمة المرور</button>
+      ${cloud.deviceLoginAvailable() ? `<button class="btn ghost" data-si="code">دخول برمز</button>` : ""}
+    </div>
+    <form data-si="form" style="display:none;gap:10px" autocomplete="on">
+      <div class="field"><label>الإيميل</label><input class="input" type="email" name="email" autocomplete="username" inputmode="email" dir="ltr"></div>
+      <div class="field"><label>كلمة المرور</label>
+        <div style="display:flex;gap:8px;align-items:center"><input class="input" type="password" name="password" autocomplete="current-password" dir="ltr" style="flex:1">
+          <button class="btn ghost small" type="button" data-si="eye" title="أظهر كلمة المرور" aria-label="أظهر كلمة المرور" style="opacity:.55">👁</button></div></div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn" type="submit">دخول</button>
+        <button class="btn ghost" type="button" data-si="signup">حساب جديد</button>
+        <button class="btn ghost" type="button" data-si="reset">نسيت كلمة المرور</button>
+      </div>
+    </form>
+    <pre class="msg err" data-si="msg"></pre>
+  </div>`;
+}
+
+/** Wires [signInPanelHtml]; [afterSignIn] runs once a sign-in worked (the account box redraws by itself). */
+function bindSignInPanel(root, afterSignIn = async () => {}) {
+  const part = (k) => root.querySelector(`[data-si="${k}"]`);
+  const msg = part("msg");
+  const form = part("form");
+  const say = (text, ok = false) => {
+    msg.className = ok ? "msg ok" : "msg err";
+    msg.textContent = text;
+  };
+  const creds = () => {
+    const d = new FormData(form);
+    return [String(d.get("email") || ""), String(d.get("password") || "")];
+  };
+  const run = async (fn, okText) => {
+    say("");
+    try {
+      await fn();
+      if (okText) say(okText, true);
+      else await afterSignIn();
+    } catch (e) {
+      say(e.message);
+    }
+  };
+  part("google").addEventListener("click", () => run(() => cloud.signInWithGoogle()));
+  part("qr")?.addEventListener("click", () => qrLoginSheet(afterSignIn));
+  part("code")?.addEventListener("click", deviceLoginSheet);
+  part("email").addEventListener("click", () => {
+    const open = form.style.display !== "grid";
+    form.style.display = open ? "grid" : "none";
+    if (open) form.querySelector("input")?.focus();
+  });
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const [email, password] = creds();
+    run(() => cloud.signInWithEmail(email, password));
+  });
+  part("eye").addEventListener("click", () => {
+    const box = form.querySelector('input[name="password"]');
+    const show = box.type === "password";
+    box.type = show ? "text" : "password";
+    part("eye").style.opacity = show ? "1" : ".55";
+  });
+  part("signup").addEventListener("click", () => {
+    const [email, password] = creds();
+    run(() => cloud.signUpWithEmail(email, password));
+  });
+  part("reset").addEventListener("click", () => {
+    const [email] = creds();
+    if (!email.trim()) return say("اكتب إيميلك أول");
+    run(() => cloud.resetPassword(email), "✓ أرسلنا رابط كلمة المرور لإيميلك، افتحه وحدّد كلمة مرور");
+  });
+}
+
+/** Sign in with a QR code: a phone that is already signed in scans it and approves, then this device is in. */
+async function qrLoginSheet(afterSignIn = async () => {}) {
+  document.querySelector(".sheet-wrap")?.remove();
+  const wrap = document.createElement("div");
+  wrap.className = "sheet-wrap";
+  wrap.innerHTML = `<div class="sheet" style="text-align:center"><b class="sheet-title">الدخول بالباركود</b><div id="ql-body">${loading()}</div>
+    <button class="btn ghost" id="ql-x">إلغاء</button></div>`;
+  document.body.appendChild(wrap);
+  let cancelled = false;
+  const close = () => {
+    cancelled = true;
+    wrap.remove();
+  };
+  wrap.querySelector("#ql-x").addEventListener("click", close);
+  const body = wrap.querySelector("#ql-body");
+  try {
+    const p = await cloud.startPairing();
+    if (cancelled) return;
+    body.innerHTML = `<p class="muted" style="margin:6px 0">صوّر الرمز بكاميرا جوالك (اللي داخل حسابك):</p>
+      <div style="display:inline-block;background:#fff;padding:10px;border-radius:12px">${qrSvg(p.url, 220)}</div>
+      <p class="muted" style="margin:10px 0 0;line-height:1.8">بيفتح Watch Hub عندك، اضغط «قبول» وبس. ننتظر موافقتك…</p>`;
+    const ok = await cloud.finishPairing(p, () => cancelled);
+    if (cancelled) return;
+    if (ok) {
+      close();
+      toast("✓ دخلت، ونزامن الحين");
+      await afterSignIn();
+    } else {
+      body.innerHTML = `<p class="err">انتهت صلاحية الرمز أو انرفض. سكّر وجرّب مرة ثانية.</p>`;
+    }
+  } catch (e) {
+    if (!cancelled) body.innerHTML = `<p class="err">${esc(e.message)}</p>`;
+  }
+}
+
 /** «حسابك»: Google sign-in so the list, "تابع المشاهدة" and the Xtream accounts follow you to every device. */
 function renderCloud() {
   const box = $("#account-box");
@@ -1649,22 +1762,11 @@ function renderCloud() {
       box.innerHTML = head + `<div class="acc-row"><span style="font-size:22px">👤</span>
           <div><b>أنت الحين زائر</b><small style="white-space:normal">اللي تشوفه هنا خاص بهذا الجهاز. لما تسجّل دخول تطلع بياناتك أنت، ولما تطلع ترجع بيانات الزائر.</small></div>
           <button class="btn ghost small danger" id="cl-clear">امسحها</button></div>
-        <p class="muted" style="margin:0;line-height:1.8">سجّل دخولك بحساب Google، وكل أجهزتك (الجوال والتلفاز والموقع) تصير على نفس القائمة ونفس «تابع المشاهدة». توقف حلقة في الجوال، وتكملها في التلفاز من نفس الثانية.</p>
-        <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <button class="btn" id="cl-google">سجّل دخول بـ Google</button>
-          ${cloud.deviceLoginAvailable() ? `<button class="btn ghost" id="cl-code">دخول برمز</button>` : ""}
-        </div><pre class="msg err" id="cl-msg"></pre>`;
-      $("#cl-google").addEventListener("click", async () => {
-        $("#cl-msg").textContent = "";
-        try {
-          await cloud.signInWithGoogle();
-        } catch (e) {
-          if ($("#cl-msg")) $("#cl-msg").textContent = e.message;
-        }
-      });
-      $("#cl-code")?.addEventListener("click", deviceLoginSheet);
+        <p class="muted" style="margin:0;line-height:1.8">سجّل دخولك (بـ Google أو بالباركود أو بالإيميل وكلمة المرور)، وكل أجهزتك (الجوال والتلفاز والموقع) تصير على نفس القائمة ونفس «تابع المشاهدة». توقف حلقة في الجوال، وتكملها في التلفاز من نفس الثانية.</p>
+        ${signInPanelHtml()}`;
+      bindSignInPanel(box);
       $("#cl-clear").addEventListener("click", async () => {
-        if (!confirm("تمسح بيانات الزائر من هذا الجهاز؟ (تابع المشاهدة، قائمتي، حسابات Xtream، القنوات المفضلة). حسابك في Google ما يتأثر.")) return;
+        if (!confirm("تمسح بيانات الزائر من هذا الجهاز؟ (تابع المشاهدة، قائمتي، حسابات Xtream، القنوات المفضلة). حسابك ما يتأثر.")) return;
         await cloud.clearGuestData();
         toast("✓ انمسحت بيانات الزائر");
       });
@@ -1698,16 +1800,11 @@ async function pairPage(id, pairingId) {
   }
   if (st.status !== "signedIn") {
     view.innerHTML = box(`<h3>«${esc(device)}» يبي يدخل حسابك</h3>
-      <p class="muted">سجّل دخولك أول بحساب Google، وبعدها وافق.</p>
-      <div><button class="btn" id="pr-in">سجّل دخول بـ Google</button></div><pre class="msg err" id="pr-msg"></pre>`);
-    $("#pr-in").addEventListener("click", async () => {
-      try {
-        await cloud.signInWithGoogle();
-        await new Promise((r) => setTimeout(r, 800));
-        route();
-      } catch (e) {
-        $("#pr-msg").textContent = e.message;
-      }
+      <p class="muted">سجّل دخولك أول (بـ Google أو بالإيميل وكلمة المرور)، وبعدها وافق.</p>
+      <div style="text-align:start">${signInPanelHtml()}</div>`);
+    bindSignInPanel(view, async () => {
+      await new Promise((r) => setTimeout(r, 800));
+      route();
     });
     return;
   }
@@ -1797,7 +1894,7 @@ async function settingsPage() {
     <section class="card-box">
       <h3>الآيفون والآيباد</h3>
       <label style="display:flex;gap:10px;align-items:center;cursor:pointer">
-        <input type="checkbox" id="vlc" ${settings.vlcOnIos === true ? "checked" : ""} style="width:20px;height:20px;accent-color:var(--gold)">
+        <input type="checkbox" id="vlc" ${settings.vlcOnIos !== false ? "checked" : ""} style="width:20px;height:20px;accent-color:var(--gold)">
         <span>افتح القنوات والأفلام والحلقات في تطبيق VLC على طول</span>
       </label>
       <p class="muted" style="margin:0;line-height:1.8;font-size:13px">Safari ما يشغّل صيغ كثيرة (مثل MKV)، وVLC يشغّل كل شي.

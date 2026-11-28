@@ -130,6 +130,101 @@ export async function signInWithGoogle() {
   }
 }
 
+/** Firebase's error code for an email / password sign-in, in plain Arabic. */
+function emailError(e) {
+  switch ((e && e.code) || "") {
+    case "auth/invalid-email": return "الإيميل مكتوب غلط";
+    case "auth/missing-email": return "اكتب الإيميل";
+    case "auth/missing-password": return "اكتب كلمة المرور";
+    case "auth/wrong-password":
+    case "auth/invalid-credential":
+    case "auth/invalid-login-credentials":
+    case "auth/user-not-found":
+      return "الإيميل أو كلمة المرور غلط. لو سجّلت بـ Google قبل، اضغط «نسيت كلمة المرور» عشان تفعّل الدخول بكلمة مرور.";
+    case "auth/email-already-in-use": return "هذا الإيميل مسجّل من قبل. اضغط «دخول»، أو «نسيت كلمة المرور» لو سجّلت بـ Google.";
+    case "auth/weak-password": return "كلمة المرور ضعيفة، اكتب ٦ أحرف على الأقل";
+    case "auth/operation-not-allowed": return "الدخول بالإيميل مو مفعّل في Firebase (Authentication ← Sign-in method ← Email/Password)";
+    case "auth/too-many-requests": return "محاولات كثيرة، انتظر شوي وجرّب";
+    case "auth/network-request-failed": return "تأكد من الإنترنت وجرّب";
+    case "auth/user-disabled": return "هذا الحساب موقوف";
+    default: return `ما ضبط الدخول (${(e && e.code) || "خطأ"})`;
+  }
+}
+
+/** Email + password. The account is the same one Google uses when the email is the same, so the data follows you. */
+export async function signInWithEmail(email, password) {
+  if (!fb) throw new Error("إعدادات الحساب ما وصلت");
+  try {
+    await fb.au.signInWithEmailAndPassword(fb.auth, String(email || "").trim(), String(password || ""));
+  } catch (e) {
+    throw new Error(emailError(e));
+  }
+}
+
+export async function signUpWithEmail(email, password) {
+  if (!fb) throw new Error("إعدادات الحساب ما وصلت");
+  try {
+    await fb.au.createUserWithEmailAndPassword(fb.auth, String(email || "").trim(), String(password || ""));
+  } catch (e) {
+    throw new Error(emailError(e));
+  }
+}
+
+/** Mails a link to set a new password (this also switches password sign-in on for an account that only used Google). */
+export async function resetPassword(email) {
+  if (!fb) throw new Error("إعدادات الحساب ما وصلت");
+  try {
+    await fb.au.sendPasswordResetEmail(fb.auth, String(email || "").trim());
+  } catch (e) {
+    throw new Error(emailError(e));
+  }
+}
+
+/** "Scan to sign in" is set up on the server (a signed-in phone approves the QR code this device shows). */
+export const qrLoginAvailable = () => Boolean(cfg && cfg.qrLogin);
+
+/** Starts a QR sign-in: show {url} as a QR code, then wait with [finishPairing]. */
+export async function startPairing() {
+  const res = await fetch("/pair/start", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ device: "المتصفح" }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!data.id) throw new Error("الدخول بالباركود غير مفعّل في موقعك (FIREBASE_SERVICE_ACCOUNT)");
+  return data;
+}
+
+/** True once a signed-in phone approved (and this device is in); false when refused or expired. */
+export async function finishPairing(p, isCancelled) {
+  const until = Date.now() + (p.expiresIn || 600) * 1000;
+  while (Date.now() < until && !isCancelled()) {
+    await new Promise((r) => setTimeout(r, 2000));
+    if (isCancelled()) return false;
+    let data;
+    try {
+      const res = await fetch("/pair/poll", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: p.id, secret: p.secret }),
+      });
+      data = await res.json();
+    } catch {
+      continue;
+    }
+    if (data.status === "approved" && data.token) {
+      try {
+        await fb.au.signInWithCustomToken(fb.auth, data.token);
+      } catch (e) {
+        throw new Error(`ما قبل Firebase الدخول (${(e && e.code) || "خطأ"})`);
+      }
+      return true;
+    }
+    if (data.status === "denied" || data.status === "expired") return false;
+  }
+  return false;
+}
+
 /** Sign-in with a code at google.com/device (for when the popup can't work, e.g. an iPhone home-screen app). */
 export async function startDeviceLogin() {
   const res = await fetch("/auth/device/start", { method: "POST" });

@@ -137,6 +137,9 @@ object ChannelIndex {
     private val cache = mutableMapOf<String, Map<String, List<XtreamItem>>>()
     private val lock = Mutex()
 
+    /** Every live channel of the account (the index flattened). */
+    suspend fun channels(api: XtreamApi, account: XtreamAccount): List<XtreamItem> = of(api, account).values.flatten()
+
     suspend fun of(api: XtreamApi, account: XtreamAccount): Map<String, List<XtreamItem>> {
         val k = "${account.host}|${account.username}"
         lock.withLock { cache[k]?.let { return it } }
@@ -147,8 +150,35 @@ object ChannelIndex {
     }
 }
 
+/**
+ * A looser key for finding the same channel under different spellings ("beIN SPORTS 1", "beIN 1", "بي ان سبورت 1" → "bein1").
+ * Used to gather every source of one channel from all the accounts.
+ */
+fun matchKey(name: String): String {
+    // Arabic-Indic digits (١ ٢ ٣) count as 1 2 3, and tiny modifier letters ("ᴿᴬᵂ") are dropped.
+    val plain = name.map { c -> if (c in '\u0660'..'\u0669') ('0' + (c - '\u0660')) else if (c in '\u06F0'..'\u06F9') ('0' + (c - '\u06F0')) else c }
+        .filter { Character.getType(it) != Character.MODIFIER_LETTER.toInt() }.joinToString("")
+    var k = channelKey(plain)
+    k = k.replace(Regex("^بيان"), "bein").replace(Regex("^بين"), "bein").replace(Regex("^bn(?=\\d)"), "bein")
+    // Thmanyah is written many ways in provider lists: Thmanyah, Thamanya, Thamaniya, ثمانية.
+    k = k.replace(Regex("^th?a?m[ae]?n(?:iy|i|y)a?h?"), "thmanyah").replace("ثمانيه", "thmanyah")
+    return k.replace("sports", "").replace("sport", "").replace("سبورتس", "").replace("سبورت", "")
+}
+
+/** Lower is better: 4K, then FHD, HD, anything unlabelled, and SD last. */
+fun channelQualityOrder(name: String): Int {
+    val t = qualityTags(name)
+    return when {
+        "4k" in t || "8k" in t -> 0
+        "fhd" in t -> 1
+        "hd" in t || "hdr" in t -> 2
+        "sd" in t || "low" in t -> 4
+        else -> 3
+    }
+}
+
 /** Quality words in channel names ("MBC 1 4K", "MBC1 FHD", "beIN 1 RAW"). */
-private val QualityWords = listOf("4k", "uhd", "8k", "fhd", "hd", "sd", "raw", "hevc", "h265", "50fps", "60fps", "low")
+private val QualityWords = listOf("4k", "uhd", "8k", "fhd", "hd", "hdr", "sd", "raw", "hevc", "h265", "50fps", "60fps", "low")
 
 /** The quality tags of a channel name, e.g. {"4k"} or {"raw","fhd"}. */
 fun qualityTags(name: String): Set<String> {

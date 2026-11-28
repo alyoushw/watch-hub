@@ -96,6 +96,13 @@ class CloudSync(
     }
 
     private val prefs = context.getSharedPreferences("cloud", Context.MODE_PRIVATE)
+
+    /** «ملخص المشاهدات»: this device's counters go to the account, and the other devices' come back. */
+    var stats: WatchStats? = null
+        set(value) {
+            field = value
+            value?.onChange = { scheduleStatsPush() }
+        }
     private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true; encodeDefaults = true }
     private val http = OkHttpClient.Builder().callTimeout(20, TimeUnit.SECONDS).build()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -125,6 +132,7 @@ class CloudSync(
         store.onWatchChanged = { item, key, removedAt -> pushWatch(item, key, removedAt) }
         settings.onXtreamAccountsChanged = { list, at -> pushXtream(list, at) }
         settings.onKoraChanged = { pushKora() }
+        settings.onMatchPrefsChanged = { pushMatchPrefs() }
         config?.let { connect(it) }
         // Refresh the settings in the background (they rarely change; the cached copy works offline).
         scope.launch { refreshConfig() }
@@ -196,6 +204,8 @@ class CloudSync(
         if (from == to) return
         onProfileChange?.invoke()
         history.switchProfile(from, to, discardCurrent)
+        stats?.switchProfile(from, to)
+        stats?.clearRemote()
         store.switchWatchProfile(from, to, discardCurrent)
         settings.switchProfile(from, to, discardCurrent)
         prefs.edit().putString(KEY_PROFILE, to).commit()
@@ -257,6 +267,67 @@ class CloudSync(
             throw CloudException("رد غير متوقع من Google")
         }
         signInWithIdToken(GoogleIdTokenCredential.createFrom(credential.data).idToken)
+    }
+
+    // ---------- email + password ----------
+
+    /** Firebase's error for an email / password step, in plain Arabic. */
+    private fun emailMessage(e: Exception): String {
+        if (e is com.google.firebase.FirebaseNetworkException) return "تأكد من الإنترنت وجرّب"
+        return when ((e as? com.google.firebase.auth.FirebaseAuthException)?.errorCode) {
+            "ERROR_INVALID_EMAIL" -> "الإيميل مكتوب غلط"
+            "ERROR_WRONG_PASSWORD", "ERROR_INVALID_CREDENTIAL", "ERROR_USER_NOT_FOUND" ->
+                "الإيميل أو كلمة المرور غلط. لو سجّلت بـ Google قبل، اضغط «نسيت كلمة المرور» عشان تفعّل الدخول بكلمة مرور."
+            "ERROR_EMAIL_ALREADY_IN_USE" -> "هذا الإيميل مسجّل من قبل. اضغط «دخول»، أو «نسيت كلمة المرور» لو سجّلت بـ Google."
+            "ERROR_WEAK_PASSWORD" -> "كلمة المرور ضعيفة، اكتب ٦ أحرف على الأقل"
+            "ERROR_OPERATION_NOT_ALLOWED" -> "الدخول بالإيميل مو مفعّل في Firebase (Authentication ← Sign-in method ← Email/Password)"
+            "ERROR_TOO_MANY_REQUESTS" -> "محاولات كثيرة، انتظر شوي وجرّب"
+            "ERROR_USER_DISABLED" -> "هذا الحساب موقوف"
+            else -> "ما ضبط الدخول: ${e.message ?: "خطأ"}"
+        }
+    }
+
+    private fun emailAuth(): com.google.firebase.auth.FirebaseAuth =
+        auth ?: throw CloudException("إعدادات الحساب ما وصلت من موقعك بعد")
+
+    /** Email + password. Same account as Google when the email is the same, so the data follows you. */
+    suspend fun signInWithEmail(email: String, password: String) {
+        val mail = email.trim()
+        if (mail.isEmpty()) throw CloudException("اكتب الإيميل")
+        if (password.isEmpty()) throw CloudException("اكتب كلمة المرور")
+        try {
+            emailAuth().signInWithEmailAndPassword(mail, password).await()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.w(TAG, "email sign-in failed", e)
+            throw CloudException(emailMessage(e))
+        }
+    }
+
+    suspend fun signUpWithEmail(email: String, password: String) {
+        val mail = email.trim()
+        if (mail.isEmpty()) throw CloudException("اكتب الإيميل")
+        if (password.isEmpty()) throw CloudException("اكتب كلمة المرور")
+        try {
+            emailAuth().createUserWithEmailAndPassword(mail, password).await()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.w(TAG, "email sign-up failed", e)
+            throw CloudException(emailMessage(e))
+        }
+    }
+
+    /** Mails a link to set a new password (this also switches password sign-in on for an account that only used Google). */
+    suspend fun sendPasswordReset(email: String) {
+        val mail = email.trim()
+        if (mail.isEmpty()) throw CloudException("اكتب إيميلك أول")
+        try {
+            emailAuth().sendPasswordResetEmail(mail).await()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.w(TAG, "password reset failed", e)
+            throw CloudException(emailMessage(e))
+        }
     }
 
     /** TV (or any device): asks the web app for a code to enter at google.com/device. */
@@ -397,13 +468,152 @@ class CloudSync(
         }
     }
 
+    // ---------- watch statistics ----------
+
+    private var statsJob: Job? = null
+
+    /** The counters change every few seconds while playing: upload at most once in a while. */
+    private fun scheduleStatsPush() {
+        if (userDoc() == null || statsJob?.isActive == true) return
+        statsJob = scope.launch {
+            delay(STATS_EVERY_MS)
+            pushStats()
+        }
+    }
+
+    private fun pushStats() {
+        val s = stats ?: return
+        val ref = userDoc()?.collection("stats")?.document(s.deviceId) ?: return
+        ref.set(mapOf("json" to s.exportMine(), "updatedAt" to System.currentTimeMillis(), "device" to deviceName))
+            .addOnFailureListener { Log.w(TAG, "stats push failed", it) }
+    }
+
     // ---------- syncing ----------
 
     private fun userDoc() = uid?.let { db?.collection("users")?.document(it) }
 
+    // ---------- admin (the owner's account only; Firestore rules enforce it too) ----------
+
+    private val _openReports = MutableStateFlow(0)
+    /** Problem reports nobody marked «تم» yet (the owner's account only). */
+    val openReports: StateFlow<Int> = _openReports.asStateFlow()
+
+    data class AdminUser(val uid: String, val email: String?, val name: String?, val lastSeen: Long, val device: String?, val photo: String? = null)
+
+    /** True for the owner's account. The real lock is in firestore.rules; this only shows the page. */
+    val isAdmin: Boolean
+        get() = (state.value as? State.SignedIn)?.email.equals(ADMIN_EMAIL, ignoreCase = true)
+
+    /** Every person who opened the app since profiles were added, newest first. */
+    suspend fun adminUsers(): List<AdminUser> {
+        val docs = db?.collection("users")?.get()?.await()?.documents.orEmpty()
+        return docs.mapNotNull { d ->
+            if (d.getString("email") == null && d.getLong("lastSeen") == null) return@mapNotNull null
+            AdminUser(d.id, d.getString("email"), d.getString("name"), d.getLong("lastSeen") ?: 0, d.getString("device"), d.getString("photo"))
+        }.sortedByDescending { it.lastSeen }
+    }
+
+    /** One person's history as they see it (newest first, removed entries left out). */
+    suspend fun adminHistory(uid: String): List<WatchEntry> {
+        val docs = db?.collection("users")?.document(uid)?.collection("history")?.get()?.await()?.documents.orEmpty()
+        return docs.filter { it.getBoolean("deleted") != true }.mapNotNull { it.toEntry() }.sortedByDescending { it.updatedAt }
+    }
+
+    /** Everything in one person's account except the history, as it is stored. */
+    data class AdminProfile(
+        val list: List<WatchItem>,
+        val accounts: List<XtreamAccount>,
+        val koraUrl: String?,
+        val vipUser: String?,
+        val vipPass: String?,
+        val devices: List<String>,
+        val byKind: Map<String, Long>,
+        val topTitles: List<Pair<String, Long>>,
+        val finished: Int,
+    )
+
+    suspend fun adminProfile(uid: String): AdminProfile {
+        val base = db?.collection("users")?.document(uid) ?: error("no db")
+        val list = base.collection("watchlist").get().await().documents
+            .filter { it.getBoolean("deleted") != true }.mapNotNull { it.toWatchItem() }
+            .sortedByDescending { it.updatedAt }
+        val accounts = runCatching { base.collection("meta").document("xtream").get().await().toAccounts() }.getOrDefault(emptyList())
+        val kora = runCatching { base.collection("meta").document("kora").get().await() }.getOrNull()
+        val m = java.time.YearMonth.now().toString()
+        val kinds = mutableMapOf<String, Long>()
+        val titles = mutableMapOf<String, Long>()
+        val done = mutableSetOf<String>()
+        val devices = mutableListOf<String>()
+        base.collection("stats").get().await().documents.forEach { d ->
+            d.getString("device")?.let { devices += it }
+            val month = runCatching { org.json.JSONObject(d.getString("json").orEmpty()).optJSONObject(m) }.getOrNull() ?: return@forEach
+            month.optJSONObject("kind")?.let { o -> o.keys().forEach { k -> kinds.merge(k, o.optLong(k), Long::plus) } }
+            month.optJSONObject("title")?.let { o -> o.keys().forEach { k -> titles.merge(k, o.optLong(k), Long::plus) } }
+            month.optJSONArray("done")?.let { arr -> for (i in 0 until arr.length()) done += arr.optString(i) }
+        }
+        return AdminProfile(
+            list, accounts, kora?.getString("url"), kora?.getString("vipUser"), kora?.getString("vipPass"), devices.distinct(),
+            kinds, titles.entries.sortedByDescending { it.value }.take(5).map { it.key to it.value }, done.size,
+        )
+    }
+
+    /** Removes entries from that person's account (their devices drop them on the next sync). */
+    suspend fun adminRemove(uid: String, keys: List<String>) {
+        val col = db?.collection("users")?.document(uid)?.collection("history") ?: return
+        val at = System.currentTimeMillis()
+        keys.forEach { col.document(docId(it)).set(mapOf("key" to it, "deleted" to true, "updatedAt" to at)).await() }
+    }
+
+    // ---- problem reports (anyone signed in sends; only the owner reads)
+
+    data class Report(val id: String, val uid: String, val email: String?, val name: String?, val text: String,
+        val problem: String?, val device: String?, val version: String?, val at: Long, val done: Boolean,
+        val place: String? = null, val targetType: String? = null, val targetId: Int? = null)
+
+    /** The last playback failure on this device, attached to the next report so nobody has to describe it. */
+    fun noteProblem(text: String) {
+        prefs.edit().putString("last_problem", text).putLong("last_problem_at", System.currentTimeMillis()).apply()
+    }
+
+    fun lastProblem(): String? {
+        val at = prefs.getLong("last_problem_at", 0)
+        return prefs.getString("last_problem", null)?.takeIf { System.currentTimeMillis() - at < 24 * 3600_000 }
+    }
+
+    suspend fun sendReport(text: String, withProblem: Boolean, place: String? = null, targetType: String? = null, targetId: Int? = null) {
+        val u = auth?.currentUser ?: throw CloudException("سجّل دخولك أول عشان توصل رسالتك")
+        val col = db?.collection("reports") ?: throw CloudException("الخدمة مب جاهزة")
+        col.add(mapOf(
+            "uid" to u.uid, "email" to u.email, "name" to u.displayName, "text" to text.trim(),
+            "problem" to if (withProblem) lastProblem() else null,
+            "device" to deviceName, "version" to com.alyoushw.watchhub.BuildConfig.VERSION_NAME,
+            "at" to System.currentTimeMillis(), "done" to false,
+            "place" to place, "targetType" to targetType, "targetId" to targetId,
+        )).await()
+    }
+
+    suspend fun adminReports(): List<Report> =
+        db?.collection("reports")?.get()?.await()?.documents.orEmpty().map { d ->
+            Report(d.id, d.getString("uid").orEmpty(), d.getString("email"), d.getString("name"), d.getString("text").orEmpty(),
+                d.getString("problem"), d.getString("device"), d.getString("version"), d.getLong("at") ?: 0, d.getBoolean("done") == true,
+                d.getString("place"), d.getString("targetType"), d.getLong("targetId")?.toInt())
+        }.sortedByDescending { it.at }
+
+    suspend fun adminReportDone(id: String, done: Boolean) { db?.collection("reports")?.document(id)?.update("done", done)?.await() }
+    suspend fun adminReportDelete(id: String) { db?.collection("reports")?.document(id)?.delete()?.await() }
+
+    private fun pushProfile(base: com.google.firebase.firestore.DocumentReference) {
+        val u = auth?.currentUser ?: return
+        base.set(
+            mapOf("email" to u.email, "name" to u.displayName, "lastSeen" to System.currentTimeMillis(), "device" to deviceName, "photo" to u.photoUrl?.toString()),
+            SetOptions.merge(),
+        ).addOnFailureListener { Log.w(TAG, "profile push failed", it) }
+    }
+
     private fun startSyncing(uid: String) {
         stopListening()
         val base = db?.collection("users")?.document(uid) ?: return
+        pushProfile(base)
         scope.launch {
             try {
                 // 1) First meeting: send what only this device has (or has newer), take the rest.
@@ -411,6 +621,7 @@ class CloudSync(
                 mergeWatchlist(base.collection("watchlist").get().await().documents)
                 mergeXtream(base.collection("meta").document("xtream").get().await())
                 mergeKora(base.collection("meta").document("kora").get().await())
+                mergeMatchPrefs(base.collection("meta").document("matches").get().await())
                 applyMarks(base.collection("meta").document("seriesMarks").get().await())
                 marks?.seriesKeys()?.takeIf { it.isNotEmpty() }?.let(::pushMarks)
                 history.mergeHidden(hiddenOf(base.collection("meta").document("continueHidden").get().await()))
@@ -425,6 +636,27 @@ class CloudSync(
             }
             if (this@CloudSync.uid != uid) return@launch
             // 2) From now on, every change from another device arrives within a second or so.
+            pushStats()
+            if (isAdmin) {
+                // The owner is told inside the app when someone sends a problem report.
+                val startedAt = System.currentTimeMillis()
+                listeners += db?.collection("reports")?.whereEqualTo("done", false)?.addSnapshotListener { snap, e ->
+                    if (e != null || snap == null) return@addSnapshotListener
+                    _openReports.value = snap.size()
+                    val fresh = snap.documentChanges.count {
+                        it.type == com.google.firebase.firestore.DocumentChange.Type.ADDED && (it.document.getLong("at") ?: 0) > startedAt - 5_000
+                    }
+                    if (fresh > 0) android.widget.Toast.makeText(context, "📨 وصلك بلاغ جديد من مستخدم (لوحة المدير)", android.widget.Toast.LENGTH_LONG).show()
+                }.let { listOfNotNull(it) }.orEmpty()
+            }
+            listeners += base.collection("stats").addSnapshotListener { snap, e ->
+                if (e != null || snap == null) return@addSnapshotListener
+                snap.documentChanges.forEach { change ->
+                    val id = change.document.id
+                    if (change.type == com.google.firebase.firestore.DocumentChange.Type.REMOVED) stats?.setRemote(id, null)
+                    else stats?.setRemote(id, change.document.getString("json"))
+                }
+            }
             listeners += base.collection("history").addSnapshotListener { snap, e ->
                 if (e != null || snap == null || snap.metadata.hasPendingWrites()) return@addSnapshotListener
                 var any = false
@@ -451,6 +683,10 @@ class CloudSync(
             listeners += base.collection("meta").document("kora").addSnapshotListener { snap, e ->
                 if (e != null || snap == null || snap.metadata.hasPendingWrites()) return@addSnapshotListener
                 applyKora(snap)
+            }
+            listeners += base.collection("meta").document("matches").addSnapshotListener { snap, e ->
+                if (e != null || snap == null || snap.metadata.hasPendingWrites()) return@addSnapshotListener
+                applyMatchPrefs(snap)
             }
             listeners += base.collection("meta").document("seriesMarks").addSnapshotListener { snap, e ->
                 if (e != null || snap == null || snap.metadata.hasPendingWrites()) return@addSnapshotListener
@@ -511,6 +747,8 @@ class CloudSync(
     private fun applyKora(doc: DocumentSnapshot) {
         if (!doc.exists()) return
         doc.getString("url")?.let { settings.setKoraUrlFromCloud(it, doc.getLong("urlAt") ?: 0) }
+        val vipUser = doc.getString("vipUser")
+        if (vipUser != null) settings.setKoraVipFromCloud(vipUser, doc.getString("vipPass").orEmpty(), doc.getLong("vipAt") ?: 0)
     }
 
     private suspend fun mergeKora(doc: DocumentSnapshot) {
@@ -518,13 +756,41 @@ class CloudSync(
         // Send what this device has that the cloud is missing or older than.
         val urlNewer = settings.koraUrl.value.isNotBlank() && settings.koraUrlUpdatedAt > (doc.getLong("urlAt") ?: 0)
         val urlMissing = settings.koraUrl.value.isNotBlank() && doc.getString("url").isNullOrBlank()
-        if (urlNewer || urlMissing) pushKora()
+        val vipNewer = settings.koraVipUser.value.isNotBlank() && settings.koraVipUpdatedAt > (doc.getLong("vipAt") ?: 0)
+        val vipMissing = settings.koraVipUser.value.isNotBlank() && doc.getString("vipUser").isNullOrBlank()
+        if (urlNewer || urlMissing || vipNewer || vipMissing) pushKora()
+    }
+
+    private fun applyMatchPrefs(doc: DocumentSnapshot) {
+        if (!doc.exists()) return
+        val at = doc.getLong("at") ?: return
+        fun set(k: String) = doc.getString(k).orEmpty().split(',').filter { it.isNotBlank() }.toSet()
+        settings.setMatchPrefsFromCloud(set("leagues"), set("teams"), at)
+    }
+
+    private fun mergeMatchPrefs(doc: DocumentSnapshot) {
+        applyMatchPrefs(doc)
+        val newer = settings.matchPrefsUpdatedAt > (doc.getLong("at") ?: 0)
+        if (newer) pushMatchPrefs()
+    }
+
+    private fun pushMatchPrefs() {
+        val ref = userDoc()?.collection("meta")?.document("matches") ?: return
+        val data = mapOf(
+            "leagues" to settings.matchLeagues.value.joinToString(","),
+            "teams" to settings.matchTeams.value.joinToString(","),
+            "at" to settings.matchPrefsUpdatedAt,
+        )
+        scope.launch { runCatching { ref.set(data).await() }.onFailure { Log.w(TAG, "match prefs sync failed", it) } }
     }
 
     private fun pushKora() {
         val ref = userDoc()?.collection("meta")?.document("kora") ?: return
         val data = buildMap<String, Any> {
             settings.koraUrl.value.takeIf { it.isNotBlank() }?.let { put("url", it); put("urlAt", settings.koraUrlUpdatedAt) }
+            settings.koraVipUser.value.takeIf { it.isNotBlank() }?.let {
+                put("vipUser", it); put("vipPass", settings.koraVipPass.value); put("vipAt", settings.koraVipUpdatedAt)
+            }
         }
         if (data.isEmpty()) return
         scope.launch { runCatching { ref.set(data, SetOptions.merge()).await() }.onFailure { Log.w(TAG, "kora sync failed", it) } }
@@ -602,7 +868,13 @@ class CloudSync(
 
     private suspend fun mergeHistory(remote: List<DocumentSnapshot>) {
         val byKey = remote.associateBy { it.getString("key") }
-        remote.forEach { applyHistoryDoc(it) }
+        // All the account's entries at once (one disk write, not one per entry).
+        history.applyRemoteBatch(remote.mapNotNull { doc ->
+            val key = doc.getString("key") ?: return@mapNotNull null
+            val at = doc.getLong("updatedAt") ?: return@mapNotNull null
+            if (doc.getBoolean("deleted") == true) Triple(key, null, at)
+            else doc.toEntry()?.let { Triple(key, it, at) }
+        })
         val base = userDoc() ?: return
         history.entries.value.forEach { e ->
             val r = byKey[e.key]
@@ -752,14 +1024,14 @@ class CloudSync(
     // ---- Xtream accounts
 
     private fun XtreamAccount.toMap(): Map<String, Any?> =
-        mapOf("id" to id, "name" to name, "host" to host, "user" to username, "pass" to password)
+        mapOf("id" to id, "name" to name, "host" to host, "user" to username, "pass" to password, "off" to off)
 
     @Suppress("UNCHECKED_CAST")
     private fun DocumentSnapshot.toAccounts(): List<XtreamAccount> =
         (get("accounts") as? List<Map<String, Any?>>).orEmpty().mapNotNull { m ->
             val host = m["host"] as? String ?: return@mapNotNull null
             val user = m["user"] as? String ?: return@mapNotNull null
-            XtreamAccount(host, user, m["pass"] as? String ?: "", XtreamAccount.stableId(host, user), m["name"] as? String ?: "")
+            XtreamAccount(host, user, m["pass"] as? String ?: "", XtreamAccount.stableId(host, user), m["name"] as? String ?: "", m["off"] as? Boolean ?: false)
         }
 
     private fun applyXtreamDoc(doc: DocumentSnapshot) {
@@ -792,9 +1064,11 @@ class CloudSync(
 
     private companion object {
         const val TAG = "CloudSync"
+        const val ADMIN_EMAIL = "alyoushw@gmail.com"
         const val APP_NAME = "watchhub"
         const val KEY_CONFIG = "config"
         const val KEY_PROFILE = "profile"
+        const val STATS_EVERY_MS = 20_000L
         const val GUEST = "guest"
         const val PROGRESS_EVERY_MS = 10_000L
     }

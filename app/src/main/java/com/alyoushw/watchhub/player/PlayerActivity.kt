@@ -66,6 +66,7 @@ class PlayerActivity : ComponentActivity() {
     private var queue: List<QueueItem> = emptyList()
     private var position = 0
     private var urlIndex = 0
+    private val reportCtx = androidx.compose.runtime.mutableStateOf<com.alyoushw.watchhub.ui.ReportContext?>(null)
     private var resolveJob: Job? = null
     private var activeSourceUri: String? = null
     @Volatile private var sourceHttpHeaders: Pair<String, Map<String, String>>? = null
@@ -243,7 +244,8 @@ class PlayerActivity : ComponentActivity() {
                     // The real reason (HTTP code, codec, timeout) so a device-specific failure can be reported.
                     val http = (error.cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
                     val detail = http?.let { "رد السيرفر $it" } ?: error.errorCodeName
-                    Toast.makeText(this@PlayerActivity, "ما قدرنا نشغّل «${entry?.title.orEmpty()}» ($detail)", Toast.LENGTH_LONG).show()
+                    runCatching { (application as com.alyoushw.watchhub.WatchHubApp).container.cloud.noteProblem("ما اشتغل «${entry?.title.orEmpty()}» ${entry?.subtitle.orEmpty()} · $detail") }
+                    Toast.makeText(this@PlayerActivity, "ما قدرنا نشغّل «${entry?.title.orEmpty()}» ($detail) — من الإعدادات تقدر ترسل المشكلة للمدير", Toast.LENGTH_LONG).show()
                 }
             }
 
@@ -290,6 +292,8 @@ class PlayerActivity : ComponentActivity() {
         onBackPressedDispatcher.addCallback(this, filterBack)
 
         setContent {
+            // TV: the keyboard opens only after OK on a text box (the subtitle link box).
+            com.alyoushw.watchhub.ui.TvKeyboardGate {
             WatchHubTheme(forceDark = true) {
                 Box {
                 PlayerScreen(
@@ -310,6 +314,17 @@ class PlayerActivity : ComponentActivity() {
                     onAttachSubtitleFile = ::attachSubtitleFile,
                     onDismissSlow = { session.slowNet = null },
                     onPlayNow = ::playNowAfterPreload,
+                    onReport = { info ->
+                        val e = entry
+                        if (e != null) {
+                            val sec = player.currentPosition / 1000
+                            val base = com.alyoushw.watchhub.ui.reportContextFor(e, "المشغّل")
+                            val details = info?.rows?.joinToString("، ") { (k, v) -> "$k $v" }.orEmpty()
+                            reportCtx.value = base.copy(place = base.place + " · عند %d:%02d".format(sec / 60, sec % 60) +
+                                (if (details.isNotBlank()) " · $details" else "") +
+                                (current?.urls?.getOrNull(urlIndex)?.let { u -> " · " + (runCatching { android.net.Uri.parse(u).host }.getOrNull() ?: "") }.orEmpty()))
+                        }
+                    },
                     castButton = phoneCast?.let { controller ->
                         val button: @Composable () -> Unit = { PhoneCastButton(controller) }
                         button
@@ -323,7 +338,9 @@ class PlayerActivity : ComponentActivity() {
                     },
                 )
                 phoneCast?.let { PhoneCastPanel(it) }
+                reportCtx.value?.let { c -> com.alyoushw.watchhub.ui.ReportDialog(c) { reportCtx.value = null } }
                 }
+            }
             }
         }
     }
@@ -404,7 +421,10 @@ class PlayerActivity : ComponentActivity() {
             // first (at most ~2 s; offline or signed out, this device's own copy is used).
             if (item.recordHistory) cloud.refreshEntry(e.key)
             val saved = if (item.recordHistory) history.get(e.key) else null
-            val resumeAt = saved?.takeIf { !it.isLive && !it.finished && it.positionMs > 10_000 }?.positionMs ?: 0L
+            val ownAt = saved?.takeIf { !it.isLive && !it.finished && it.positionMs > 10_000 }?.positionMs ?: 0L
+            // Also pick up where the same film/episode was left from a different source or account.
+            val crossAt = if (item.recordHistory) history.crossResumePosition(e) else 0L
+            val resumeAt = maxOf(ownAt, crossAt)
             if (item.recordHistory) history.save(e, important = true)
             setMedia(resumeAt)
             started = true
@@ -756,18 +776,18 @@ class PlayerActivity : ComponentActivity() {
         // While filtered, the sources are the list itself: offer the same ones again.
         val base = beforeFilter?.let { (q, p) -> q[p] } ?: current ?: return emptyList()
         val name = base.channel?.name ?: base.entry.title
-        val key = channelKey(name)
-        val tags = qualityTags(name)
+        val key = matchKey(name)
         val accounts = container.settings.xtreamAccounts.value.filter { it.isComplete }
+        // Every source of this channel in every account (several per account too, any quality), best picture first.
         return coroutineScope {
             accounts.map { acc ->
                 async {
-                    val map = try {
-                        ChannelIndex.of(container.xtream, acc)
+                    val channels = try {
+                        ChannelIndex.channels(container.xtream, acc)
                     } catch (x: XtreamException) {
-                        emptyMap()
+                        emptyList()
                     }
-                    map[key].orEmpty().filter { qualityTags(it.name) == tags }.map { ch ->
+                    channels.filter { matchKey(it.name) == key }.map { ch ->
                         ChannelSource(
                             ch.name,
                             acc.label,
@@ -775,7 +795,7 @@ class PlayerActivity : ComponentActivity() {
                         )
                     }
                 }
-            }.awaitAll().flatten().filter { it.item.entry.key != base.entry.key }
+            }.awaitAll().flatten().filter { it.item.entry.key != base.entry.key }.sortedBy { channelQualityOrder(it.label) }
         }
     }
 

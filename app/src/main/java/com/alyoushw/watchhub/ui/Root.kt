@@ -35,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -76,6 +77,7 @@ private fun NavHostController.switchTab(route: String) = navigate(route) {
     launchSingleTop = true
 }
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
     val container = appContainer()
@@ -86,6 +88,10 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
             container.watchNextRequest.value = null
         }
     }
+    val openAdmin by container.openAdmin.collectAsStateWithLifecycle()
+    androidx.compose.runtime.LaunchedEffect(openAdmin) { if (openAdmin) nav.switchTab(Tab.SETTINGS.route) }
+    val openMatchSettings by container.openMatchSettings.collectAsStateWithLifecycle()
+    androidx.compose.runtime.LaunchedEffect(openMatchSettings) { if (openMatchSettings) nav.switchTab(Tab.SETTINGS.route) }
     val backStack by nav.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
 
@@ -100,6 +106,12 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
     val xtream by appContainer().settings.xtream.collectAsStateWithLifecycle()
     // The YouTube tab once it is switched on (Settings › يوتيوب).
     val youtube by appContainer().settings.youtubeEnabled.collectAsStateWithLifecycle()
+    // Build the live-TV folder tree quietly in the background so «المباشر» opens instantly, even
+    // though it is rarely opened; it refreshes by itself when the cached tree gets old.
+    val savedXtream by container.settings.xtreamAccounts.collectAsStateWithLifecycle()
+    androidx.compose.runtime.LaunchedEffect(savedXtream) {
+        warmFolderCache(container.xtream, savedXtream.filter { it.isComplete } + com.alyoushw.watchhub.data.FourU.account, this, container.liveFolderCache)
+    }
     var homeLive by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     // Live channels fill the screen: no bottom bar or side rail (TVs keep the rail for the remote).
     val fullLive = homeLive && currentRoute == Tab.HOME.route
@@ -152,7 +164,11 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
             NavigationRail(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 tabs.forEach { tab ->
                     NavigationRailItem(
-                    modifier = Modifier.focusFrame(),
+                    modifier = Modifier
+                        // On the home page «left» from the rail's first item goes to the home tabs (the chosen
+                        // one), not to whichever banner button happens to be nearest.
+                        .then(if (tab == Tab.HOME && currentRoute == Tab.HOME.route) Modifier.focusProperties { left = HomeTabsFocus } else Modifier)
+                        .focusFrame(),
                         selected = currentRoute == tab.route,
                         onClick = { nav.switchTab(tab.route) },
                         icon = { Icon(tab.icon, contentDescription = null) },
@@ -211,11 +227,16 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
             }
             composable(Tab.SUBSCRIPTIONS.route) { SubscriptionsScreen() }
             composable(Tab.KORA.route) {
-                val koraUrl by appContainer().settings.koraUrl.collectAsStateWithLifecycle()
-                KoraScreen(homeUrl = koraUrl.ifBlank { KORA_HOME }, kora = true, onBack = { nav.switchTab(Tab.HOME.route) })
+                val settings = appContainer().settings
+                val koraUrl by settings.koraUrl.collectAsStateWithLifecycle()
+                val vipUser by settings.koraVipUser.collectAsStateWithLifecycle()
+                val vipPass by settings.koraVipPass.collectAsStateWithLifecycle()
+                val resolved = koraUrl.ifBlank { KORA_HOME }
+                val autoLogin = if (resolved == KORA_VIP && vipUser.isNotBlank()) vipUser to vipPass else null
+                KoraScreen(homeUrl = resolved, kora = true, autoLogin = autoLogin, onBack = { nav.switchTab(Tab.HOME.route) })
             }
             composable(Tab.YOUTUBE.route) { YouTubeLauncher() }
-            composable(Tab.SETTINGS.route) { SettingsScreen(onOpenXtream = { nav.switchTab(Tab.XTREAM.route) }, onOpenHistory = { nav.navigate("watch-history") }) }
+            composable(Tab.SETTINGS.route) { SettingsScreen(onOpenXtream = { nav.switchTab(Tab.XTREAM.route) }, onOpenHistory = { nav.navigate("watch-history") }, onOpenTitle = { t, i -> nav.openDetail(t, i) }) }
             composable("watch-history") { WatchHistoryScreen(onBack = { nav.popBackStack() }) }
             composable(Tab.XTREAM.route) {
                 XtreamScreen(
@@ -258,6 +279,7 @@ fun WatchHubRoot(nav: NavHostController = rememberNavController()) {
                         id = id,
                         onBack = { nav.popBackStack() },
                         onOpen = { t, i -> nav.openDetail(t, i) },
+                        onOpenXtreamSeries = { sid -> nav.navigate("xtream/series/${Uri.encode(sid)}") },
                     )
                 } else {
                     DetailScreen(

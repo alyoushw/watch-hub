@@ -31,8 +31,13 @@ data class XtreamAccount(
     val password: String,
     val id: String = "",
     val name: String = "",
+    /** Switched off by the owner: kept (to edit or switch on again) but not used anywhere. */
+    val off: Boolean = false,
 ) {
-    val isComplete: Boolean get() = host.isNotBlank() && username.isNotBlank() && password.isNotBlank()
+    /** The three login fields are filled in. */
+    val hasLogin: Boolean get() = host.isNotBlank() && username.isNotBlank() && password.isNotBlank()
+    /** Usable: filled in and not switched off. */
+    val isComplete: Boolean get() = hasLogin && !off
 
     /** What to call it on buttons: the user's name for it, else the server's host. */
     val label: String get() = name.ifBlank { host.substringAfter("://").substringBefore("/") }
@@ -136,6 +141,7 @@ data class XtreamAccountInfo(
 )
 
 /** The three kinds of content an Xtream Codes account has. */
+@kotlinx.serialization.Serializable
 enum class XtreamKind(val label: String, val categoriesAction: String, val listAction: String, val pathSegment: String) {
     LIVE("مباشر", "get_live_categories", "get_live_streams", "live"),
     MOVIE("الأفلام", "get_vod_categories", "get_vod_streams", "movie"),
@@ -145,6 +151,7 @@ enum class XtreamKind(val label: String, val categoriesAction: String, val listA
 data class XtreamCategory(val id: String, val name: String)
 
 /** A channel, a film or a series in the account. */
+@kotlinx.serialization.Serializable
 data class XtreamItem(
     val kind: XtreamKind,
     val id: String,
