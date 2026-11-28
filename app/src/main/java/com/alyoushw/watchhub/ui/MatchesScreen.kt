@@ -3,7 +3,6 @@ package com.alyoushw.watchhub.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import com.alyoushw.watchhub.data.MatchTv
-import androidx.compose.runtime.produceState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -280,11 +279,12 @@ private fun MatchRow(m: LiveMatch, favIds: Set<String>, onDetails: () -> Unit, o
                 TeamLogo(m.awayLogo, m.away, 30.dp)
             }
         }
-        val line by produceState<String?>(null, m.id) {
-            // Refreshed every 15 minutes while the match is still ahead; the last good value stays if a refresh fails.
+        var line by remember(m.id) { mutableStateOf<String?>(null) }
+        LaunchedEffect(m.id) {
+            // Refreshed every 15 minutes; the last good value stays if a refresh fails.
             while (true) {
                 val fresh = MatchTv.line(m)
-                if (fresh != null) value = fresh
+                if (fresh != null) line = fresh
                 kotlinx.coroutines.delay(15 * 60_000L)
             }
         }
