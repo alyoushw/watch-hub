@@ -149,6 +149,45 @@ function footballBudgetLeft(): number {
   return Math.max(0, FOOTBALL_DAILY - footballUsed);
 }
 
+
+// ---- TV channels per match (Yallakora's public match centre), shared cache, refreshed at most every 15 minutes ----
+type TvRow = { id: string; home: string; away: string; kickoff: number; channels: string[] };
+const tvCache = new Map<string, { at: number; rows: TvRow[] }>();
+function cairoToUtc(day: string, hm: string): number {
+  const [y, mo, d] = day.split("-").map(Number); const [h, mi] = hm.split(":").map(Number);
+  const guess = Date.UTC(y, mo - 1, d, h, mi);
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Africa/Cairo", hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).formatToParts(new Date(guess));
+  const g = (t: string) => Number(parts.find((x) => x.type === t)!.value);
+  return guess - (Date.UTC(g("year"), g("month") - 1, g("day"), g("hour"), g("minute")) - guess);
+}
+async function tvDay(url: URL): Promise<Response> {
+  const day = url.searchParams.get("date") || "";
+  const hdr = { "content-type": "application/json; charset=utf-8", "access-control-allow-origin": "*" };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || Math.abs(Date.parse(day) - Date.now()) > 8 * 86400_000) return new Response(JSON.stringify({ error: "bad date" }), { status: 400, headers: hdr });
+  const hit = tvCache.get(day);
+  if (hit && Date.now() - hit.at < 15 * 60_000) return new Response(JSON.stringify({ source: "yallakora.com", updated: hit.at, rows: hit.rows }), { headers: hdr });
+  try {
+    const [y, m, d] = day.split("-");
+    const r = await fetch(`https://www.yallakora.com/matches-center?date=${m}/${d}/${y}`, { headers: { "user-agent": "WatchHub/1.0 (personal app; cached 15 min)", "accept-language": "ar" } });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const html = await r.text();
+    const rows: TvRow[] = [];
+    for (const it of html.split("<div liveScoreMatchId=").slice(1)) {
+      const id = (it.match(/^"(\d+)"/) || [])[1];
+      const names = [...it.matchAll(/<p>([^<]+)<\/p>/g)].map((x) => x[1].replace(/\s+/g, " ").trim()).filter(Boolean);
+      const time = (it.match(/class="time"[^>]*>\s*(\d{1,2}:\d{2})/) || [])[1];
+      const channels = [...it.matchAll(/class="channel icon-channel">([^<]*)</g)].map((x) => x[1].trim()).filter(Boolean);
+      if (id && names.length >= 2 && time) rows.push({ id, home: names[0], away: names[1], kickoff: cairoToUtc(day, time), channels });
+    }
+    if (!rows.length) throw new Error("no matches parsed");
+    tvCache.set(day, { at: Date.now(), rows });
+    return new Response(JSON.stringify({ source: "yallakora.com", updated: Date.now(), rows }), { headers: hdr });
+  } catch (e) {
+    if (hit) return new Response(JSON.stringify({ source: "yallakora.com", updated: hit.at, stale: true, rows: hit.rows }), { headers: hdr });
+    return new Response(JSON.stringify({ error: String(e) }), { status: 502, headers: hdr });
+  }
+}
+
 async function footballProxy(url: URL): Promise<Response> {
   const json = (status: number, obj: unknown, extra: Record<string, string> = {}) =>
     new Response(JSON.stringify(obj), { status, headers: { ...CORS, "content-type": "application/json; charset=utf-8", ...extra } });
@@ -621,6 +660,7 @@ Deno.serve({ port }, (req) => {
   }));
   if (url.pathname.startsWith("/sources/")) return handleSources(req, url, proxy);
   if (url.pathname.startsWith("/football/")) return footballProxy(url);
+  if (url.pathname === "/tv/day") return tvDay(url);
   if (url.pathname.startsWith("/fouru/")) return fourU(req, url);
   if (url.pathname === "/proxy") return proxy(req, url);
   if (url.pathname.startsWith("/remux/")) return fail(410, "تحويل الفيديو على السيرفر متوقف. افتحه في VLC.");

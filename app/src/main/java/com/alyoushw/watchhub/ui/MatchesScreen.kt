@@ -2,7 +2,7 @@ package com.alyoushw.watchhub.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import com.alyoushw.watchhub.data.TifoApi
+import com.alyoushw.watchhub.data.MatchTv
 import androidx.compose.runtime.produceState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -280,7 +280,13 @@ private fun MatchRow(m: LiveMatch, favIds: Set<String>, onDetails: () -> Unit, o
                 TeamLogo(m.awayLogo, m.away, 30.dp)
             }
         }
-        val line by produceState<String?>(if (m.leagueSlug == "ksa.1") "ثمانية" else null, m.id) { TifoApi.line(m)?.let { value = it } }
+        val line by produceState<String?>(null, m.id) {
+            // Refreshed every 15 minutes while the match is still ahead; the last good value stays if a refresh fails.
+            while (true) {
+                MatchTv.line(m)?.let { value = it }
+                kotlinx.coroutines.delay(15 * 60_000L)
+            }
+        }
         line?.let { Text("📺 $it", Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, bottom = 10.dp), fontSize = 12.sp, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         return
     }

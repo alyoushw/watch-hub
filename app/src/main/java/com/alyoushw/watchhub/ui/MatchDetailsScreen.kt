@@ -46,6 +46,7 @@ import com.alyoushw.watchhub.data.StandingRow
 import com.alyoushw.watchhub.data.TChannel
 import com.alyoushw.watchhub.data.TLineup
 import com.alyoushw.watchhub.data.TifoApi
+import com.alyoushw.watchhub.data.MatchTv
 import com.alyoushw.watchhub.data.TifoMatch
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.aspectRatio
@@ -102,10 +103,18 @@ internal fun MatchDetailsDialog(m: LiveMatch, onSources: () -> Unit, onClub: (St
         if (tid == null) { tifoChecked = true; return@LaunchedEffect }
         while (true) {
             tifo = runCatching { TifoApi.match(tid, m.state == "in") }.getOrNull() ?: tifo
-            chans = runCatching { TifoApi.channels(tid) }.getOrDefault(chans)
             tifoChecked = true
             if (m.state == "post") break
             delay(if (m.state == "in") 30_000 else 120_000)
+        }
+    }
+    // Channels and commentators: merged from two sources and refreshed every 15 minutes (the last good value stays on an error).
+    LaunchedEffect(m.id) {
+        while (true) {
+            chans = runCatching { MatchTv.channels(m) }.getOrDefault(chans)
+            tifoChecked = true
+            if (m.state == "post") break
+            delay(15 * 60_000L)
         }
     }
     // The cover takes the two clubs' colours.
@@ -297,12 +306,8 @@ private fun InfoPane(m: LiveMatch, d: MatchDetails?, t: TifoMatch?, chans: List<
         if (chans.isNotEmpty()) chans.distinct().forEach {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(it.channel, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                Text("🎙 " + it.commentator, fontSize = 14.sp)
+                if (it.commentator.isNotBlank()) Text("🎙 " + it.commentator, fontSize = 14.sp)
             }
-        } else if (m.leagueSlug == "ksa.1") {
-            Text("قنوات ثمانية 1/2/3", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-            Text("ثمانية (التطبيق): الباقة المجانية 720p، والأساسية والمميزة مدفوعتان", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("المعلّق لم يُعلن بعد", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else Text(if (checked) "لم تُعلن القناة الناقلة والمعلّق بعد (تظهر هنا فور إعلانها)." else "نجلب…", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
