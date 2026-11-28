@@ -249,6 +249,27 @@ fun MatchesScreen(onOpenMatchSettings: () -> Unit) {
 
 @Composable
 private fun MatchRow(m: LiveMatch, favIds: Set<String>, onDetails: () -> Unit, onSources: () -> Unit, onClub: (String, String, String, String?) -> Unit) {
+    if (m.state == "pre") {
+        // Upcoming: one tap anywhere opens the match page (both teams there); a team's own page opens from inside it.
+        Row(
+            Modifier.fillMaxWidth().focusFrame(RoundedCornerShape(12.dp)).clickable(onClick = onDetails).padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TeamLogo(m.homeLogo, m.home, 30.dp)
+                Text(m.home, fontSize = 14.sp, fontWeight = if (m.homeId in favIds) FontWeight.Bold else FontWeight.Normal, color = if (m.homeId in favIds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            Column(Modifier.width(78.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(clock(m.startMs), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                if (m.leagueSlug == "ksa.1") Text("📺 ثمانية", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+                Text(m.away, fontSize = 14.sp, fontWeight = if (m.awayId in favIds) FontWeight.Bold else FontWeight.Normal, color = if (m.awayId in favIds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.End)
+                TeamLogo(m.awayLogo, m.away, 30.dp)
+            }
+        }
+        return
+    }
     Row(
         Modifier.fillMaxWidth().focusFrame(RoundedCornerShape(12.dp)).clickable(onClick = onDetails).padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
