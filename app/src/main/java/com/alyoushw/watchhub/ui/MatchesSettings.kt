@@ -109,5 +109,76 @@ fun MatchesSettingsSection() {
         }
         if (all.isNotEmpty() && shown.isEmpty()) Text("ما لقينا أندية لهذا الدوري من المصدر.", Modifier.padding(14.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
+    ReminderSettings()
     Text("المباريات تطلع للنادي في كل البطولات (الدوري والأبطال وغيرها) من اختيار واحد.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+
+/** Reminders before a match: when, for which matches, and the notification sound. */
+@Composable
+private fun ReminderSettings() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var on by remember { mutableStateOf(com.alyoushw.watchhub.data.MatchReminders.enabled(context)) }
+    var b15 by remember { mutableStateOf(com.alyoushw.watchhub.data.MatchReminders.before15(context)) }
+    var b0 by remember { mutableStateOf(com.alyoushw.watchhub.data.MatchReminders.atStart(context)) }
+    var scope by remember { mutableStateOf(com.alyoushw.watchhub.data.MatchReminders.scope(context)) }
+    var sound by remember { mutableStateOf(com.alyoushw.watchhub.data.MatchReminders.sound(context)) }
+    fun save() = com.alyoushw.watchhub.data.MatchReminders.configure(context, on, b15, b0, scope, sound)
+    val permission = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { }
+    val picker = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { r ->
+        val uri = r.data?.getParcelableExtra<android.net.Uri>(android.media.RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
+        if (r.resultCode == android.app.Activity.RESULT_OK) { sound = uri?.toString().orEmpty(); save() }
+    }
+    val soundName = remember(sound) {
+        if (sound.isBlank()) "الصوت الافتراضي" else runCatching { android.media.RingtoneManager.getRingtone(context, android.net.Uri.parse(sound)).getTitle(context) }.getOrDefault("صوت مخصص")
+    }
+
+    Text("تذكير بالمباريات", fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.padding(top = 12.dp))
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(Modifier.fillMaxWidth().focusFrame(RoundedCornerShape(12.dp)).clickable {
+            on = !on
+            if (on && android.os.Build.VERSION.SDK_INT >= 33) permission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            save()
+        }, verticalAlignment = Alignment.CenterVertically) {
+            Text("نبّهني قبل المباراة بصورتها", Modifier.weight(1f), fontWeight = FontWeight.Medium)
+            Switch(checked = on, onCheckedChange = {
+                on = it
+                if (it && android.os.Build.VERSION.SDK_INT >= 33) permission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                save()
+            })
+        }
+        if (on) {
+            Row(Modifier.fillMaxWidth().focusFrame(RoundedCornerShape(12.dp)).clickable { b15 = !b15; save() }, verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = b15, onCheckedChange = { b15 = it; save() }); Text("قبل المباراة بربع ساعة")
+            }
+            Row(Modifier.fillMaxWidth().focusFrame(RoundedCornerShape(12.dp)).clickable { b0 = !b0; save() }, verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = b0, onCheckedChange = { b0 = it; save() }); Text("وقت بداية المباراة")
+            }
+            Text("أي مباريات؟", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("teams" to "أنديتي المفضلة", "leagues" to "الدوريات كاملة", "both" to "الاثنين").forEach { (k, label) ->
+                    androidx.compose.material3.FilterChip(modifier = Modifier.focusFrame(), selected = scope == k, onClick = { scope = k; save() }, label = { Text(label) })
+                }
+            }
+            Text("صوت التنبيه: $soundName", fontSize = 14.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.material3.Button(modifier = Modifier.focusFrame(), onClick = {
+                    val i = android.content.Intent(android.media.RingtoneManager.ACTION_RINGTONE_PICKER)
+                        .putExtra(android.media.RingtoneManager.EXTRA_RINGTONE_TYPE, android.media.RingtoneManager.TYPE_NOTIFICATION)
+                        .putExtra(android.media.RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
+                        .putExtra(android.media.RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
+                        .putExtra(android.media.RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, if (sound.isBlank()) null else android.net.Uri.parse(sound))
+                    runCatching { picker.launch(i) }
+                }) { Text("غيّر الصوت") }
+                androidx.compose.material3.OutlinedButton(modifier = Modifier.focusFrame(), onClick = {
+                    runCatching {
+                        val uri = if (sound.isBlank()) android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION) else android.net.Uri.parse(sound)
+                        android.media.RingtoneManager.getRingtone(context, uri).play()
+                    }
+                }) { Text("جرّب الصوت") }
+                if (sound.isNotBlank()) androidx.compose.material3.TextButton(modifier = Modifier.focusFrame(), onClick = { sound = ""; save() }) { Text("الافتراضي") }
+            }
+            Text("التنبيه يوصلك بصورة المباراة (شعارا الفريقين بألوانهما). الدقة بحدود دقيقة أو دقيقتين، وقد تتأخر لو الجوال في توفير الطاقة.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }

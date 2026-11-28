@@ -133,5 +133,6 @@ class WatchHubApp : Application() {
         runCatching { container.updater.scheduleBackgroundChecks() }
         runCatching { com.alyoushw.watchhub.data.NewEpisodesWorker.schedule(this) }
         runCatching { com.alyoushw.watchhub.data.AdminReportsWorker.schedule(this) }
+        runCatching { com.alyoushw.watchhub.data.MatchReminders.schedule(this) }
     }
 }
