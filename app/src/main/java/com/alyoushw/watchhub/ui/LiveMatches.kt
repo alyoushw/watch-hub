@@ -81,6 +81,16 @@ internal fun MatchSourcesDialog(m: LiveMatch, onClose: () -> Unit) {
     val league = remember { ScoresApi.league(m.leagueSlug) }
     val keywords = remember { league?.keywords.orEmpty() }
     var query by remember { mutableStateOf(keywords.firstOrNull().orEmpty()) }
+    // The channel(s) that really carry this match (Tifo / Kooora / Yallakora): the search goes by that channel's number, automatically.
+    var carriers by remember { mutableStateOf<List<String>>(emptyList()) }
+    var exact by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(m.id) {
+        val list = runCatching { com.alyoushw.watchhub.data.MatchTv.channels(m) }.getOrDefault(emptyList())
+            .map { it.channel.trim() }.filter { it.isNotEmpty() && !it.startsWith("تطبيق") && !it.contains("app", true) && !it.contains("tv", true) || it.contains("beIN", true) }
+            .distinctBy { matchKey(it) }
+        carriers = list
+        if (list.isNotEmpty() && exact == null && query == keywords.firstOrNull().orEmpty()) exact = list.first()
+    }
     var all by remember { mutableStateOf<List<Source>?>(null) }
     var openKey by remember { mutableStateOf<String?>(null) }
     val allAccounts by container.settings.xtreamAccounts.collectAsStateWithLifecycle()
@@ -97,9 +107,19 @@ internal fun MatchSourcesDialog(m: LiveMatch, onClose: () -> Unit) {
     }
 
     var groups by remember { mutableStateOf<List<SourceGroup>>(emptyList()) }
-    LaunchedEffect(all, query) {
+    LaunchedEffect(all, query, exact) {
         val src = all ?: return@LaunchedEffect
         delay(250) // typing: wait for a pause
+        val ex = exact
+        if (ex != null) {
+            // Search by the broadcasting channel's own number: «beIN SPORTS 5» finds beIN 5 / BN5 / بي ان سبورت 5, never beIN 6.
+            val k = matchKey(ex)
+            groups = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                src.filter { it.key == k }.groupBy { it.key }
+                    .map { (kk, v) -> SourceGroup(kk, v.minByOrNull { channelQualityOrder(it.channel.name) }!!.channel.name, v.sortedBy { channelQualityOrder(it.channel.name) }) }
+            }
+            return@LaunchedEffect
+        }
         val q = query.trim().lowercase()
         val tokens = FAMILIES[q] ?: FAMILIES.entries.firstOrNull { it.key.equals(q, true) }?.value ?: listOf(q)
         val keys = tokens.map { matchKey(it) }.filter { it.isNotEmpty() }
@@ -119,16 +139,19 @@ internal fun MatchSourcesDialog(m: LiveMatch, onClose: () -> Unit) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (m.broadcasts.isNotEmpty()) Text("الناقلة حسب المصدر: ${m.broadcasts.joinToString("، ")}", fontSize = 12.sp)
+                if (carriers.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    carriers.forEach { c -> FilterChip(modifier = Modifier.focusFrame(), selected = exact == c, onClick = { exact = c; query = "" }, label = { Text(c) }) }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     // The channels that carry this competition here (Thmanyah: the Saudi league; beIN: the European leagues), then your own search.
-                    keywords.forEach { k -> FilterChip(modifier = Modifier.focusFrame(), selected = query.equals(k, true), onClick = { query = k }, label = { Text(if (k == "bein") "beIN" else k) }) }
+                    keywords.forEach { k -> FilterChip(modifier = Modifier.focusFrame(), selected = exact == null && query.equals(k, true), onClick = { exact = null; query = k }, label = { Text(if (k == "bein") "beIN" else k) }) }
                 }
-                OutlinedTextField(value = query, onValueChange = { query = it }, label = { Text("بحث آخر عن قناة (اختياري)") },
+                OutlinedTextField(value = query, onValueChange = { exact = null; query = it }, label = { Text("بحث آخر عن قناة (اختياري)") },
                     modifier = Modifier.fillMaxWidth().tvTextField(), keyboardOptions = tvKeyboard(), singleLine = true)
                 when {
                     accounts.isEmpty() -> Text("أضف حساب IPTV من الإعدادات أول.")
                     all == null -> Text("نجمع قنواتك…")
-                    ordered.isEmpty() -> Text("ما لقينا قناة بهذا الاسم في حساباتك.")
+                    ordered.isEmpty() -> Text(if (exact != null) "ما لقينا ${exact} في حساباتك. جرّب بحثاً آخر أو اختر قناة ثانية." else "ما لقينا قناة بهذا الاسم في حساباتك.")
                     else -> LazyColumn(Modifier.heightIn(max = 380.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(ordered, key = { it.key }) { g ->
                             Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainer)) {

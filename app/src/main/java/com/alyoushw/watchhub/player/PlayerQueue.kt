@@ -156,7 +156,7 @@ object ChannelIndex {
  */
 fun matchKey(name: String): String {
     var k = channelKey(name)
-    k = k.replace(Regex("^بيان"), "bein").replace(Regex("^بين"), "bein")
+    k = k.replace(Regex("^بيان"), "bein").replace(Regex("^بين"), "bein").replace(Regex("^bn(?=\\d)"), "bein")
     // Thmanyah is written many ways in provider lists: Thmanyah, Thamanya, Thamaniya, ثمانية.
     k = k.replace(Regex("^th?a?m[ae]?n(?:iy|i|y)a?h?"), "thmanyah").replace("ثمانيه", "thmanyah")
     return k.replace("sports", "").replace("sport", "").replace("سبورتس", "").replace("سبورت", "")
