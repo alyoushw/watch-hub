@@ -283,7 +283,8 @@ private fun MatchRow(m: LiveMatch, favIds: Set<String>, onDetails: () -> Unit, o
         val line by produceState<String?>(null, m.id) {
             // Refreshed every 15 minutes while the match is still ahead; the last good value stays if a refresh fails.
             while (true) {
-                MatchTv.line(m)?.let { value = it }
+                val fresh = MatchTv.line(m)
+                if (fresh != null) value = fresh
                 kotlinx.coroutines.delay(15 * 60_000L)
             }
         }
