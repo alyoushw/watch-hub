@@ -115,7 +115,7 @@ internal fun MatchSourcesDialog(m: LiveMatch, onClose: () -> Unit) {
             // Search by the broadcasting channel's own number: «beIN SPORTS 5» finds beIN 5 / BN5 / بي ان سبورت 5, never beIN 6.
             val k = matchKey(ex)
             groups = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                src.filter { it.key == k }.groupBy { it.key }
+                src.filter { it.key == k || (it.key.startsWith(k) && !it.key[k.length].isDigit()) }.groupBy { it.key }
                     .map { (kk, v) -> SourceGroup(kk, v.minByOrNull { channelQualityOrder(it.channel.name) }!!.channel.name, v.sortedBy { channelQualityOrder(it.channel.name) }) }
             }
             return@LaunchedEffect

@@ -155,7 +155,10 @@ object ChannelIndex {
  * Used to gather every source of one channel from all the accounts.
  */
 fun matchKey(name: String): String {
-    var k = channelKey(name)
+    // Arabic-Indic digits (١ ٢ ٣) count as 1 2 3, and tiny modifier letters ("ᴿᴬᵂ") are dropped.
+    val plain = name.map { c -> if (c in '\u0660'..'\u0669') ('0' + (c - '\u0660')) else if (c in '\u06F0'..'\u06F9') ('0' + (c - '\u06F0')) else c }
+        .filter { Character.getType(it) != Character.MODIFIER_LETTER.toInt() }.joinToString("")
+    var k = channelKey(plain)
     k = k.replace(Regex("^بيان"), "bein").replace(Regex("^بين"), "bein").replace(Regex("^bn(?=\\d)"), "bein")
     // Thmanyah is written many ways in provider lists: Thmanyah, Thamanya, Thamaniya, ثمانية.
     k = k.replace(Regex("^th?a?m[ae]?n(?:iy|i|y)a?h?"), "thmanyah").replace("ثمانيه", "thmanyah")
