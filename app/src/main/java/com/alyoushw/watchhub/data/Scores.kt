@@ -34,6 +34,9 @@ data class LiveMatch(
     /** The channels the feed says carry it, when it says (often empty or not the ones in this region). */
     val broadcasts: List<String>,
     val goals: List<GoalEvent> = emptyList(),
+    /** The feed's own (English) names, to find the same match in other sources. */
+    val homeEn: String = "",
+    val awayEn: String = "",
 )
 
 /** One goal of a match, from the feed's match details ("scoringPlay"). */
@@ -206,6 +209,7 @@ object ScoresApi {
                     clock = st?.optString("displayClock").orEmpty(),
                     startMs = runCatching { Instant.parse(e.optString("date").let { if (it.length == 17) it.dropLast(1) + ":00Z" else it }).toEpochMilli() }.getOrDefault(0L),
                     broadcasts = names.distinct(), goals = goals,
+                    homeEn = ht?.optString("displayName").orEmpty(), awayEn = at?.optString("displayName").orEmpty(),
                 ))
             }
         }

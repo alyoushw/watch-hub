@@ -115,6 +115,7 @@ fun MatchesScreen(onOpenMatchSettings: () -> Unit) {
     var failed by remember { mutableStateOf(false) }
     var sub by remember { mutableIntStateOf(0) }
     var dayOffset by remember { mutableIntStateOf(0) }
+    var statusFilter by remember { mutableIntStateOf(0) }
     var openMatch by remember { mutableStateOf<LiveMatch?>(null) }
     var detailMatch by remember { mutableStateOf<LiveMatch?>(null) }
     var club by remember { mutableStateOf<ClubRef?>(null) }
@@ -186,7 +187,7 @@ fun MatchesScreen(onOpenMatchSettings: () -> Unit) {
                     val today = LocalDate.now()
                     val matchDays = all.orEmpty().filter { mine(it) }.map { localDay(it.startMs) }.toSet()
                     LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items((0..6).toList()) { off ->
+                        items((-1..6).toList()) { off ->
                             val d = today.plusDays(off.toLong())
                             val on = off == dayOffset
                             Column(
@@ -195,11 +196,24 @@ fun MatchesScreen(onOpenMatchSettings: () -> Unit) {
                                     .clickable { dayOffset = off }.padding(vertical = 9.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                             ) {
-                                val label = when (off) { 0 -> "اليوم"; 1 -> "غداً"; else -> d.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale("ar")) }
+                                val label = when (off) { -1 -> "أمس"; 0 -> "اليوم"; 1 -> "غداً"; else -> d.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale("ar")) }
                                 Text(label, fontSize = 12.sp, color = if (on) Color(0xFF3D2A00) else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                                 Text("${d.dayOfMonth}", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = if (on) Color(0xFF1C1206) else MaterialTheme.colorScheme.onSurface)
                                 Box(Modifier.padding(top = 4.dp).size(6.dp).clip(CircleShape).background(if (d in matchDays) (if (on) Color(0xFF1C1206) else MaterialTheme.colorScheme.primary) else Color.Transparent))
                             }
+                        }
+                    }
+                }
+                item(key = "filters") {
+                    Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("الكل", "مباشر", "قادمة", "منتهية").forEachIndexed { i, t ->
+                            Text(
+                                t, fontSize = 13.sp, fontWeight = if (statusFilter == i) FontWeight.Bold else FontWeight.Medium,
+                                color = if (statusFilter == i) Color(0xFF1C1206) else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.focusFrame(CircleShape).clip(CircleShape)
+                                    .background(if (statusFilter == i) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer)
+                                    .clickable { statusFilter = i }.padding(horizontal = 14.dp, vertical = 6.dp),
+                            )
                         }
                     }
                 }
@@ -208,10 +222,12 @@ fun MatchesScreen(onOpenMatchSettings: () -> Unit) {
                     list == null -> item(key = "wait") { Text(if (failed) "تعذّر جلب المباريات (تأكد من الإنترنت)." else "نجلب المباريات…", Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     else -> {
                         val day = LocalDate.now().plusDays(dayOffset.toLong())
-                        val today = list.filter { mine(it) && localDay(it.startMs) == day }
+                        val today = list.filter { mine(it) && localDay(it.startMs) == day && when (statusFilter) { 1 -> it.state == "in"; 2 -> it.state == "pre"; 3 -> it.state == "post"; else -> true } }
                             .sortedWith(compareBy<LiveMatch> { if (it.state == "in") 0 else 1 }.thenBy { it.startMs })
                         if (today.isEmpty()) item(key = "none") { Text("ما فيه مباريات لدورياتك وأنديتك في هذا اليوم.", Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                        today.groupBy { it.leagueSlug }.forEach { (slug, rows) ->
+                        // The Saudi league and the Champions League first, then the big European leagues.
+                        val order = listOf("ksa.1", "ksa.kings.cup", "uefa.champions", "eng.1", "esp.1", "ita.1", "ger.1", "fra.1", "uefa.europa")
+                        today.groupBy { it.leagueSlug }.toList().sortedBy { (s, _) -> order.indexOf(s).let { if (it < 0) 99 else it } }.forEach { (slug, rows) ->
                             item(key = "lg-$slug") {
                                 Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceContainer)) {
                                     Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {

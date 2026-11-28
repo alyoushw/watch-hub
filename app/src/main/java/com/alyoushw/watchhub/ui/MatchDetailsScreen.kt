@@ -43,6 +43,22 @@ import com.alyoushw.watchhub.data.LiveMatch
 import com.alyoushw.watchhub.data.MatchDetails
 import com.alyoushw.watchhub.data.ScoresApi
 import com.alyoushw.watchhub.data.StandingRow
+import com.alyoushw.watchhub.data.TChannel
+import com.alyoushw.watchhub.data.TLineup
+import com.alyoushw.watchhub.data.TifoApi
+import com.alyoushw.watchhub.data.TifoMatch
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.unit.IntOffset
+import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
 
 /**
@@ -77,11 +93,42 @@ internal fun MatchDetailsDialog(m: LiveMatch, onSources: () -> Unit, onClub: (St
             delay(45_000)
         }
     }
+    // Tifo: the same match in the open feed (line-ups with pitch positions, events, statistics, channel and commentator).
+    var tifo by remember { mutableStateOf<TifoMatch?>(null) }
+    var chans by remember { mutableStateOf<List<TChannel>>(emptyList()) }
+    var tifoChecked by remember { mutableStateOf(false) }
+    LaunchedEffect(m.id) {
+        val tid = runCatching { TifoApi.find(m) }.getOrNull()
+        if (tid == null) { tifoChecked = true; return@LaunchedEffect }
+        while (true) {
+            tifo = runCatching { TifoApi.match(tid, m.state == "in") }.getOrNull() ?: tifo
+            chans = runCatching { TifoApi.channels(tid) }.getOrDefault(chans)
+            tifoChecked = true
+            if (m.state == "post") break
+            delay(if (m.state == "in") 30_000 else 120_000)
+        }
+    }
+    // The cover takes the two clubs' colours.
+    var homeColor by remember { mutableStateOf(Color(0xFF3A3028)) }
+    var awayColor by remember { mutableStateOf(Color(0xFF28303A)) }
+    LaunchedEffect(m.id) {
+        suspend fun colorOf(id: String): Color? {
+            val slug = runCatching { ScoresApi.homeSlug(id, m.leagueSlug) }.getOrDefault(m.leagueSlug)
+            val hex = runCatching { ScoresApi.teams(slug) }.getOrDefault(emptyList()).firstOrNull { it.id == id }?.colorHex ?: return null
+            return runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrNull()
+        }
+        colorOf(m.homeId)?.let { homeColor = it }
+        colorOf(m.awayId)?.let { awayColor = it }
+    }
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 item {
-                    Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                  // A cover made for each match: both clubs' colours, their crests big and faint, the competition and the time.
+                  Box(Modifier.fillMaxWidth().defaultMinSize(minHeight = 232.dp).background(Brush.horizontalGradient(listOf(homeColor.copy(alpha = 0.9f), Color(0xFF0D0C0B), awayColor.copy(alpha = 0.9f))))) {
+                    Box(Modifier.align(Alignment.CenterStart).alpha(0.14f)) { TeamLogo(m.homeLogo, m.home, 180.dp) }
+                    Box(Modifier.align(Alignment.CenterEnd).alpha(0.14f)) { TeamLogo(m.awayLogo, m.away, 180.dp) }
+                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             TextButton(modifier = Modifier.focusFrame(), onClick = onClose) { Text("‹ رجوع") }
                             ScoresApi.leagueLogos[m.leagueSlug]?.let { TeamLogo(it, "", 22.dp) }
@@ -108,6 +155,7 @@ internal fun MatchDetailsDialog(m: LiveMatch, onSources: () -> Unit, onClub: (St
                             if (info.isNotBlank()) Text(info, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
                         }
                     }
+                  }
                 }
                 item {
                     Button(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth().focusFrame(), onClick = onSources) { Text("▶ شاهد · اختر المصدر") }
@@ -126,14 +174,25 @@ internal fun MatchDetailsDialog(m: LiveMatch, onSources: () -> Unit, onClub: (St
                     }
                 }
                 val x = d
-                if (tab == 0) item { InfoPane(m, x) }
-                else if (tab == 1) item { TeamsPane(m, x, homeRow, awayRow, homeLast, awayLast, onClub) }
-                else if (x == null) {
-                    item { Text(if (loaded) "ما قدرنا نجيب تفاصيل المباراة من المصدر." else "نجلب التفاصيل…", Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                } else when (tab) {
-                    2 -> item { StatsPane(m, x) }
-                    3 -> item { EventsPane(m, x) }
-                    else -> item { LineupsPane(x) }
+                if (tab == 0) item { InfoPane(m, x, tifo, chans, tifoChecked) }
+                else if (tab == 1) item { TeamsPane(m, x, homeRow, awayRow, homeLast, awayLast, onClub, tifo) }
+                else if (tab == 2) item {
+                    if (tifo?.stats?.isNotEmpty() == true) TifoStatsPane(tifo!!) else if (x != null) StatsPane(m, x)
+                    else Text(if (loaded) "ما قدرنا نجيب الإحصائيات من المصدر." else "نجلب التفاصيل…", Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                else if (tab == 3) item {
+                    if (tifo?.events?.isNotEmpty() == true) TifoEventsPane(m, tifo!!) else if (x != null) EventsPane(m, x)
+                    else Text(if (loaded) "ما فيه أحداث بعد." else "نجلب التفاصيل…", Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                else item { LineupsTab(m, tifo, x) }
+                item {
+                    // Tifo's terms: a visible link to the source next to its numbers.
+                    val ctx = androidx.compose.ui.platform.LocalContext.current
+                    Text(
+                        "بيانات إضافية من " + TifoApi.SITE, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.fillMaxWidth().clickable { runCatching { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://" + TifoApi.SITE)).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) } }.padding(8.dp),
+                        textAlign = TextAlign.Center,
+                    )
                 }
             }
         }
@@ -218,24 +277,29 @@ private fun PlayerLine(number: String, name: String, pos: String) {
 }
 
 @Composable
-private fun InfoPane(m: LiveMatch, d: MatchDetails?) {
-    // The feed does not say which channel carries a match: the competition's usual broadcaster is shown (the number is yours to pick in the sources).
-    val channel = when {
-        m.leagueSlug.startsWith("ksa.") -> "ثمانية"
-        m.leagueSlug.startsWith("afc.") -> "ثمانية أو beIN SPORTS"
-        else -> "beIN SPORTS"
-    }
+private fun InfoPane(m: LiveMatch, d: MatchDetails?, t: TifoMatch?, chans: List<TChannel>, checked: Boolean) {
     val date = java.time.format.DateTimeFormatter.ofPattern("EEEE d MMMM yyyy", java.util.Locale("ar")).format(java.time.Instant.ofEpochMilli(m.startMs).atZone(java.time.ZoneId.systemDefault()))
     Card2 {
-        listOf(
-            "البطولة" to m.league, "الفريق المضيف" to m.home, "الفريق الضيف" to m.away, "التاريخ" to date,
-            "الساعة" to clock(m.startMs), "الملعب" to (d?.venue ?: "—"), "القناة الناقلة (حسب الدوري)" to channel,
+        listOfNotNull(
+            "البطولة" to m.league, t?.roundAr?.let { "الجولة" to it }, "الفريق المضيف" to m.home, "الفريق الضيف" to m.away, "التاريخ" to date,
+            "الساعة" to clock(m.startMs), "الملعب" to (t?.venue ?: d?.venue ?: "—"),
+            t?.referee?.let { "الحكم" to it }, (t?.attendance ?: d?.attendance?.toIntOrNull())?.let { "الحضور" to it.toString() },
         ).forEach { (k, v) ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(k, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(v, fontWeight = FontWeight.Bold, fontSize = 14.sp, textAlign = TextAlign.End, modifier = Modifier.weight(1f).padding(start = 12.dp))
             }
         }
+    }
+    // The channels and commentators come from Tifo's TV table. Nothing is guessed: until they are announced it says so.
+    Card2 {
+        Text("القنوات الناقلة والمعلّقون", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        if (chans.isNotEmpty()) chans.distinct().forEach {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(it.channel, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                Text("🎙 " + it.commentator, fontSize = 14.sp)
+            }
+        } else Text(if (checked) "لم تُعلن القناة الناقلة والمعلّق بعد (تظهر هنا فور إعلانها)." else "نجلب…", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -257,12 +321,13 @@ private fun predict(h: StandingRow?, a: StandingRow?, hForm: List<String>, aForm
 }
 
 @Composable
-private fun TeamsPane(m: LiveMatch, d: MatchDetails?, hr: StandingRow?, ar: StandingRow?, hLast: LiveMatch?, aLast: LiveMatch?, onClub: (String, String, String, String?) -> Unit) {
+private fun TeamsPane(m: LiveMatch, d: MatchDetails?, hr: StandingRow?, ar: StandingRow?, hLast: LiveMatch?, aLast: LiveMatch?, onClub: (String, String, String, String?) -> Unit, t: TifoMatch?) {
     fun pill(res: String): Pair<String, Color> = when (res) { "W" -> "ف" to Color(0xFF2F9E6B); "L" -> "خ" to Color(0xFFD04A4F); else -> "ت" to Color(0xFF7B7368) }
     val hForm = d?.form?.get(m.homeId).orEmpty(); val aForm = d?.form?.get(m.awayId).orEmpty()
-    predict(hr, ar, hForm, aForm)?.let { (ph, pd, pa) ->
+    (t?.probs ?: predict(hr, ar, hForm, aForm))?.let { (ph, pd, pa) ->
         Card2 {
-            Text("احتمالات المباراة (تقدير)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text(if (t?.probs != null) "احتمالات المباراة (نموذج تيفو)" else "احتمالات المباراة (تقدير)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            t?.expectedGoals?.let { Text("الأهداف المتوقعة: ${m.home} %.1f · ${m.away} %.1f".format(it.first, it.second), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             Row(Modifier.fillMaxWidth().height(12.dp).clip(RoundedCornerShape(6.dp))) {
                 Box(Modifier.weight(ph.coerceAtLeast(1).toFloat()).fillMaxSize().background(MaterialTheme.colorScheme.primary))
                 Box(Modifier.weight(pd.coerceAtLeast(1).toFloat()).fillMaxSize().background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)))
@@ -273,7 +338,7 @@ private fun TeamsPane(m: LiveMatch, d: MatchDetails?, hr: StandingRow?, ar: Stan
                 Text("تعادل $pd%", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("${m.away} $pa%", fontWeight = FontWeight.Bold, color = Color(0xFF4A8CD0))
             }
-            Text("تقدير إحصائي من ترتيب الفريقين وآخر ٥ مباريات، مب توقع رسمي.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(if (t?.probs != null) "نموذج إحصائي من تيفو، مب توقع مضمون." else "تقدير إحصائي من ترتيب الفريقين وآخر ٥ مباريات، مب توقع رسمي.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
     if (hr != null || ar != null) Card2 {
@@ -323,10 +388,118 @@ private fun TeamsPane(m: LiveMatch, d: MatchDetails?, hr: StandingRow?, ar: Stan
             games.forEach { g -> Text(g.substringAfter(' '), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }
+    if (t != null && t.h2h.isNotEmpty() && (d == null || d.h2h.isEmpty())) Card2 {
+        Text("المواجهات المباشرة", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        t.h2hSummary?.let { Text(it, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary) }
+        t.h2h.take(8).forEach { Text(it, fontSize = 13.sp) }
+    }
     if (d != null && d.h2h.isNotEmpty()) Card2 {
         Text("المواجهات المباشرة", fontWeight = FontWeight.Bold, fontSize = 16.sp)
         d.h2hSummary?.let { Text(it, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary) }
         d.h2h.forEach { Text(it, fontSize = 13.sp) }
     }
     if (hr == null && ar == null && (d == null || (d.form.isEmpty() && d.h2h.isEmpty()))) Text("نجلب بيانات الفريقين…", Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+@Composable
+private fun TifoStatsPane(t: TifoMatch) {
+    Card2 {
+        t.stats.forEach { s ->
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(s.home, fontWeight = FontWeight.Bold)
+                    Text(s.label, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(s.away, fontWeight = FontWeight.Bold)
+                }
+                Row(Modifier.fillMaxWidth().height(7.dp).clip(RoundedCornerShape(4.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                    val a = s.homeShare.coerceIn(0.02f, 0.98f)
+                    Box(Modifier.weight(a).fillMaxSize().background(MaterialTheme.colorScheme.primary))
+                    Box(Modifier.weight(1f - a).fillMaxSize().background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TifoEventsPane(m: LiveMatch, t: TifoMatch) {
+    Card2 {
+        t.events.forEach { e ->
+            val icon = when {
+                e.type.startsWith("هدف") -> "⚽"; e.type == "بطاقة صفراء" -> "🟨"; e.type == "بطاقة حمراء" -> "🟥"; e.type == "تبديل" -> "🔁"; else -> "•"
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(e.minute, Modifier.width(48.dp), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                Text(icon, fontSize = 18.sp)
+                Column(Modifier.weight(1f)) {
+                    Text(e.player + (e.out?.let { " ⇄ $it" } ?: ""), fontSize = 14.sp)
+                    Text(
+                        e.type + (e.assist?.let { " · صناعة: $it" } ?: "") + (e.how?.let { " · $it" } ?: "") + (if (e.side == "home") " · ${m.home}" else if (e.side == "away") " · ${m.away}" else "") + (e.score?.let { " · $it" } ?: ""),
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** The line-ups: the official ones on a pitch drawn at the feed's positions; ESPN's list when Tifo has none; else the message. */
+@Composable
+private fun LineupsTab(m: LiveMatch, t: TifoMatch?, d: MatchDetails?) {
+    val h = t?.home; val a = t?.away
+    if (h != null && a != null) {
+        PitchCard(m, h, a)
+        listOf(m.home to h, m.away to a).forEach { (name, l) ->
+            Card2 {
+                Text("$name · المدرب: ${l.coach ?: "—"}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                Text("الاحتياط", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                l.subs.forEach { p ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(p.number, Modifier.width(28.dp), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                        Text(p.name, Modifier.weight(1f), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(p.role, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                if (l.unavailable.isNotEmpty()) Text("غائبون: " + l.unavailable.joinToString("، "), fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+            }
+        }
+    } else if (d != null && d.lineups.isNotEmpty()) LineupsPane(d)
+    else Card2 { Text("لم تصدر التشكيلة الرسمية بعد", fontWeight = FontWeight.Bold) ; Text("تظهر هنا تلقائياً فور صدورها، بدون ما تعيد فتح التطبيق.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+}
+
+@Composable
+private fun PitchCard(m: LiveMatch, h: TLineup, a: TLineup) {
+    Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("${m.away} · ${a.formation}", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Text("${m.home} · ${h.formation}", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        }
+        BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(0.68f).clip(RoundedCornerShape(16.dp)).background(Color(0xFF1E6B3A))) {
+            val w = maxWidth; val hh = maxHeight
+            Canvas(Modifier.fillMaxSize()) {
+                val line = Color.White.copy(alpha = 0.55f); val st = Stroke(width = 2f)
+                drawRect(line, style = st)
+                drawLine(line, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), strokeWidth = 2f)
+                drawCircle(line, radius = size.width * 0.14f, center = Offset(size.width / 2, size.height / 2), style = st)
+                val bw = size.width * 0.5f; val bh = size.height * 0.14f
+                drawRect(line, topLeft = Offset((size.width - bw) / 2, 0f), size = androidx.compose.ui.geometry.Size(bw, bh), style = st)
+                drawRect(line, topLeft = Offset((size.width - bw) / 2, size.height - bh), size = androidx.compose.ui.geometry.Size(bw, bh), style = st)
+            }
+            // home: bottom half, own goal at the bottom; away: top half, mirrored
+            @Composable fun place(l: TLineup, home: Boolean) = l.starters.forEach { p ->
+                if (p.x < 0f || p.y < 0f) return@forEach
+                val px = if (home) p.x else 1f - p.x
+                val py = if (home) 1f - p.y / 2f else p.y / 2f
+                val size = 40.dp
+                Column(Modifier.offset(x = w * px - size / 2 - 0.dp, y = hh * py - size / 2).width(size + 24.dp).offset(x = (-12).dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(Modifier.size(size).clip(CircleShape).background(if (home) Color(0xFFE8A53A) else Color(0xFF4A8CD0)), contentAlignment = Alignment.Center) {
+                        Text(p.number, fontWeight = FontWeight.Bold, color = Color(0xFF1C1206), fontSize = 14.sp)
+                        AsyncImage(model = "https://images.fotmob.com/image_resources/playerimages/${p.id}.png", contentDescription = p.name, contentScale = ContentScale.Crop, modifier = Modifier.size(size))
+                    }
+                    Text(p.name.substringAfterLast(' '), color = Color.White, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                }
+            }
+            place(h, true); place(a, false)
+        }
+    }
 }
