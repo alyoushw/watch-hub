@@ -2,6 +2,8 @@ package com.alyoushw.watchhub.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import com.alyoushw.watchhub.data.TifoApi
+import androidx.compose.runtime.produceState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -78,7 +80,8 @@ internal fun TeamLogo(url: String?, name: String, size: Dp) {
 }
 
 private fun localDay(ms: Long): LocalDate = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalDate()
-internal fun clock(ms: Long): String = SimpleDateFormat("HH:mm", Locale.ENGLISH).format(Date(ms))
+/** 12-hour clock: «3:15 م». */
+internal fun clock(ms: Long): String = SimpleDateFormat("h:mm", Locale.ENGLISH).format(Date(ms)) + (if (java.util.Calendar.getInstance().apply { timeInMillis = ms }.get(java.util.Calendar.AM_PM) == java.util.Calendar.AM) " ص" else " م")
 
 /** "اليوم ٢٠:٠٠", "غداً ٢٠:٠٠", or the Gregorian date in words ("الأحد ٣٠ نوفمبر · ٢٠:٠٠"). */
 internal fun matchWhen(ms: Long): String {
@@ -227,7 +230,17 @@ fun MatchesScreen(onOpenMatchSettings: () -> Unit) {
                         if (today.isEmpty()) item(key = "none") { Text("ما فيه مباريات لدورياتك وأنديتك في هذا اليوم.", Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
                         // The Saudi league and the Champions League first, then the big European leagues.
                         val order = listOf("ksa.1", "ksa.kings.cup", "uefa.champions", "eng.1", "esp.1", "ita.1", "ger.1", "fra.1", "uefa.europa")
-                        today.groupBy { it.leagueSlug }.toList().sortedBy { (s, _) -> order.indexOf(s).let { if (it < 0) 99 else it } }.forEach { (slug, rows) ->
+                        val favRows = today.filter { it.homeId in favIds || it.awayId in favIds }
+                        if (favRows.isNotEmpty()) item(key = "favs") {
+                            Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceContainer)) {
+                                Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Text("★", color = MaterialTheme.colorScheme.primary)
+                                    Text("أتابع", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                }
+                                favRows.forEach { m -> MatchRow(m, favIds, onDetails = { detailMatch = m }, onSources = { openMatch = m }, onClub = openClub) }
+                            }
+                        }
+                        today.filter { it !in favRows }.groupBy { it.leagueSlug }.toList().sortedBy { (s, _) -> order.indexOf(s).let { if (it < 0) 99 else it } }.forEach { (slug, rows) ->
                             item(key = "lg-$slug") {
                                 Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceContainer)) {
                                     Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -260,14 +273,15 @@ private fun MatchRow(m: LiveMatch, favIds: Set<String>, onDetails: () -> Unit, o
                 Text(m.home, fontSize = 14.sp, fontWeight = if (m.homeId in favIds) FontWeight.Bold else FontWeight.Normal, color = if (m.homeId in favIds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             Column(Modifier.width(78.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(clock(m.startMs), fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                if (m.leagueSlug == "ksa.1") Text("📺 ثمانية", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(clock(m.startMs), fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
                 Text(m.away, fontSize = 14.sp, fontWeight = if (m.awayId in favIds) FontWeight.Bold else FontWeight.Normal, color = if (m.awayId in favIds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.End)
                 TeamLogo(m.awayLogo, m.away, 30.dp)
             }
         }
+        val line by produceState<String?>(if (m.leagueSlug == "ksa.1") "ثمانية" else null, m.id) { TifoApi.line(m)?.let { value = it } }
+        line?.let { Text("📺 $it", Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, bottom = 10.dp), fontSize = 12.sp, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         return
     }
     Row(

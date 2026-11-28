@@ -180,4 +180,11 @@ object TifoApi {
         chanCache = Chan(System.currentTimeMillis(), map)
         return map[id].orEmpty()
     }
+
+    /** «beIN SPORTS 1 · عبدالله الغامدي» for the match list; null while Tifo has nothing for it. */
+    suspend fun line(m: LiveMatch): String? {
+        val id = find(m) ?: return null
+        val c = channels(id).distinct().firstOrNull() ?: return null
+        return c.channel + (if (c.commentator.isNotBlank()) " · " + c.commentator else "")
+    }
 }
