@@ -267,16 +267,15 @@ private fun MatchRow(m: LiveMatch, favIds: Set<String>, onDetails: () -> Unit, o
             Modifier.fillMaxWidth().focusFrame(RoundedCornerShape(12.dp)).clickable(onClick = onDetails).padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TeamLogo(m.homeLogo, m.home, 30.dp)
-                Text(m.home, fontSize = 14.sp, fontWeight = if (m.homeId in favIds) FontWeight.Bold else FontWeight.Normal, color = if (m.homeId in favIds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-            Column(Modifier.width(78.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(clock(m.startMs), fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            }
+            // Close together like Tifo: [home name][logo]  time  [logo][away name], hugging the centre.
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
-                Text(m.away, fontSize = 14.sp, fontWeight = if (m.awayId in favIds) FontWeight.Bold else FontWeight.Normal, color = if (m.awayId in favIds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.End)
+                Text(m.home, fontSize = 14.sp, fontWeight = if (m.homeId in favIds) FontWeight.Bold else FontWeight.Normal, color = if (m.homeId in favIds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.End, modifier = Modifier.weight(1f, fill = false))
+                TeamLogo(m.homeLogo, m.home, 30.dp)
+            }
+            Text(clock(m.startMs), Modifier.padding(horizontal = 10.dp), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.Start)) {
                 TeamLogo(m.awayLogo, m.away, 30.dp)
+                Text(m.away, fontSize = 14.sp, fontWeight = if (m.awayId in favIds) FontWeight.Bold else FontWeight.Normal, color = if (m.awayId in favIds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
             }
         }
         var line by remember(m.id) { mutableStateOf<String?>(null) }

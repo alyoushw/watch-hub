@@ -160,12 +160,69 @@ function cairoToUtc(day: string, hm: string): number {
   const g = (t: string) => Number(parts.find((x) => x.type === t)!.value);
   return guess - (Date.UTC(g("year"), g("month") - 1, g("day"), g("hour"), g("minute")) - guess);
 }
+
+// ---- Kooora's daily "match schedule + channels + commentators" article (also covers Thmanyah matches) ----
+type KoRow = { home: string; away: string; kickoff: number; items: { channel: string; commentator: string }[] };
+let koCache: { at: number; byDate: Record<string, KoRow[]> } | null = null;
+const AR_MONTHS: Record<string, number> = { "يناير": 1, "فبراير": 2, "مارس": 3, "أبريل": 4, "إبريل": 4, "ابريل": 4, "مايو": 5, "يونيو": 6, "يوليو": 7, "أغسطس": 8, "اغسطس": 8, "سبتمبر": 9, "أكتوبر": 10, "اكتوبر": 10, "نوفمبر": 11, "ديسمبر": 12 };
+const KO_HEADERS = { "user-agent": "WatchHub/1.0 (personal app; cached 15 min)", "accept-language": "ar" };
+function koText(html: string): string[] {
+  return html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, "").replace(/<[^>]+>/g, "\n")
+    .replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").split("\n").map((x) => x.replace(/\s+/g, " ").trim()).filter(Boolean);
+}
+function parseKooora(lines: string[], date: string): KoRow[] {
+  const rows: KoRow[] = [];
+  const timeRe = /^(\d{1,2}):(\d{2}) السعودية/;
+  const [y, mo, d] = date.split("-").map(Number);
+  const stop = (l: string) => /الجولة|^المباراة$|^الموعد$|^القنوات الناقلة$|^التعليق$|^المعلق$|^المعلقون$|إعلان|قد يعجبك|كووورة|KOOORA/.test(l);
+  for (let i = 0; i < lines.length - 1; i++) {
+    const m = timeRe.exec(lines[i + 1] || "");
+    if (!m || !lines[i].includes(" - ") || stop(lines[i])) continue;
+    const [home, away] = lines[i].split(" - ").map((x) => x.trim());
+    const items: { channel: string; commentator: string }[] = [];
+    let j = i + 2;
+    while (j + 1 < lines.length && !timeRe.test(lines[j + 1] || "") && !stop(lines[j]) && !(lines[j].includes(" - ") && timeRe.test(lines[j + 1] || ""))) {
+      if (items.length >= 4 || stop(lines[j + 1]) || (lines[j + 1].includes(" - ") && timeRe.test(lines[j + 2] || ""))) break;
+      items.push({ channel: lines[j], commentator: lines[j + 1] }); j += 2;
+    }
+    // kick-off is printed in Saudi time (UTC+3)
+    rows.push({ home, away, kickoff: Date.UTC(y, mo - 1, d, Number(m[1]) - 3, Number(m[2])), items });
+  }
+  return rows;
+}
+async function koooraAll(): Promise<Record<string, KoRow[]>> {
+  if (koCache && Date.now() - koCache.at < 15 * 60_000) return koCache.byDate;
+  try {
+    const home = await (await fetch("https://www.kooora.com/", { headers: KO_HEADERS })).text();
+    const links = new Set<string>();
+    for (const m of home.matchAll(/<a class="fco-card" href="([^"]+)"[\s\S]{0,3000}?fco-card__headline-text">([^<]+)</g)) {
+      if (m[2].includes("جدول مباريات اليوم")) links.add(m[1]);
+    }
+    const byDate: Record<string, KoRow[]> = {};
+    for (const l of links) {
+      const html = await (await fetch(new URL(l, "https://www.kooora.com").toString(), { headers: KO_HEADERS })).text();
+      const lines = koText(html);
+      const head = lines.find((x) => x.startsWith("جدول مباريات اليوم") && /\d{4}/.test(x)) || "";
+      const dm = head.match(/(\d{1,2}) (\S+) (\d{4})/);
+      if (!dm || !AR_MONTHS[dm[2]]) continue;
+      const date = `${dm[3]}-${String(AR_MONTHS[dm[2]]).padStart(2, "0")}-${dm[1].padStart(2, "0")}`;
+      byDate[date] = parseKooora(lines, date);
+    }
+    if (!Object.keys(byDate).length) throw new Error("no kooora article");
+    koCache = { at: Date.now(), byDate };
+    return byDate;
+  } catch (_e) {
+    return koCache?.byDate ?? {};
+  }
+}
+
 async function tvDay(url: URL): Promise<Response> {
   const day = url.searchParams.get("date") || "";
   const hdr = { "content-type": "application/json; charset=utf-8", "access-control-allow-origin": "*" };
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || Math.abs(Date.parse(day) - Date.now()) > 8 * 86400_000) return new Response(JSON.stringify({ error: "bad date" }), { status: 400, headers: hdr });
   const hit = tvCache.get(day);
-  if (hit && Date.now() - hit.at < 15 * 60_000) return new Response(JSON.stringify({ source: "yallakora.com", updated: hit.at, rows: hit.rows }), { headers: hdr });
+  const kooora = [...(await koooraAll())[day] ?? [], ...(await koooraAll())[new Date(Date.parse(day) + 86400_000).toISOString().slice(0, 10)] ?? []];
+  if (hit && Date.now() - hit.at < 15 * 60_000) return new Response(JSON.stringify({ source: "yallakora.com + kooora.com", updated: hit.at, rows: hit.rows, kooora }), { headers: hdr });
   try {
     const [y, m, d] = day.split("-");
     const r = await fetch(`https://www.yallakora.com/matches-center?date=${m}/${d}/${y}`, { headers: { "user-agent": "WatchHub/1.0 (personal app; cached 15 min)", "accept-language": "ar" } });
@@ -181,9 +238,10 @@ async function tvDay(url: URL): Promise<Response> {
     }
     if (!rows.length) throw new Error("no matches parsed");
     tvCache.set(day, { at: Date.now(), rows });
-    return new Response(JSON.stringify({ source: "yallakora.com", updated: Date.now(), rows }), { headers: hdr });
+    return new Response(JSON.stringify({ source: "yallakora.com + kooora.com", updated: Date.now(), rows, kooora }), { headers: hdr });
   } catch (e) {
-    if (hit) return new Response(JSON.stringify({ source: "yallakora.com", updated: hit.at, stale: true, rows: hit.rows }), { headers: hdr });
+    if (hit) return new Response(JSON.stringify({ source: "yallakora.com + kooora.com", updated: hit.at, stale: true, rows: hit.rows, kooora }), { headers: hdr });
+    if (kooora.length) return new Response(JSON.stringify({ source: "kooora.com", updated: Date.now(), rows: [], kooora }), { headers: hdr });
     return new Response(JSON.stringify({ error: String(e) }), { status: 502, headers: hdr });
   }
 }
