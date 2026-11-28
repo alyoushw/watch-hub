@@ -44,6 +44,8 @@ object TifoApi {
     private class Hit(val at: Long, val json: JSONObject)
     private val cache = ConcurrentHashMap<String, Hit>()
     private val uae = ZoneId.of("Asia/Dubai")
+    /** Venue names read from the day files (a match not started yet has no venue in its own file). */
+    val venues = ConcurrentHashMap<Long, String>()
 
     private suspend fun get(path: String, ttl: Long): JSONObject? {
         val ttlSafe = maxOf(ttl, 15_000L) // never faster than the feed's own limit
@@ -71,7 +73,11 @@ object TifoApi {
             val h = x.optJSONObject("home"); val a = x.optJSONObject("away")
             val sameH = norm(h?.optString("name").orEmpty()) == he || h?.optString("name_ar").orEmpty() == m.home
             val sameA = norm(a?.optString("name").orEmpty()) == ae || a?.optString("name_ar").orEmpty() == m.away
-            if (sameH && sameA) return x.optLong("id")
+            if (sameH && sameA) {
+                val v = x.optJSONObject("venue"); val vn = v?.optString("name_ar")?.ifBlank { null } ?: v?.optString("name_en")?.ifBlank { null }
+                if (vn != null) venues[x.optLong("id")] = listOfNotNull(vn, v?.optString("city")?.substringBefore(",")?.ifBlank { null }).joinToString("، ")
+                return x.optLong("id")
+            }
         }
         return null
     }

@@ -282,7 +282,7 @@ private fun InfoPane(m: LiveMatch, d: MatchDetails?, t: TifoMatch?, chans: List<
     Card2 {
         listOfNotNull(
             "البطولة" to m.league, t?.roundAr?.let { "الجولة" to it }, "الفريق المضيف" to m.home, "الفريق الضيف" to m.away, "التاريخ" to date,
-            "الساعة" to clock(m.startMs), "الملعب" to (t?.venue ?: d?.venue ?: "—"),
+            "الساعة" to clock(m.startMs), "الملعب" to (t?.venue ?: t?.id?.let { TifoApi.venues[it] } ?: d?.venue ?: "—"),
             t?.referee?.let { "الحكم" to it }, (t?.attendance ?: d?.attendance?.toIntOrNull())?.let { "الحضور" to it.toString() },
         ).forEach { (k, v) ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -299,6 +299,10 @@ private fun InfoPane(m: LiveMatch, d: MatchDetails?, t: TifoMatch?, chans: List<
                 Text(it.channel, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 Text("🎙 " + it.commentator, fontSize = 14.sp)
             }
+        } else if (m.leagueSlug == "ksa.1") {
+            Text("قنوات ثمانية 1/2/3", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            Text("ثمانية (التطبيق): الباقة المجانية 720p، والأساسية والمميزة مدفوعتان", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("المعلّق لم يُعلن بعد", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else Text(if (checked) "لم تُعلن القناة الناقلة والمعلّق بعد (تظهر هنا فور إعلانها)." else "نجلب…", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
