@@ -147,7 +147,10 @@ internal fun MatchDetailsDialog(m: LiveMatch, onSources: () -> Unit, onClub: (St
                             Column(Modifier.width(110.dp).clickable { onClub(m.leagueSlug, m.homeId, m.home, m.homeLogo) }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) { TeamLogo(m.homeLogo, m.home, 64.dp); Text(m.home, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center) }
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 when (m.state) {
-                                    "in" -> Text("● ${m.clock}", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                                    "in" -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text("●", color = MaterialTheme.colorScheme.error, fontSize = 10.sp)
+                                        LiveClock(m, MaterialTheme.colorScheme.error, 15.sp)
+                                    }
                                     "pre" -> {
                                         Text(matchWhen(m.startMs), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                                         val left = (m.startMs - now).coerceAtLeast(0) / 1000

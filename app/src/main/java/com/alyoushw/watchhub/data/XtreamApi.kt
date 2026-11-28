@@ -31,8 +31,13 @@ data class XtreamAccount(
     val password: String,
     val id: String = "",
     val name: String = "",
+    /** Switched off by the owner: kept (to edit or switch on again) but not used anywhere. */
+    val off: Boolean = false,
 ) {
-    val isComplete: Boolean get() = host.isNotBlank() && username.isNotBlank() && password.isNotBlank()
+    /** The three login fields are filled in. */
+    val hasLogin: Boolean get() = host.isNotBlank() && username.isNotBlank() && password.isNotBlank()
+    /** Usable: filled in and not switched off. */
+    val isComplete: Boolean get() = hasLogin && !off
 
     /** What to call it on buttons: the user's name for it, else the server's host. */
     val label: String get() = name.ifBlank { host.substringAfter("://").substringBefore("/") }

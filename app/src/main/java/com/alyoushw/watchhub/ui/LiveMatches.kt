@@ -88,6 +88,7 @@ internal fun MatchSourcesDialog(m: LiveMatch, onClose: () -> Unit) {
         val list = runCatching { com.alyoushw.watchhub.data.MatchTv.channels(m) }.getOrDefault(emptyList())
             .map { it.channel.trim() }.filter { it.isNotEmpty() && !it.startsWith("تطبيق") && !it.contains("app", true) && !it.contains("tv", true) || it.contains("beIN", true) }
             .distinctBy { matchKey(it) }
+            .let { l -> l.filter { c -> l.none { o -> o !== c && matchKey(o).length > matchKey(c).length && matchKey(o).startsWith(matchKey(c)) } } }
         carriers = list
         if (list.isNotEmpty() && exact == null && query == keywords.firstOrNull().orEmpty()) exact = list.first()
     }
@@ -118,6 +119,8 @@ internal fun MatchSourcesDialog(m: LiveMatch, onClose: () -> Unit) {
                 src.filter { it.key == k || (it.key.startsWith(k) && !it.key[k.length].isDigit()) }.groupBy { it.key }
                     .map { (kk, v) -> SourceGroup(kk, v.minByOrNull { channelQualityOrder(it.channel.name) }!!.channel.name, v.sortedBy { channelQualityOrder(it.channel.name) }) }
             }
+            // The carrying channel opens at once, with all its qualities (4K, FHD, HD, SD) listed.
+            if (groups.size == 1) openKey = groups[0].key
             return@LaunchedEffect
         }
         val q = query.trim().lowercase()
@@ -161,6 +164,11 @@ internal fun MatchSourcesDialog(m: LiveMatch, onClose: () -> Unit) {
                                     modifier = Modifier.fillMaxWidth().focusFrame(RoundedCornerShape(12.dp)).clickable { openKey = if (openKey == g.key) null else g.key }.padding(12.dp),
                                 )
                                 if (openKey == g.key) g.sources.forEachIndexed { i, s ->
+                                    val order = channelQualityOrder(s.channel.name)
+                                    if (i == 0 || order != channelQualityOrder(g.sources[i - 1].channel.name)) {
+                                        val label = when (order) { 0 -> "4K"; 1 -> "FHD"; 2 -> "HD"; 4 -> "SD"; else -> "جودة عادية" }
+                                        Text("$label  (${g.sources.count { channelQualityOrder(it.channel.name) == order }})", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 16.dp, top = 6.dp))
+                                    }
                                     val q = qualityTags(s.channel.name).joinToString(" ") { it.uppercase() }
                                     Text(
                                         "${s.account.label} · ${s.channel.name}" + if (q.isNotBlank()) "  [$q]" else "",

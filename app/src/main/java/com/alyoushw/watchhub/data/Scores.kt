@@ -37,6 +37,9 @@ data class LiveMatch(
     /** The feed's own (English) names, to find the same match in other sources. */
     val homeEn: String = "",
     val awayEn: String = "",
+    /** The feed's match clock in seconds and its status name (STATUS_FIRST_HALF, STATUS_HALFTIME…), to run the clock by the second. */
+    val clockSec: Double = 0.0,
+    val statusName: String = "",
 )
 
 /** One goal of a match, from the feed's match details ("scoringPlay"). */
@@ -210,6 +213,7 @@ object ScoresApi {
                     startMs = runCatching { Instant.parse(e.optString("date").let { if (it.length == 17) it.dropLast(1) + ":00Z" else it }).toEpochMilli() }.getOrDefault(0L),
                     broadcasts = names.distinct(), goals = goals,
                     homeEn = ht?.optString("displayName").orEmpty(), awayEn = at?.optString("displayName").orEmpty(),
+                    clockSec = st?.optDouble("clock", 0.0) ?: 0.0, statusName = st?.optJSONObject("type")?.optString("name").orEmpty(),
                 ))
             }
         }

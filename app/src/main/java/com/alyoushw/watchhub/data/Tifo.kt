@@ -74,8 +74,8 @@ object TifoApi {
             val sameH = norm(h?.optString("name").orEmpty()) == he || h?.optString("name_ar").orEmpty() == m.home
             val sameA = norm(a?.optString("name").orEmpty()) == ae || a?.optString("name_ar").orEmpty() == m.away
             if (sameH && sameA) {
-                val v = x.optJSONObject("venue"); val vn = v?.optString("name_ar")?.ifBlank { null } ?: v?.optString("name_en")?.ifBlank { null }
-                if (vn != null) venues[x.optLong("id")] = listOfNotNull(vn, v?.optString("city")?.substringBefore(",")?.ifBlank { null }).joinToString("، ")
+                val v = x.optJSONObject("venue"); val vn = v?.let { o -> listOf("name_ar", "name_en").firstNotNullOfOrNull { k -> if (o.isNull(k)) null else o.optString(k).trim().ifBlank { null } } }
+                if (vn != null) venues[x.optLong("id")] = listOfNotNull(vn, v?.let { o -> if (o.isNull("city")) null else o.optString("city").substringBefore(",").trim().ifBlank { null } }).joinToString("، ")
                 return x.optLong("id")
             }
         }
@@ -107,7 +107,7 @@ object TifoApi {
         val st = players(o.optJSONArray("starters"))
         if (st.isEmpty()) return null
         val un = o.optJSONArray("unavailable")?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it)?.optString("name")?.ifBlank { null } } }.orEmpty()
-        return TLineup(o.optString("formation"), o.optJSONObject("coach")?.optString("name")?.ifBlank { null }, st, players(o.optJSONArray("subs")), un)
+        return TLineup(o.optString("formation"), o.optJSONObject("coach")?.let { c -> if (c.isNull("name")) null else c.optString("name").ifBlank { null } }, st, players(o.optJSONArray("subs")), un)
     }
 
     /** The full match file; a live match is read every 30 s, a finished one every 10 minutes. */
@@ -149,10 +149,11 @@ object TifoApi {
             }
         }
         val hs = j.optJSONObject("h2h")?.optJSONObject("summary")?.let { "فوز المضيف ${it.optInt("home_wins")} · تعادل ${it.optInt("draws")} · فوز الضيف ${it.optInt("away_wins")}" }
+        fun JSONObject.str(k: String): String? = if (isNull(k)) null else optString(k).trim().ifBlank { null }
         val ven = j.optJSONObject("venue")
         return TifoMatch(
-            id, j.optString("round_ar").ifBlank { null }, ven?.optString("name_ar")?.ifBlank { null } ?: ven?.optString("name_en")?.ifBlank { null },
-            if (j.isNull("attendance")) null else j.optInt("attendance").takeIf { it > 0 }, j.optJSONObject("referee")?.optString("name")?.ifBlank { null }, j.optString("status"),
+            id, j.optString("round_ar").ifBlank { null }, ven?.str("name_ar") ?: ven?.str("name_en"),
+            if (j.isNull("attendance")) null else j.optInt("attendance").takeIf { it > 0 }, j.optJSONObject("referee")?.str("name"), j.optString("status"),
             probs, xg, lineup(lu?.optJSONObject("home")), lineup(lu?.optJSONObject("away")), events, stats, hs, h2hList,
         )
     }

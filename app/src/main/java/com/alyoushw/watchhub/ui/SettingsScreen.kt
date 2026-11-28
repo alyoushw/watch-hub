@@ -44,6 +44,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -685,15 +686,17 @@ private fun XtreamSection(onOpen: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text(acc.label, fontWeight = FontWeight.Bold)
+                    Text(acc.label, fontWeight = FontWeight.Bold, color = if (acc.off) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
                     Text(
-                        acc.host.substringAfter("://") + if (acc.id == active.id && accounts.size > 1) "  ·  المعروض الحين" else "",
+                        acc.host.substringAfter("://") + (if (acc.off) "  ·  مقفل" else if (acc.id == active.id && accounts.size > 1) "  ·  المعروض الحين" else ""),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                     )
                 }
                 TextButton(modifier = Modifier.focusFrame(), onClick = { editing = acc }) { Text("تعديل") }
+                // Switch an account off (it stays in the list, nothing uses it) or on again.
+                Switch(checked = !acc.off, onCheckedChange = { container.settings.saveXtreamAccount(acc.copy(off = !it)) })
             }
         }
         if (editing == null) {
@@ -788,7 +791,7 @@ private fun XtreamAccountForm(initial: XtreamAccount, onDone: () -> Unit) {
                 // Never disabled: a disabled button is skipped by the TV remote.
                 enabled = !testing,
                 onClick = {
-                    if (!draft.isComplete) {
+                    if (!draft.hasLogin) {
                         result = "كمّل البيانات: " + listOfNotNull(
                             "الهوست".takeIf { host.isBlank() },
                             "اسم المستخدم".takeIf { username.isBlank() },

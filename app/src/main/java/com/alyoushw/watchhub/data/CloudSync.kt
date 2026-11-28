@@ -1024,14 +1024,14 @@ class CloudSync(
     // ---- Xtream accounts
 
     private fun XtreamAccount.toMap(): Map<String, Any?> =
-        mapOf("id" to id, "name" to name, "host" to host, "user" to username, "pass" to password)
+        mapOf("id" to id, "name" to name, "host" to host, "user" to username, "pass" to password, "off" to off)
 
     @Suppress("UNCHECKED_CAST")
     private fun DocumentSnapshot.toAccounts(): List<XtreamAccount> =
         (get("accounts") as? List<Map<String, Any?>>).orEmpty().mapNotNull { m ->
             val host = m["host"] as? String ?: return@mapNotNull null
             val user = m["user"] as? String ?: return@mapNotNull null
-            XtreamAccount(host, user, m["pass"] as? String ?: "", XtreamAccount.stableId(host, user), m["name"] as? String ?: "")
+            XtreamAccount(host, user, m["pass"] as? String ?: "", XtreamAccount.stableId(host, user), m["name"] as? String ?: "", m["off"] as? Boolean ?: false)
         }
 
     private fun applyXtreamDoc(doc: DocumentSnapshot) {

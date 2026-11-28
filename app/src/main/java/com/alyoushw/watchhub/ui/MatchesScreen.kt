@@ -2,6 +2,7 @@ package com.alyoushw.watchhub.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.wrapContentWidth
 import com.alyoushw.watchhub.data.MatchTv
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -259,25 +260,57 @@ fun MatchesScreen(onOpenMatchSettings: () -> Unit) {
     }
 }
 
+/** The match clock of a live match, run by the second between the feed's minute updates (the feed itself moves by the minute). */
+@Composable
+internal fun LiveClock(m: LiveMatch, color: androidx.compose.ui.graphics.Color, fontSize: androidx.compose.ui.unit.TextUnit, bold: Boolean = true) {
+    val name = m.statusName
+    val ticking = name.contains("FIRST_HALF") || name.contains("SECOND_HALF") || name.contains("EXTRA") || name.contains("OVERTIME")
+    if (!ticking) {
+        Text(if (name.contains("HALFTIME")) "استراحة" else m.clock, color = color, fontSize = fontSize, fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal)
+        return
+    }
+    var seenAt by remember(m.id, m.clockSec) { mutableStateOf(System.currentTimeMillis()) }
+    var now by remember(m.id, m.clockSec) { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(m.id, m.clockSec) { seenAt = System.currentTimeMillis(); while (true) { now = System.currentTimeMillis(); kotlinx.coroutines.delay(1000) } }
+    // The feed's clock only says the minute; the seconds run from the moment this value arrived (never past the next minute).
+    val total = m.clockSec.toLong() + ((now - seenAt) / 1000).coerceIn(0, 59)
+    Text("%02d:%02d".format(total / 60, total % 60), color = color, fontSize = fontSize, fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal)
+}
+
 @Composable
 private fun MatchRow(m: LiveMatch, favIds: Set<String>, onDetails: () -> Unit, onSources: () -> Unit, onClub: (String, String, String, String?) -> Unit) {
-    if (m.state == "pre") {
-        // Upcoming: one tap anywhere opens the match page (both teams there); a team's own page opens from inside it.
-        Row(
-            Modifier.fillMaxWidth().focusFrame(RoundedCornerShape(12.dp)).clickable(onClick = onDetails).padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // Close together like Tifo: [home name][logo]  time  [logo][away name], hugging the centre.
-            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
-                Text(m.home, fontSize = 14.sp, fontWeight = if (m.homeId in favIds) FontWeight.Bold else FontWeight.Normal, color = if (m.homeId in favIds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.End, modifier = Modifier.weight(1f, fill = false))
-                TeamLogo(m.homeLogo, m.home, 30.dp)
-            }
-            Text(clock(m.startMs), Modifier.padding(horizontal = 10.dp), fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.Start)) {
-                TeamLogo(m.awayLogo, m.away, 30.dp)
-                Text(m.away, fontSize = 14.sp, fontWeight = if (m.awayId in favIds) FontWeight.Bold else FontWeight.Normal, color = if (m.awayId in favIds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+    // One layout for every state, close together like Tifo: [home name][crest]  centre  [crest][away name]. A tap anywhere opens
+    // the match page (both clubs are there; a club's own page opens from inside it).
+    Row(
+        Modifier.fillMaxWidth().focusFrame(RoundedCornerShape(12.dp)).clickable(onClick = onDetails).padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+            Text(m.home, fontSize = 14.sp, fontWeight = if (m.homeId in favIds) FontWeight.Bold else FontWeight.Normal, color = if (m.homeId in favIds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.End, modifier = Modifier.weight(1f, fill = false))
+            TeamLogo(m.homeLogo, m.home, 30.dp)
+        }
+        Column(Modifier.width(92.dp).padding(horizontal = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            when (m.state) {
+                "pre" -> Text(clock(m.startMs), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                "in" -> {
+                    Text("${m.homeScore} - ${m.awayScore}", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("●", color = MaterialTheme.colorScheme.error, fontSize = 9.sp)
+                        LiveClock(m, MaterialTheme.colorScheme.error, 12.sp)
+                    }
+                }
+                else -> {
+                    Text("${m.homeScore} - ${m.awayScore}", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text("انتهت", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
+        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.Start)) {
+            TeamLogo(m.awayLogo, m.away, 30.dp)
+            Text(m.away, fontSize = 14.sp, fontWeight = if (m.awayId in favIds) FontWeight.Bold else FontWeight.Normal, color = if (m.awayId in favIds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+        }
+    }
+    if (m.state != "post") {
         var line by remember(m.id) { mutableStateOf<String?>(null) }
         LaunchedEffect(m.id) {
             // Refreshed every 15 minutes; the last good value stays if a refresh fails.
@@ -287,27 +320,12 @@ private fun MatchRow(m: LiveMatch, favIds: Set<String>, onDetails: () -> Unit, o
                 kotlinx.coroutines.delay(15 * 60_000L)
             }
         }
-        line?.let { Text("📺 $it", Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, bottom = 10.dp), fontSize = 12.sp, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        return
+        line?.let { Text("📺 $it", Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, bottom = 6.dp), fontSize = 12.sp, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
-    Row(
-        Modifier.fillMaxWidth().focusFrame(RoundedCornerShape(12.dp)).clickable(onClick = onDetails).padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Column(Modifier.width(54.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            when (m.state) {
-                "in" -> { Text("● ${m.clock}", color = MaterialTheme.colorScheme.error, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
-                "pre" -> Text(clock(m.startMs), fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                else -> Text("انتهت", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            TeamLine(m.homeLogo, m.home, if (m.state == "pre") "" else m.homeScore, m.homeId in favIds) { onClub(m.leagueSlug, m.homeId, m.home, m.homeLogo) }
-            TeamLine(m.awayLogo, m.away, if (m.state == "pre") "" else m.awayScore, m.awayId in favIds) { onClub(m.leagueSlug, m.awayId, m.away, m.awayLogo) }
-        }
+    if (m.state == "in") {
         Text(
-            "▶ المصادر", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1C1206),
-            modifier = Modifier.focusFrame(CircleShape).clip(CircleShape).background(MaterialTheme.colorScheme.primary).clickable(onClick = onSources).padding(horizontal = 12.dp, vertical = 7.dp),
+            "▶ شاهد", Modifier.fillMaxWidth().padding(bottom = 8.dp).wrapContentWidth(Alignment.CenterHorizontally).focusFrame(CircleShape).clip(CircleShape).background(MaterialTheme.colorScheme.primary).clickable(onClick = onSources).padding(horizontal = 16.dp, vertical = 6.dp),
+            fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1C1206),
         )
     }
     GoalsLine(m)
