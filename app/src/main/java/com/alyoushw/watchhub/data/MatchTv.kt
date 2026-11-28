@@ -52,7 +52,8 @@ object MatchTv {
         .trim().replace(Regex("\\s+"), " ").removePrefix("ال").trim()
 
     private fun sameTeam(a: String, b: String): Boolean {
-        val x = ar(a); val y = ar(b)
+        // Spellings differ between sources (هامبورغ/هامبورج, ميونخ/ميونيخ): compare with غ=ج and without ي.
+        val x = ar(a).replace('غ', 'ج').replace("ي", ""); val y = ar(b).replace('غ', 'ج').replace("ي", "")
         if (x.length < 3 || y.length < 3) return false
         return x == y || x.contains(y) || y.contains(x)
     }
