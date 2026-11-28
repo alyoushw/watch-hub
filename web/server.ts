@@ -127,6 +127,67 @@ async function proxy(req: Request, self: URL, session?: MediaSession): Promise<R
   return new Response(upstream.body, { status: upstream.status, headers: out });
 }
 
+// ---------- API-Football behind the server (the key lives only in the FOOTBALL_API_KEY environment variable) ----------
+// The app asks this server, never API-Football itself, so the key is not in the app or the repository. Answers are kept
+// (a shared cache), identical requests in flight are joined, and a daily budget stops it before the plan's limit.
+const FOOTBALL_KEY = Deno.env.get("FOOTBALL_API_KEY") ?? "";
+const FOOTBALL_DAILY = Number(Deno.env.get("FOOTBALL_DAILY_LIMIT") ?? "90");
+const FOOTBALL_PATHS: Record<string, number> = {   // allowed path → minutes kept
+  "fixtures": 5, "fixtures/lineups": 3, "fixtures/events": 1, "fixtures/statistics": 1, "fixtures/players": 2, "fixtures/headtohead": 1440,
+  "standings": 30, "injuries": 30, "predictions": 360, "players/topscorers": 60, "players/topassists": 60, "players/squads": 360,
+  "teams": 720, "coachs": 720, "leagues": 720,
+};
+const FOOTBALL_PARAMS = new Set(["id", "date", "league", "season", "team", "live", "fixture", "h2h", "last", "next", "timezone", "from", "to", "status"]);
+let footballDay = "";
+let footballUsed = 0;
+const footballCache = new Map<string, { at: number; ttl: number; status: number; body: string }>();
+const footballFlight = new Map<string, Promise<{ status: number; body: string }>>();
+
+function footballBudgetLeft(): number {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== footballDay) { footballDay = today; footballUsed = 0; }
+  return Math.max(0, FOOTBALL_DAILY - footballUsed);
+}
+
+async function footballProxy(url: URL): Promise<Response> {
+  const json = (status: number, obj: unknown, extra: Record<string, string> = {}) =>
+    new Response(JSON.stringify(obj), { status, headers: { ...CORS, "content-type": "application/json; charset=utf-8", ...extra } });
+  const path = url.pathname.replace(/^\/football\//, "").replace(/\/+$/, "");
+  if (path === "status") return json(200, { configured: !!FOOTBALL_KEY, dailyLimit: FOOTBALL_DAILY, left: footballBudgetLeft(), cached: footballCache.size });
+  if (!FOOTBALL_KEY) return json(503, { error: "FOOTBALL_API_KEY is not set on the server" });
+  const minutes = FOOTBALL_PATHS[path];
+  if (minutes === undefined) return json(404, { error: "path not allowed" });
+  const q = new URLSearchParams();
+  [...url.searchParams.entries()].filter(([k]) => FOOTBALL_PARAMS.has(k)).sort(([a], [b]) => a.localeCompare(b)).forEach(([k, v]) => q.set(k, v.slice(0, 40)));
+  const key = `${path}?${q}`;
+  const live = q.get("live") !== null;
+  const ttl = (live ? 1 : minutes) * 60_000;
+  const hit = footballCache.get(key);
+  const age = hit ? Date.now() - hit.at : Infinity;
+  const left = () => ({ "x-football-budget-left": String(footballBudgetLeft()), "cache-control": "public, max-age=30" });
+  if (hit && age < ttl) return new Response(hit.body, { status: hit.status, headers: { ...CORS, "content-type": "application/json; charset=utf-8", ...left() } });
+  if (footballBudgetLeft() <= 0) {
+    // Over the day's budget: an old answer is better than none.
+    if (hit) return new Response(hit.body, { status: hit.status, headers: { ...CORS, "content-type": "application/json; charset=utf-8", "x-football-stale": "1", ...left() } });
+    return json(429, { error: "daily API-Football budget reached" }, left());
+  }
+  let pending = footballFlight.get(key);
+  if (!pending) {
+    footballUsed++;
+    pending = fetch(`https://v3.football.api-sports.io/${path}?${q}`, { headers: { "x-apisports-key": FOOTBALL_KEY }, signal: AbortSignal.timeout(20000) })
+      .then(async (r) => ({ status: r.status, body: await r.text() }))
+      .catch(() => ({ status: 502, body: JSON.stringify({ error: "could not reach API-Football" }) }))
+      .finally(() => footballFlight.delete(key));
+    footballFlight.set(key, pending);
+  }
+  const res = await pending;
+  // Only good answers are kept (an error body, or one with API-Football's own "errors", is not cached).
+  let ok = res.status === 200;
+  try { const j = JSON.parse(res.body); if (j.errors && (Array.isArray(j.errors) ? j.errors.length : Object.keys(j.errors).length)) ok = false; } catch { ok = false; }
+  if (ok) footballCache.set(key, { at: Date.now(), ttl, status: res.status, body: res.body });
+  return new Response(res.body, { status: res.status, headers: { ...CORS, "content-type": "application/json; charset=utf-8", ...left() } });
+}
+
 // 4U TV 1.1.0 uses a public Xtream catalogue and public Supabase live-channel reads.
 const FOURU_BASE = "https://ctm.alostoura.live";
 const FOURU_MEDIA = `${FOURU_BASE}/media-4u-9d7f2c`;
@@ -559,6 +620,7 @@ Deno.serve({ port }, (req) => {
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
   }));
   if (url.pathname.startsWith("/sources/")) return handleSources(req, url, proxy);
+  if (url.pathname.startsWith("/football/")) return footballProxy(url);
   if (url.pathname.startsWith("/fouru/")) return fourU(req, url);
   if (url.pathname === "/proxy") return proxy(req, url);
   if (url.pathname.startsWith("/remux/")) return fail(410, "تحويل الفيديو على السيرفر متوقف. افتحه في VLC.");
